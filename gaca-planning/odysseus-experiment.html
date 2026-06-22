@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GACA · Odysseus Experiment</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<nav class="topnav"><div class="inner">
+  <span class="brand">GACA<span>·</span></span>
+  <a class="navlink" href="index.html">Overview</a>
+  <a class="navlink" href="landscape.html">Tools &amp; Frameworks</a>
+  <a class="navlink" href="architecture.html">Architecture</a>
+  <a class="navlink" href="hardware-models.html">Hardware &amp; Models</a>
+  <a class="navlink" href="gaca-plan.html">GACA Plan</a>
+  <a class="navlink active" href="odysseus-experiment.html">Odysseus Experiment</a>
+  <a class="navlink" href="gaca-experiment.html">GACA Experiment</a>
+</div></nav>
+
+<div class="wrap">
+<header class="page">
+  <div class="kicker">05 · The Experiment</div>
+  <h1>Odysseus on <code>shire</code>, reached through Cloudflare</h1>
+  <p class="lede">The concrete plan you decided on: run Odysseus on your Raspberry Pi 5 <strong>shire</strong>, with <strong>Anthropic Opus</strong> as the agent brain (capped so it can't run up a bill) and your <strong>ChatGPT/Codex subscription</strong> doing the token-heavy coding via the <strong>Codex CLI</strong>. Reach it from your Android phone over <strong>Cloudflare</strong>, and let it deploy and drive your apps on a second Pi, <strong>piservices</strong>. Below: the architecture, what controls what, and step-by-step setup verified against the actual Odysseus repo, the Codex CLI docs, and Anthropic's spend-limit controls.</p>
+</header>
+
+<div class="pill-row">
+  <span class="pill">Host: shire (Pi 5)</span>
+  <span class="pill">Brain: Anthropic Opus (API key, capped)</span>
+  <span class="pill">Coding: Codex CLI (ChatGPT sub)</span>
+  <span class="pill">Access: Cloudflare Tunnel + Access</span>
+  <span class="pill">Apps host: piservices (Pi)</span>
+  <span class="pill">Pi↔Pi: SSH to deploy · REST API to act</span>
+  <span class="pill">UI: Odysseus PWA</span>
+</div>
+
+<h2>The architecture</h2>
+<figure>
+<svg viewBox="0 0 960 720" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, sans-serif">
+  <defs>
+    <marker id="ar" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#58a6ff"/></marker>
+    <marker id="ag" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#3fb950"/></marker>
+    <marker id="ao" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#ffa657"/></marker>
+    <marker id="ac" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#2dd4bf"/></marker>
+    <marker id="ap" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#d2a8ff"/></marker>
+  </defs>
+  <style>
+    .box{fill:#1a2029;stroke:#2a323d}
+    .core{fill:#15212f;stroke:#58a6ff;stroke-width:2}
+    .cloud{fill:#11202e;stroke:#ffa657;stroke-width:1.5}
+    .ext{fill:#1c1726;stroke:#d2a8ff;stroke-width:1.5}
+    .t{fill:#e6edf3;font-size:13px;font-weight:600}
+    .tb{fill:#e6edf3;font-size:14px;font-weight:800}
+    .ts{fill:#9aa7b4;font-size:10.5px}
+    .ln{stroke:#58a6ff;stroke-width:1.8;fill:none;marker-end:url(#ar)}
+    .lg{stroke:#3fb950;stroke-width:1.8;fill:none;stroke-dasharray:5 4;marker-end:url(#ag)}
+    .lo{stroke:#ffa657;stroke-width:1.6;fill:none;stroke-dasharray:4 4;marker-end:url(#ao)}
+    .lc{stroke:#2dd4bf;stroke-width:1.8;fill:none;marker-end:url(#ac)}
+    .lp{stroke:#d2a8ff;stroke-width:1.6;fill:none;stroke-dasharray:4 4;marker-end:url(#ap)}
+    .zone{fill:none;stroke:#2a323d;stroke-dasharray:5 5}
+    .zt{fill:#9aa7b4;font-size:11px;font-weight:700;letter-spacing:1px}
+  </style>
+
+  <!-- Phone -->
+  <rect class="box" x="380" y="14" width="200" height="50" rx="10"/>
+  <text class="tb" x="480" y="36" text-anchor="middle">Android phone</text>
+  <text class="ts" x="480" y="53" text-anchor="middle">Odysseus PWA · text · photos · voice</text>
+
+  <!-- Cloudflare cloud -->
+  <rect class="cloud" x="290" y="98" width="380" height="58" rx="14"/>
+  <text class="tb" x="480" y="120" text-anchor="middle" fill="#ffa657">Cloudflare edge</text>
+  <text class="ts" x="480" y="137" text-anchor="middle">HTTPS termination · Access policy (only your email)</text>
+  <text class="ts" x="480" y="150" text-anchor="middle">odysseus.example.com</text>
+
+  <!-- Anthropic brain -->
+  <rect class="ext" x="722" y="90" width="226" height="50" rx="12" style="stroke:#3fb950"/>
+  <text class="tb" x="835" y="109" text-anchor="middle" fill="#3fb950">Anthropic · Opus</text>
+  <text class="ts" x="835" y="124" text-anchor="middle">agent brain · tools + vision</text>
+  <text class="ts" x="835" y="136" text-anchor="middle">API key · capped spend limit</text>
+  <!-- Codex coding -->
+  <rect class="ext" x="722" y="146" width="226" height="36" rx="10"/>
+  <text class="t" x="835" y="164" text-anchor="middle" fill="#d2a8ff">Codex (your ChatGPT sub)</text>
+  <text class="ts" x="835" y="177" text-anchor="middle">coding agent · via Codex CLI</text>
+
+  <!-- LAN zone -->
+  <rect class="zone" x="20" y="184" width="920" height="520" rx="16"/>
+  <text class="zt" x="38" y="206">YOUR HOME LAN  ·  no inbound ports opened anywhere</text>
+
+  <!-- shire -->
+  <rect class="box" x="44" y="224" width="486" height="456" rx="12" style="stroke:#58a6ff"/>
+  <text class="tb" x="64" y="250">shire</text><text class="ts" x="118" y="250">· Raspberry Pi 5 · 8–16GB</text>
+
+  <!-- cloudflared on shire -->
+  <rect class="box" x="66" y="266" width="180" height="40" rx="8" style="stroke:#ffa657"/>
+  <text class="t" x="156" y="284" text-anchor="middle">cloudflared</text>
+  <text class="ts" x="156" y="298" text-anchor="middle">tunnel daemon (systemd)</text>
+
+  <!-- Docker compose zone -->
+  <rect class="zone" x="60" y="320" width="454" height="344" rx="10"/>
+  <text class="zt" x="76" y="340">DOCKER COMPOSE</text>
+
+  <!-- Odysseus core -->
+  <rect class="core" x="78" y="352" width="418" height="78" rx="10"/>
+  <text class="tb" x="287" y="378" text-anchor="middle">ODYSSEUS  ·  :7000</text>
+  <text class="ts" x="287" y="396" text-anchor="middle">FastAPI app · opencode agent loop</text>
+  <text class="ts" x="287" y="410" text-anchor="middle">THE ORCHESTRATOR — controls everything below &amp; out</text>
+
+  <!-- agent tools -->
+  <rect class="box" x="78" y="444" width="130" height="44" rx="8"/>
+  <text class="t" x="143" y="464" text-anchor="middle">bash / shell</text>
+  <text class="ts" x="143" y="478" text-anchor="middle">admin-only</text>
+  <rect class="box" x="222" y="444" width="130" height="44" rx="8"/>
+  <text class="t" x="287" y="464" text-anchor="middle">MCP servers</text>
+  <text class="ts" x="287" y="478" text-anchor="middle">add your own</text>
+  <rect class="box" x="366" y="444" width="130" height="44" rx="8"/>
+  <text class="t" x="431" y="464" text-anchor="middle">Servers (SSH)</text>
+  <text class="ts" x="431" y="478" text-anchor="middle">remote hosts</text>
+
+  <!-- supporting services -->
+  <rect class="box" x="78" y="504" width="130" height="44" rx="8"/>
+  <text class="t" x="143" y="524" text-anchor="middle">chromadb</text>
+  <text class="ts" x="143" y="538" text-anchor="middle">memory :8100</text>
+  <rect class="box" x="222" y="504" width="130" height="44" rx="8"/>
+  <text class="t" x="287" y="524" text-anchor="middle">searxng</text>
+  <text class="ts" x="287" y="538" text-anchor="middle">web search</text>
+  <rect class="box" x="366" y="504" width="130" height="44" rx="8"/>
+  <text class="t" x="431" y="524" text-anchor="middle">ntfy</text>
+  <text class="ts" x="431" y="538" text-anchor="middle">notifications</text>
+
+  <text class="ts" x="287" y="582" text-anchor="middle">Vision input ✓  ·  STT (voice) optional, off by default</text>
+  <text class="ts" x="287" y="598" text-anchor="middle">Data: SQLite + ./data (auth, settings, ssh keys)</text>
+
+  <!-- piservices -->
+  <rect class="box" x="560" y="352" width="378" height="320" rx="12" style="stroke:#3fb950"/>
+  <text class="tb" x="580" y="378">piservices</text><text class="ts" x="668" y="378">· Raspberry Pi</text>
+  <rect class="box" x="582" y="394" width="334" height="78" rx="8"/>
+  <text class="t" x="749" y="416" text-anchor="middle">Your apps · FastAPI + React + Docker</text>
+  <text class="ts" x="749" y="434" text-anchor="middle">JWT auth · /api/openapi.json · profile mints agent tokens</text>
+  <text class="ts" x="749" y="450" text-anchor="middle">cross-app comms go through REST APIs only</text>
+  <rect class="box" x="582" y="488" width="334" height="44" rx="8" style="stroke:#ffa657"/>
+  <text class="t" x="749" y="507" text-anchor="middle">cloudflared → app1·app2.example.com</text>
+  <text class="ts" x="749" y="521" text-anchor="middle">each app on its own Cloudflare hostname</text>
+  <text class="ts" x="749" y="556" text-anchor="middle">MongoDB on host · one DB per app · nginx + auto-deploy</text>
+
+  <!-- edges -->
+  <path class="ln" d="M480,64 L480,96"/>
+  <text class="ts" x="500" y="86" fill="#9aa7b4">HTTPS</text>
+  <path class="ln" d="M440,156 L200,264"/>
+  <text class="ts" x="300" y="210" fill="#58a6ff">tunnel (outbound)</text>
+  <path class="lg" d="M474,352 L738,138"/>
+  <text class="ts" x="612" y="244" fill="#3fb950">orchestration → Opus</text>
+  <path class="lp" d="M500,414 L720,166"/>
+  <text class="ts" x="560" y="338" fill="#d2a8ff">coding → Codex CLI</text>
+  <path class="lc" d="M496,400 L580,420"/>
+  <text class="ts" x="506" y="404" fill="#2dd4bf">REST API · Bearer JWT (as you)</text>
+  <path class="ln" d="M496,468 L580,450"/>
+  <text class="ts" x="512" y="478" fill="#58a6ff">SSH · deploy / update</text>
+  <path class="lo" d="M749,488 L660,156"/>
+</svg>
+<figcaption><span style="color:#58a6ff">Blue</span> = your traffic / control &amp; SSH ops · <span style="color:#2dd4bf">teal</span> = calling your app REST APIs as you (Bearer JWT) · <span style="color:#3fb950">green dashed</span> = brain inference to Anthropic Opus · <span style="color:#d2a8ff">purple dashed</span> = coding via Codex CLI (your ChatGPT sub) · <span style="color:#ffa657">orange dashed</span> = apps' own Cloudflare tunnel. Everything inside the dashed box is on your LAN; Cloudflare reaches in via <em>outbound</em> tunnels, so you never open a port. The brain (Opus) sees summaries and delegates the token-heavy coding to Codex, keeping the metered Anthropic spend low and capped.</figcaption>
+</figure>
+
+<h2>What controls what</h2>
+<div class="grid cols-2">
+  <div class="card"><h4>Odysseus (on Opus) is the brain</h4><p>The <strong>Odysseus FastAPI app on shire</strong>, running on <strong>Anthropic Opus</strong>, is the orchestrator. Its agent loop decides everything: when to think, run a <code>bash</code> command, SSH to piservices to deploy, call a piservices app's REST API as you, use search/memory — and crucially, <em>when to hand a coding task to Codex</em>. Opus does tool-calling and vision; it sees summaries, not giant diffs.</p></div>
+  <div class="card"><h4>Codex does the coding, on your subscription</h4><p>When the brain decides "this is a coding job," it shells out to the <strong>Codex CLI</strong> (<code>codex exec</code>), which authenticates with your <strong>ChatGPT/Codex subscription</strong> and runs as a full coding agent (its own tools + sandbox). The token-heavy work runs flat-rate, not on the metered Anthropic key — that's the cost win.</p></div>
+  <div class="card"><h4>You only ever talk to Odysseus</h4><p>Your phone hits <code>odysseus.example.com</code> → Cloudflare → the tunnel → Odysseus. Everything downstream (Anthropic, Codex, piservices, tools) is Odysseus acting on your behalf. piservices has no UI here; Odysseus reaches it.</p></div>
+  <div class="card"><h4>Cloudflare is the doorway, not a component</h4><p>Cloudflare does two jobs: terminate HTTPS (which also lets your phone's mic work) and enforce <strong>Access</strong> so only your email gets in. It holds no app logic. The tunnel is outbound from shire, so your home network exposes nothing.</p></div>
+  <div class="card"><h4>Only the model is rented — and it's capped</h4><p>Everything runs on your hardware except the two model providers. Opus is metered (pay-per-token) but <strong>hard-capped by an Anthropic workspace spend limit</strong> so a confused loop can't run up a bill; coding rides your flat subscription. Swap Opus for a local model later (per the <a href="hardware-models.html">Hardware page</a>) and nothing else changes.</p></div>
+</div>
+
+<div class="callout warn"><span class="label">Two things to keep in mind</span> Odysseus is <strong>AGPL-3.0</strong>, fast-moving, and its default branch is unstable — build from the <code>main</code> branch and re-check the README before pulling updates. And its <code>bash</code>/SSH tools are powerful and run as your admin user with no built-in approval gate — only you should have an account, and be deliberate about what you let it do to piservices.</div>
+
+<hr>
+
+<h1 id="setup">Step-by-step setup</h1>
+<p class="muted">Replace <code>example.com</code> with your real Cloudflare domain throughout. Commands assume 64-bit Raspberry Pi OS and your user is <code>david</code>.</p>
+
+<h2>0 · Prerequisites</h2>
+<ul>
+  <li><strong>shire</strong>: Raspberry Pi 5 on 64-bit Pi OS (<code>uname -m</code> → <code>aarch64</code>), with <strong>Docker + Docker Compose</strong>. The official package (<code>curl -fsSL https://get.docker.com | sh</code>, then <code>sudo usermod -aG docker $USER</code> + re-login) is the smoothest. <strong>If you installed the snap</strong> instead, it works but is confined — see the snap note below.</li>
+  <li>A <strong>domain on Cloudflare</strong> (nameservers pointing to Cloudflare).</li>
+  <li>An <strong>Anthropic API key</strong> (<code>sk-ant-…</code>) for the agent brain — created inside a <em>dedicated, spend-capped workspace</em> (step 2).</li>
+  <li>An active <strong>ChatGPT Plus/Pro (Codex) subscription</strong> for coding, plus <strong>Node 18+</strong> on shire to install the Codex CLI.</li>
+  <li><strong>piservices</strong> reachable on the LAN (note its IP/hostname, e.g. <code>piservices.local</code>).</li>
+</ul>
+<div class="callout warn"><span class="label">If Docker on shire is the snap</span> Snap Docker is AppArmor-confined — works, with these gotchas:
+<ul style="margin:8px 0 0">
+  <li><strong>Clone the repo under your home dir</strong> (<code>~/odysseus</code>) — snap Docker can only bind-mount paths under <code>$HOME</code>. Put it under <code>/opt</code>, <code>/srv</code>, or <code>/mnt</code> and the <code>./data</code> volumes silently come up <strong>empty</strong> (you'd lose auth/settings/ssh keys). For an external SSD under <code>/mnt</code>: <code>sudo snap connect docker:removable-media</code>.</li>
+  <li><strong>Manage the daemon via snap, not systemd:</strong> <code>sudo snap restart docker</code>, <code>sudo snap logs docker</code> (not <code>systemctl</code>). <code>restart: unless-stopped</code> still survives reboots.</li>
+  <li>Confirm the compose command: <code>docker compose version</code>; if the plugin's absent, use <code>docker-compose</code> (hyphen).</li>
+  <li>Data lives under <code>/var/snap/docker/…</code>; log-rotation config goes in <code>/var/snap/docker/current/config/daemon.json</code>, not <code>/etc/docker/daemon.json</code>.</li>
+  <li>Hitting empty-volume or permission weirdness? That's the confinement — <code>sudo snap remove docker</code> then the official install above is the clean fix. <code>cloudflared</code> and the Codex CLI are unaffected by how Docker was installed.</li>
+</ul></div>
+
+<h2>1 · Install Odysseus on <code>shire</code></h2>
+<p>Use the <code>main</code> branch (the default <code>dev</code> branch is flagged unstable) and do the <strong>full build from source on the Pi</strong>. Since you're cloning <code>main</code>, you want the image built from exactly that source — building locally is the consistent choice (a prebuilt image would make cloning the source pointless). The first build compiles for a few minutes on a Pi 5; it's a one-time cost.</p>
+<pre><code># clone the stable branch
+git clone -b main https://github.com/pewdiepie-archdaemon/odysseus.git
+cd odysseus
+
+# create your env file
+cp .env.example .env</code></pre>
+<p>Edit <code>.env</code> with at least these (everything else can stay default):</p>
+<pre><code># (no model key in .env — add the Anthropic brain key in-app: Settings → providers, step 2)
+AUTH_ENABLED=true
+LOCALHOST_BYPASS=false
+SECURE_COOKIES=true                        # you're serving HTTPS via Cloudflare
+APP_BIND=127.0.0.1                         # keep loopback; the tunnel reaches it locally
+APP_PORT=7000
+ALLOWED_ORIGINS=https://odysseus.example.com
+PUID=1000
+PGID=1000</code></pre>
+<p>Build and start the full stack from the cloned source. The shipped <code>docker-compose.yml</code> already uses <code>build: .</code> — leave it as-is and pass <code>--build</code> so Compose compiles the image locally. Then grab your first-login password (printed once to the logs):</p>
+<pre><code># full build from the main source, then run
+docker compose up -d --build
+
+# optional: include the heavier document tooling (PyMuPDF/Office, AGPL)
+# docker compose build --build-arg INSTALL_OPTIONAL=true && docker compose up -d
+
+docker compose logs odysseus | grep -i "Temporary password"</code></pre>
+<div class="callout"><span class="label b">Sanity check</span> On shire itself: <code>curl -I http://127.0.0.1:7000</code> should respond. The compose stack also starts <code>chromadb</code> (:8100), <code>searxng</code> (:8080), and <code>ntfy</code> (:8091), all bound to loopback. Inference runs remotely (Opus + Codex are both cloud), so with vision/STT off, idle RAM on the Pi is roughly 1–2 GB — comfortable on an 8 GB Pi 5.</div>
+
+<h2>2 · The brain (Anthropic Opus) + the coding agent (Codex)</h2>
+<p>Two model providers, two different jobs. <strong>Opus is the brain</strong> — it does the tool-calling and vision that make Odysseus an agent. <strong>Codex is the coding worker</strong> — it runs on your flat subscription so the token-heavy coding doesn't hit the metered key. Why split this way: in Odysseus the in-app "ChatGPT Subscription" provider has <strong>no tool-calling and no vision</strong> (verified in the code), so the subscription can't be the brain — but the <em>Codex CLI</em> is a full coding agent on that same subscription. So the brain rents Anthropic; coding stays on what you already pay for.</p>
+<div class="grid cols-2">
+  <div class="card" style="border-color:#3fb950">
+    <h4 style="color:#3fb950">Brain → Anthropic Opus (tools + vision)</h4>
+    <p>In Odysseus, add Anthropic as a cloud endpoint in <strong>Settings → providers</strong>: base URL <code>api.anthropic.com</code>, paste your <code>sk-ant-…</code> key. Odysseus speaks the native Anthropic Messages API — tool-calling and image input both work (unlike the subscription path).</p>
+    <p class="muted">Models &amp; pricing (per 1M tokens, input / output):</p>
+    <div class="table-scroll"><table>
+      <tbody>
+        <tr><td><code>claude-opus-4-8</code></td><td>$5 / $25</td><td><span class="badge pick">default brain</span> latest Opus</td></tr>
+        <tr><td><code>claude-opus-4-6</code></td><td>$5 / $25</td><td>the one you named — same price</td></tr>
+        <tr><td><code>claude-sonnet-4-6</code></td><td>$3 / $15</td><td>cheaper; route routine/utility here</td></tr>
+        <tr><td><code>claude-haiku-4-5</code></td><td>$1 / $5</td><td>cheapest; background tasks</td></tr>
+      </tbody>
+    </table></div>
+    <p class="muted">Set Opus as the <code>default</code> model. Odysseus has per-role models (default / utility / task / research) — point <code>utility</code>/<code>task</code> at Sonnet or Haiku to cut spend. (Anthropic isn't in the README's provider list but is fully supported in code — add it via the Settings UI, not <code>.env</code>.)</p>
+  </div>
+  <div class="card" style="border-color:#d2a8ff">
+    <h4 style="color:#d2a8ff">Coding → Codex CLI (your subscription)</h4>
+    <p>Install the Codex CLI <strong>on shire</strong> and sign it in with your ChatGPT subscription — then the brain shells out to it for coding.</p>
+    <pre><code># install (npm needs Node 18+) — or grab the arm64 binary
+npm install -g @openai/codex
+#   codex-aarch64-unknown-linux-musl.tar.gz also works on 64-bit Pi OS
+
+# sign in with your ChatGPT subscription
+codex login            # browser OAuth; on a headless Pi use the
+                       # device-code login, or copy ~/.codex/auth.json
+                       # from a machine you already signed in on</code></pre>
+    <p class="muted">The brain invokes it non-interactively and captures the diff:</p>
+    <pre><code>cd /path/to/repo
+codex exec --json --sandbox workspace-write \
+  "Implement X, run tests, leave changes uncommitted" \
+  -o /tmp/codex-summary.txt
+git -C /path/to/repo diff > /tmp/codex.diff</code></pre>
+  </div>
+</div>
+<div class="callout pick"><span class="label">The cost cap — your "runaway bill" guardrail</span>
+This is the fix for "what if it gets confused and runs up my Opus bill." Anthropic lets you <strong>hard-stop</strong> spend:
+<ol style="margin-top:8px">
+  <li>In the Anthropic Console, create a <strong>dedicated Workspace</strong> for Odysseus (you <em>can't</em> set a limit on the default workspace, so make a new one).</li>
+  <li>Set that workspace's <strong>spend limit</strong> to a hard monthly ceiling — e.g. <strong>$15</strong>. Past it, the API <em>rejects</em> requests until the next calendar month. It's a stop, not a throttle.</li>
+  <li><strong>Create the API key inside that workspace</strong> (keys are bound to their workspace and inherit its cap) and use that key in Odysseus.</li>
+  <li>Add a <strong>threshold email alert</strong> (e.g. at 50–80%) so you hear about it early, and set an org-level spend limit as a backstop.</li>
+</ol>
+Because the brain only sees summaries and hands coding to Codex, real orchestration is cents per task — a $15 cap is generous headroom and an absolute ceiling. Prompt caching (Odysseus marks the Anthropic tool/context blocks ephemeral) cuts it further; cached reads don't even count against your rate limit.</div>
+<div class="callout warn"><span class="label">One honest caveat on Codex-via-subscription</span> OpenAI positions "Sign in with ChatGPT" as the <em>interactive</em> developer path and steers <em>unattended/automated</em> use toward API keys. Driving Codex headlessly from the Opus brain works and is fine when you're in the loop approving, but it's a gray area for the subscription ToS and could get throttled if hammered. If it ever does, the drop-in fix is to point the Codex CLI at an <code>OPENAI_API_KEY</code> instead (pay-per-token) — or let Opus do the coding directly (costs more on the capped key). Also tell the agent (via a skill / system note) to <strong>delegate coding to <code>codex exec</code></strong> rather than editing files itself with Opus — otherwise the expensive part lands back on the metered key.</div>
+
+<h2>3 · Create the Cloudflare Tunnel on <code>shire</code></h2>
+<p>The tunnel is an <strong>outbound</strong> connection from shire to Cloudflare — no port forwarding, nothing exposed on your router.</p>
+<pre><code># install cloudflared (Cloudflare apt repo — auto-updates)
+sudo mkdir -p --mode=0755 /usr/share/keyrings
+curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
+echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main' | sudo tee /etc/apt/sources.list.d/cloudflared.list
+sudo apt-get update && sudo apt-get install -y cloudflared
+
+# authenticate (opens a browser link; pick your domain) and create the tunnel
+cloudflared tunnel login
+cloudflared tunnel create odysseus       # prints a Tunnel UUID + writes ~/.cloudflared/<UUID>.json</code></pre>
+<p>Create <code>~/.cloudflared/config.yml</code> (use the UUID, not the name):</p>
+<pre><code>tunnel: &lt;TUNNEL-UUID&gt;
+credentials-file: /home/david/.cloudflared/&lt;TUNNEL-UUID&gt;.json
+
+ingress:
+  - hostname: odysseus.example.com    # BARE domain — no https:// (a scheme here = "hostname cannot contain a port")
+    service: http://localhost:7000    # service DOES keep its scheme
+  - service: http_status:404          # required catch-all, must be last</code></pre>
+<pre><code># validate, create the DNS record, then run as a service
+cloudflared tunnel ingress validate
+cloudflared tunnel route dns odysseus odysseus.example.com
+
+# install as systemd (service runs as root → keep config + creds in /etc/cloudflared)
+sudo mkdir -p /etc/cloudflared
+sudo cp ~/.cloudflared/config.yml /etc/cloudflared/config.yml
+sudo cp ~/.cloudflared/&lt;TUNNEL-UUID&gt;.json /etc/cloudflared/&lt;TUNNEL-UUID&gt;.json
+# edit credentials-file path in /etc/cloudflared/config.yml to the /etc copy
+sudo cloudflared service install
+sudo systemctl enable --now cloudflared
+journalctl -u cloudflared -f            # watch it connect</code></pre>
+
+<h2>4 · Lock it to just you with Cloudflare Access</h2>
+<div class="callout danger"><span class="label">Don't skip this</span> A tunnel hostname is <strong>publicly reachable</strong> — the tunnel hides your IP but does <em>not</em> authenticate anyone. Without Access, whoever learns <code>odysseus.example.com</code> reaches your Odysseus login directly. Access enforces <em>your</em> identity at Cloudflare's edge before traffic ever reaches shire.</div>
+<p>In the Cloudflare dashboard → <strong>Zero Trust</strong> (pick a team name the first time):</p>
+<ol>
+  <li><strong>Access → Applications → Add an application → Self-hosted.</strong></li>
+  <li>Application domain: <code>odysseus.example.com</code>.</li>
+  <li>Add an <strong>Access policy</strong>: Action = <strong>Allow</strong>, Rule = <strong>Include → Emails → david.monts@gmail.com</strong>.</li>
+  <li>Identity: enable <strong>One-time PIN</strong> (built-in, emails you a code) and/or add <strong>Google</strong> for one-tap login.</li>
+  <li>Save. Now the hostname shows a Cloudflare login; only your email passes, then you hit the Odysseus login.</li>
+</ol>
+<p class="muted">Zero Trust Free covers up to 50 users — you're free. You now have <strong>two</strong> auth layers (Cloudflare Access + Odysseus login), which is exactly what you want for something with shell access.</p>
+
+<h2>5 · Settings that matter for a chat app behind Cloudflare</h2>
+<div class="table-scroll">
+<table>
+  <thead><tr><th>Concern</th><th>What to do</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Microphone / voice</strong></td><td>Nothing extra — Cloudflare serves HTTPS</td><td>Android only allows mic capture in a "secure context." Cloudflare's edge TLS gives you <code>https://</code>, so voice input works. (You still must enable STT in Odysseus Settings — it's off by default; point it at a remote/endpoint STT, not the Pi's CPU.)</td></tr>
+    <tr><td><strong>Streaming replies</strong></td><td>Test it; expect it to work</td><td>Odysseus streams via SSE and already excludes SSE from gzip. Cloudflare Tunnel streams SSE fine in most cases. If tokens arrive in one burst, that's the known Cloudflare SSE-buffering quirk — verify on the live hostname.</td></tr>
+    <tr><td><strong>Long agent runs</strong></td><td>Rely on streaming; no config</td><td>Cloudflare returns 524 if the origin is silent ~100 s. Because Odysseus streams tokens/heartbeats continuously, the connection stays alive and you avoid 524.</td></tr>
+    <tr><td><strong>Uploads</strong></td><td>Keep files under limits</td><td>Cloudflare Free caps a request body at <strong>100 MB</strong>; Odysseus's chat upload default is 10 MB anyway (raise via <code>ODYSSEUS_CHAT_UPLOAD_MAX_BYTES</code> if needed). Photos/short audio are fine.</td></tr>
+    <tr><td><strong>HTTPS cookies</strong></td><td><code>SECURE_COOKIES=true</code> (set in step 1)</td><td>Required so session cookies work over the HTTPS hostname.</td></tr>
+    <tr><td><strong>CORS origin</strong></td><td><code>ALLOWED_ORIGINS=https://odysseus.example.com</code></td><td>The app's default origins are localhost only; add your public hostname.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2>6 · Install the PWA on your phone</h2>
+<ol>
+  <li>On Android, open <code>https://odysseus.example.com</code> in Chrome → pass the Cloudflare Access login → then the Odysseus login (admin + temp password from step 1; change it immediately in Settings).</li>
+  <li>Chrome menu → <strong>Add to Home screen</strong> → installs Odysseus as a PWA with its own icon.</li>
+  <li>Test text, a photo (camera/gallery upload → vision), and — once STT is enabled — the mic.</li>
+</ol>
+
+<h2>7 · Connect Odysseus → <code>piservices</code> — two distinct modes</h2>
+<p>Your apps on piservices are <strong>newbuild</strong> apps (FastAPI + React + Docker), and they're built for exactly this. Crucially, they already define an <strong>agent access</strong> contract (newbuild Phase 10), so Odysseus doesn't get raw database or shell access to your data — it acts <em>as you</em> through the same REST API your frontend uses. Keep the two jobs separate:</p>
+<div class="grid cols-2">
+  <div class="card" style="border-color:#58a6ff">
+    <h4 style="color:#58a6ff">Mode A — SSH = run / update the apps</h4>
+    <p>Operations on the <em>machine</em>: pull the latest code, rebuild, restart, read logs. This is the deploy/ops plane.</p>
+  </div>
+  <div class="card" style="border-color:#2dd4bf">
+    <h4 style="color:#2dd4bf">Mode B — REST API = interact as your user</h4>
+    <p>Operations on the <em>data</em>: list/create/update resources inside an app, exactly as if you clicked around the UI. This is the user plane, authenticated with a per-app agent JWT.</p>
+  </div>
+</div>
+
+<h3>Mode A · SSH for deploy &amp; updates</h3>
+<p>Odysseus has a built-in <strong>remote-server (SSH)</strong> feature — cleaner than ad-hoc shell. It generates an SSH key (persisted in <code>./data/ssh</code>, mounted into the container) that you authorize once on piservices.</p>
+<ol>
+  <li>In Odysseus: <strong>Cookbook → Settings → Servers</strong> → add a server (name <code>piservices</code>, host <code>piservices.local</code> or its LAN IP, your SSH user). It shows you its generated public key.</li>
+  <li>On <strong>piservices</strong>: add that key to <code>~/.ssh/authorized_keys</code>.</li>
+  <li>Now Odysseus can run your standard newbuild deploy steps on piservices — e.g. <code>cd ~/apps/&lt;app&gt; &amp;&amp; git pull &amp;&amp; docker compose up -d --build</code>, trigger the auto-deploy script, restart a container, or tail logs. This is the <em>only</em> thing SSH is for here.</li>
+</ol>
+<p class="muted">Where do the code <em>changes</em> come from? The <strong>Codex CLI</strong> (step 2) edits a checkout of the app's repo; the brain then either pushes (your apps auto-deploy on push to <code>main</code>) or runs the deploy steps above over SSH. <strong>Codex writes the code, SSH ships it</strong> — and the metered Opus key is barely touched by either.</p>
+<div class="callout"><span class="label b">Keep modes from bleeding together</span> Resist the temptation to have the agent <code>ssh … mongosh</code> or poke the database directly to "interact" with an app. Your apps deliberately route <strong>all</strong> cross-app communication through REST (newbuild rule: apps never touch each other's DBs). Treat Odysseus as just another API client and you inherit that app's validation, auth, and user-scoping for free.</div>
+
+<h3>Mode B · REST APIs to act as you</h3>
+<p>Each newbuild app exposes a long-lived <strong>Bearer JWT</strong> agent token and a self-describing API. Per app, once:</p>
+<ol>
+  <li><strong>Mint a token.</strong> Open the app (e.g. <code>https://invest.example.com</code>) → <strong>profile page → Agent tokens → Generate</strong> → pick <strong>365 days</strong> → copy the JWT. (It's scoped to your user, same as any session.)</li>
+  <li><strong>Grab the setup guide.</strong> Same section has a <strong>Download skill</strong> button → it gives you <code>&lt;app&gt;-agent.md</code> (what the app is, its data model, the auth rule, and the discovery URLs). This file is written to onboard <em>any</em> agent — Odysseus included.</li>
+  <li><strong>Note the base URL + discovery.</strong> Endpoints are <em>not</em> hard-coded — the agent reads <code>&lt;base&gt;/api/openapi.json</code> (Swagger UI at <code>&lt;base&gt;/api/agent</code>) to learn the surface.</li>
+</ol>
+<p>Then wire each app into Odysseus. Two ways, start with the first:</p>
+<div class="grid cols-2">
+  <div class="card">
+    <h4>Option 1 — skill + token (recommended start)</h4>
+    <ul>
+      <li>Add <code>&lt;app&gt;-agent.md</code> to Odysseus as a <strong>skill</strong> (it's already a SKILL-style bundle) or as memory/context.</li>
+      <li>Store the base URL + JWT in Odysseus's <strong>secrets/settings</strong> (not a committed file).</li>
+      <li>The agent calls the API with its <code>bash</code> tool (<code>curl</code>) following the guide: <code>Authorization: Bearer &lt;jwt&gt;</code> on every request, discover via <code>/api/openapi.json</code>.</li>
+    </ul>
+    <p class="muted">Lowest effort, and exactly the workflow your apps were designed to hand an agent.</p>
+  </div>
+  <div class="card">
+    <h4>Option 2 — OpenAPI → MCP (cleaner tools)</h4>
+    <ul>
+      <li>Run an <strong>OpenAPI-to-MCP bridge</strong> pointed at <code>&lt;base&gt;/api/openapi.json</code>, injecting the <code>Authorization: Bearer</code> header.</li>
+      <li>Add it in Odysseus: <strong>Settings → MCP</strong> (custom server, <code>stdio</code>/<code>http</code>, admin-only).</li>
+      <li>Now each endpoint is a first-class typed tool instead of curl-via-bash.</li>
+    </ul>
+    <p class="muted">More setup, better tool-calling. Worth it once an app is a daily driver.</p>
+  </div>
+</div>
+
+<h4>Which base URL — Cloudflare hostname or LAN?</h4>
+<p>These apps authenticate with their <strong>own JWT</strong>, not Cloudflare Access — so Odysseus needs no service token, just the Bearer JWT. Pick the base URL:</p>
+<ul>
+  <li><strong>Public hostname</strong> (<code>https://invest.example.com</code>) — simplest; matches what the token + <code>&lt;app&gt;-agent.md</code> assume; works the same whether you're home or not.</li>
+  <li><strong>LAN</strong> (<code>http://piservices.local:&lt;app-port&gt;</code>) — a latency optimization that keeps Pi-to-Pi traffic off the internet and dodges the 100 MB / 524 edge limits. Same JWT works. Use this if you do heavy/bulk calls.</li>
+</ul>
+
+<h4>Behavior rules to give Odysseus (straight from your apps' guide)</h4>
+<div class="table-scroll">
+<table>
+  <thead><tr><th>Rule</th><th>Why it's in the contract</th></tr></thead>
+  <tbody>
+    <tr><td>Read <code>/api/openapi.json</code> first; never assume endpoint paths</td><td>Endpoints change between releases — the schema is the source of truth.</td></tr>
+    <tr><td>Stay in your user; one Bearer header per request</td><td>Every resource is user-scoped; that token <em>is</em> your identity.</td></tr>
+    <tr><td>Prefer endpoints marked <em>bulk / upsert / idempotent</em></td><td>Safe to re-run — better for backfills than many single creates.</td></tr>
+    <tr><td>Don't overwrite user-authored content; append to AI/versioned siblings</td><td>The UI is yours to edit; agents add alongside.</td></tr>
+    <tr><td>401 → stop &amp; re-mint token · 422 → re-read schema, fix body · 409 → treat idempotent insert as success</td><td>The guide's failure table — don't loop on errors.</td></tr>
+  </tbody>
+</table>
+</div>
+<div class="callout warn"><span class="label">Token lifetime</span> Agent JWTs expire (you chose 365 days). When one lapses you'll get <strong>401s</strong> — just re-mint from the app's profile page and update Odysseus's stored secret. Tokens don't auto-refresh.</div>
+
+<p class="muted"><strong>Optional, only if an app is also behind Cloudflare Access:</strong> a headless caller can't do interactive login — add an Access <strong>Service Token</strong> and send <code>CF-Access-Client-Id</code> / <code>CF-Access-Client-Secret</code> headers alongside the Bearer JWT. Your newbuild apps use app-level JWT auth (not Access), so you normally won't need this.</p>
+
+<h2>8 · Verify checklist</h2>
+<div class="grid cols-2">
+  <div class="card"><h4>Working state</h4><ul>
+    <li><code>docker compose ps</code> on shire → all healthy (built from source)</li>
+    <li><code>journalctl -u cloudflared</code> → tunnel connected</li>
+    <li>Phone loads <code>https://odysseus.example.com</code> → Access login → Odysseus login</li>
+    <li>Anthropic added as a provider; <code>claude-opus-4-8</code> is the <code>default</code> brain</li>
+    <li>A chat reply streams from Opus; a tool call (e.g. a shell command) actually fires</li>
+    <li>Photo upload is "seen" by Opus (proves the vision path)</li>
+    <li><code>codex login</code> succeeded; <code>codex exec "say hi"</code> runs on your subscription</li>
+    <li>The brain can hand a coding task to <code>codex exec</code> and capture the diff</li>
+    <li><strong>Mode A:</strong> Odysseus can SSH to piservices and rebuild an app</li>
+    <li><strong>Mode B:</strong> Odysseus can hit an app's <code>/api/openapi.json</code> and make a real API call with the agent JWT</li>
+  </ul></div>
+  <div class="card"><h4>Security &amp; cost posture</h4><ul>
+    <li>Anthropic key lives in a <strong>dedicated workspace with a hard spend limit</strong></li>
+    <li>Threshold email alert set; org-level spend limit as backstop</li>
+    <li>Cloudflare Access allows only your email</li>
+    <li>Odysseus admin password changed from the temp one</li>
+    <li><code>AUTH_ENABLED=true</code>, <code>LOCALHOST_BYPASS=false</code>, <code>SECURE_COOKIES=true</code></li>
+    <li>No router ports forwarded; you're the only Odysseus account (shell tools are admin-only)</li>
+    <li>Per-app agent JWTs stored in Odysseus secrets; built from <code>main</code>, not <code>dev</code></li>
+  </ul></div>
+</div>
+
+<div class="callout pick"><span class="label">Where this can grow</span> This experiment rents a capped Opus brain, runs coding on your Codex subscription, deploys piservices apps over SSH, and acts on them via their REST APIs. Upgrades that drop in without changing the shape: (1) swap the Opus brain for a <strong>local model</strong> — see <a href="hardware-models.html">Hardware &amp; Models</a> — and your API bill goes to $0 (a provider change in Settings); (2) graduate Mode B from "skill + curl" to a per-app <strong>OpenAPI→MCP</strong> bridge so every endpoint is a first-class tool. If you later outgrow Odysseus's "you live inside its agent" model, the <a href="gaca-plan.html">GACA Plan</a> is your path to a core you fully own — and your apps' agent contract carries over unchanged.</div>
+
+<div class="foot">
+  <p><strong>Verified against:</strong> the Odysseus repo — <code>src/llm_core.py</code> + <code>src/endpoint_resolver.py</code> confirm the <em>Anthropic</em> path uses native <code>/v1/messages</code> with <code>x-api-key</code>, passes <code>tools</code> as <code>input_schema</code>, and sends real image blocks (full tools + vision), while <code>src/chatgpt_subscription.py</code> sets <code>supports_tools = False</code> and drops vision; per-role models live in <code>src/settings.py</code>/<code>endpoint_resolver.py</code>. Codex CLI: developers.openai.com/codex (Sign-in-with-ChatGPT auth, <code>codex exec</code> non-interactive/<code>--json</code>, arm64 binary, built-in sandbox; docs recommend API keys for unattended automation). Anthropic spend controls: platform.claude.com/docs/en/api/rate-limits + Console workspace spend limits (hard monthly cap; not settable on the default workspace; keys bound to their workspace). Model pricing (per 1M in/out): Opus 4.8/4.7/4.6 $5/$25 · Sonnet 4.6 $3/$15 · Haiku 4.5 $1/$5. Plus your <code>newbuild</code> docs (Phase 10 agent-auth, Phase 08 Pi deploy) and Cloudflare's current Tunnel/Access docs. Flags to test yourself: live SSE streaming behaviour through Cloudflare, the first-build compile time on the Pi, and the current Codex subscription usage caps/ToS for headless use. Odysseus is AGPL-3.0 and fast-moving — re-check the README before a fresh install.</p>
+</div>
+</div>
+</body>
+</html>

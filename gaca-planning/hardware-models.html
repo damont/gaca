@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GACA · Hardware &amp; Models</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<nav class="topnav"><div class="inner">
+  <span class="brand">GACA<span>·</span></span>
+  <a class="navlink" href="index.html">Overview</a>
+  <a class="navlink" href="landscape.html">Tools &amp; Frameworks</a>
+  <a class="navlink" href="architecture.html">Architecture</a>
+  <a class="navlink active" href="hardware-models.html">Hardware &amp; Models</a>
+  <a class="navlink" href="gaca-plan.html">GACA Plan</a>
+  <a class="navlink" href="odysseus-experiment.html">Odysseus Experiment</a>
+  <a class="navlink" href="gaca-experiment.html">GACA Experiment</a>
+</div></nav>
+
+<div class="wrap">
+<header class="page">
+  <div class="kicker">03 · Hardware &amp; Models</div>
+  <h1>The Pi runs the agent. It does <em>not</em> run the brain.</h1>
+  <p class="lede">Your instinct was exactly right: the Raspberry Pi 5 is a fine orchestration host but a poor inference host. The good news — the standard 2026 pattern splits those cleanly, and a model gateway makes "local vs provider" a one-line flip. So you can be local-first today <em>and</em> stay all-local later by adding one box.</p>
+</header>
+
+<h2>What a Pi 5 can actually run</h2>
+<p>CPU-only ARM, no real GPU, memory-bandwidth bound. Only tiny models are interactive — and crucially, <strong>most of them fail at tool/function calling</strong>, which is the one thing an agent needs.</p>
+<div class="table-scroll">
+<table>
+  <thead><tr><th>Model (Q4, Ollama)</th><th>tok/s on Pi 5</th><th>Verdict for an agent</th></tr></thead>
+  <tbody>
+    <tr><td>Gemma3 1B</td><td>~13</td><td>Chats; weak tool-calling</td></tr>
+    <tr><td>Llama 3.2 1B</td><td>~11</td><td>Usable chat only</td></tr>
+    <tr><td>Qwen2.5 1.5B</td><td>~9</td><td>Best small all-rounder, still not reliable for tools</td></tr>
+    <tr><td>BitNet b1.58 2B</td><td>~8</td><td><span class="badge maybe">One of the few that did function-calling</span></td></tr>
+    <tr><td>Qwen2.5 / Llama 3.2 3B</td><td>~5</td><td>Borderline; long prompts time out</td></tr>
+    <tr><td>14B (on a 16GB Pi)</td><td>~1</td><td><span class="badge no">Loads but unusable</span></td></tr>
+  </tbody>
+</table>
+</div>
+<div class="callout danger"><span class="label">Reality check</span> In a real Pi-5 benchmark, function/tool calling <strong>failed on most small models</strong> (only BitNet 2B and SmolLM2 succeeded) and 5,000-token inputs timed out. Treat an on-Pi LLM as an <em>offline fallback</em> for trivial chat — not the agent's reasoning engine. Get the <strong>16GB Pi 5</strong> with active cooling.</div>
+
+<h2>The split: orchestrate on the Pi, infer elsewhere</h2>
+<p>This is clean and standard because the <strong>OpenAI Chat Completions API is the universal wire format</strong> — Ollama, vLLM, and every provider speak it. Nothing in your architecture changes when you swap the target.</p>
+<div class="grid cols-2">
+  <div class="card">
+    <h4>On the Pi (cheap, always-on)</h4>
+    <ul><li>Agent loop + API + auth</li><li>Memory (sqlite-vec / Chroma)</li><li>Tool routing + MCP clients</li><li>Scheduler / cron</li><li><strong>LiteLLM proxy</strong> (lightweight — runs here)</li></ul>
+  </div>
+  <div class="card">
+    <h4>Inference target = any <code>base_url</code></h4>
+    <p><strong>(a) Local GPU box on your LAN</strong> via Ollama's OpenAI-compatible API:</p>
+    <pre><code>base_url = "http://192.168.x.x:11434/v1"
+api_key  = "ollama"   # any non-empty string</code></pre>
+    <p><strong>(b) A provider</strong> — same interface, different <code>base_url</code> + key. That's the whole difference.</p>
+  </div>
+</div>
+
+<h3>The swap layer: LiteLLM</h3>
+<p>Point your loop at <strong>one</strong> LiteLLM endpoint. Routing, fallback, keys, and budgets live in a config file. Swapping local↔provider is a one-line alias change — and you get automatic failover.</p>
+<pre><code>model_list:
+  - model_name: local-qwen            # your alias
+    litellm_params:
+      model: ollama/qwen3-coder:30b
+      api_base: http://192.168.x.x:11434
+  - model_name: cloud-big
+    litellm_params:
+      model: anthropic/claude-...      # or deepseek / openai / etc.
+      api_key: os.environ/PROVIDER_KEY
+
+# fallback: try local first, fail over to cloud
+router_settings:
+  fallbacks: [{"local-qwen": ["cloud-big"]}]</code></pre>
+<p>Your agent always calls <code>model="local-qwen"</code>. This <em>is</em> your "open source models or a provider if desired" requirement, solved with config instead of code.</p>
+
+<h2>"Local but capable" — the 2026 sweet spot</h2>
+<p>When you want the brain local, you're choosing between <strong>unified-memory mini-PCs</strong> (capacity, silence, low power) and <strong>discrete GPUs</strong> (raw speed). Rough landscape for a ~14B–32B model:</p>
+<div class="table-scroll">
+<table>
+  <thead><tr><th>Platform</th><th>~Price</th><th>Memory</th><th>Runs well</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Used RTX 3090 box</strong></td><td>~$600–900 all-in</td><td>24 GB</td><td>14B–32B Q4, fast</td><td><span class="badge pick">Best $/speed for ≤32B.</span> The enthusiast default.</td></tr>
+    <tr><td>RTX 4090 / 5090</td><td>$1.6k / ~$2–3k</td><td>24 / 32 GB</td><td>32B fast, 70B tight</td><td>Fastest for ≤32B; VRAM-capped.</td></tr>
+    <tr><td>Mac Mini M4 (Pro)</td><td>~$600–1.4k</td><td>up to 64 GB</td><td>14B–32B comfortably</td><td><span class="badge pick">Easiest, quietest, lowest power entry.</span></td></tr>
+    <tr><td>AMD Ryzen AI Max+ 395 (Strix Halo) mini-PC</td><td>~$1.8–3.3k</td><td>96–128 GB unified</td><td>32B easily; 70B Q4 fits</td><td><span class="badge pick">Best $/GB.</span> ~100 tok/s on Qwen3-30B-A3B MoE. One silent low-power box.</td></tr>
+    <tr><td>Mac Studio M4 Max 128GB</td><td>~$3.7k</td><td>128 GB</td><td>32B fast, 70B usable</td><td>Best bandwidth + silence.</td></tr>
+    <tr><td>NVIDIA DGX Spark (GB10)</td><td>~$4k</td><td>128 GB</td><td>up to ~200B, CUDA-native</td><td>Great for concurrency/dev; mediocre single-stream (BW-limited).</td></tr>
+  </tbody>
+</table>
+</div>
+<div class="callout pick"><span class="label">Pick</span> Cheapest path to a capable local brain: a <strong>used 3090 box (~$700)</strong> running Ollama/vLLM, on your LAN, added to LiteLLM with fallback to a provider. Want one silent always-on box that stretches to 70B-class MoE models? <strong>Strix Halo 128GB (~$2k)</strong>. Want minimal fuss at 14–32B? <strong>Mac Mini M4</strong>. Key trick: <strong>MoE models run dramatically faster on these boxes than dense models of similar size.</strong></div>
+
+<h2>Best small/medium models for agentic tool-use (2026)</h2>
+<div class="grid cols-2">
+  <div class="card">
+    <h3>Top local pick</h3>
+    <p><strong>Qwen3-Coder-30B-A3B</strong> (MoE, 3B active). Explicitly strong at <strong>tool calling</strong>, ~100 tok/s on Strix Halo, fits 24GB at Q4. Tool-calling now works cleanly in llama.cpp/Ollama/LM Studio. <span class="badge pick">Best local agent brain right now.</span></p>
+  </div>
+  <div class="card">
+    <h3>Runner-up</h3>
+    <p><strong>gpt-oss-20b</strong> (OpenAI open-weight MoE). ~33% more memory-efficient than Qwen3-30B on consumer GPUs, native tool-use, trivial in Ollama. Slightly less reasoning depth, more speed/footprint.</p>
+  </div>
+  <div class="card">
+    <h3>Smaller / between Pi and 30B</h3>
+    <p><strong>Qwen3 4B / 8B / 14B</strong> dense — solid agentic small models; 8B/14B run on a 3090 or Mac Mini. <strong>Gemma 3/4 (12–31B)</strong> good for single-file coding/refactor. <strong>Mistral Small 4</strong> (~24B, Apache-2.0) for fine-tuning.</p>
+  </div>
+  <div class="card">
+    <h3>Frontier (use via provider)</h3>
+    <p><strong>DeepSeek V4, Kimi K2.6, Qwen 3.6 Plus, GLM-5.1</strong> lead agentic-coding leaderboards but are 100B+ MoE — too big for a personal box. Consume these through the provider slot in LiteLLM when a task needs the horsepower.</p>
+  </div>
+</div>
+<div class="callout warn"><span class="label">Test in your harness</span> Benchmark scores ≠ real tool-calling reliability. Before committing to a local model, run it inside GACA with <em>your</em> actual tool schemas and retry logic. The model that benchmarks best isn't always the one that calls your tools most reliably.</div>
+
+<h2>Recommended progression</h2>
+<div class="grid cols-3">
+  <div class="card"><h4>Phase 1 — now</h4><p>Pi 5 (16GB) runs the loop + LiteLLM. Inference → a <strong>provider</strong> (cheap to validate the whole agent). Keep a 1.5B local model as offline chat fallback.</p></div>
+  <div class="card"><h4>Phase 2 — local-first</h4><p>Add a <strong>used 3090 box</strong> (or Strix Halo) running <strong>Qwen3-Coder-30B-A3B</strong>. Add it to LiteLLM as the primary, provider as fallback. Now you're local-first with a one-line escape hatch.</p></div>
+  <div class="card"><h4>Phase 3 — tune</h4><p>Route by task: small/local for routine tool calls, provider (or a bigger local box) only for hard reasoning/coding. LiteLLM makes this a config policy, not a rewrite.</p></div>
+</div>
+<p class="muted">Nothing about the architecture changes between phases — that's the point of the gateway.</p>
+
+<div class="foot">
+  <p><strong>Sources:</strong> stratosphereips.org (Pi 5 LLM + function-calling benchmark) · docs.ollama.com/api/openai-compatibility · docs.litellm.ai · terminalbytes.com / pinggy.io / toolhalla.ai (2026 hardware guides) · kyuz0.github.io / llm-tracker.info (Strix Halo benchmarks) · huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct · mindstudio.ai (2026 open agentic-coding models). Hardware prices and model rankings move fast — verify current figures.</p>
+</div>
+</div>
+</body>
+</html>

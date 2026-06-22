@@ -1,0 +1,22 @@
+[project]
+name = "gaca-api"
+version = "0.1.0"
+description = "GACA API — the front door and system of record"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic-settings>=2.6",
+    "pymongo>=4.9",
+    "sse-starlette>=2.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "httpx>=0.27",
+]
+
+# No [build-system] on purpose: this is an application, not a library.
+# uv treats it as a "virtual" project — it manages the .venv and deps, and the
+# local gaca_api/ package is importable when you run from this directory.

@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GACA — Good And Cheap Agent(s) · Plan</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<nav class="topnav"><div class="inner">
+  <span class="brand">GACA<span>·</span></span>
+  <a class="navlink active" href="index.html">Overview</a>
+  <a class="navlink" href="landscape.html">Tools &amp; Frameworks</a>
+  <a class="navlink" href="architecture.html">Architecture</a>
+  <a class="navlink" href="hardware-models.html">Hardware &amp; Models</a>
+  <a class="navlink" href="gaca-plan.html">GACA Plan</a>
+  <a class="navlink" href="odysseus-experiment.html">Odysseus Experiment</a>
+  <a class="navlink" href="gaca-experiment.html">GACA Experiment</a>
+</div></nav>
+
+<div class="wrap">
+<header class="page">
+  <div class="kicker">Personal Assistant · Build-vs-Buy Study</div>
+  <h1>GACA — a Good And Cheap Agent you actually own</h1>
+  <p class="lede">A self-hosted personal assistant: an Android app talks through a secure API to a central <strong>agent loop</strong> on your server. The loop has memory, skills, and tools, spawns subagents (coding, GitHub, calendar), and runs against either a local open-source model <em>or</em> a provider. This is a walk-through of what already exists, what to adopt, what to build, and how to lay out the code.</p>
+</header>
+
+<h2>Your draft, decoded</h2>
+<p>Here's the rough draft you handed me, and the same idea cleaned up. The architecture you sketched is sound — it's the standard "agent gateway" shape that several 2026 projects converge on. What's missing is mostly the <strong>plumbing that makes it safe and swappable</strong>: a model gateway, an auth layer, a sandbox boundary, an approval gate for write actions, and a scheduler. The <a href="architecture.html">Architecture page</a> redraws it with those added.</p>
+
+<figure>
+<svg viewBox="0 0 880 300" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, sans-serif">
+  <defs>
+    <marker id="a" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#58a6ff"/></marker>
+  </defs>
+  <style>
+    .b{fill:#1a2029;stroke:#2a323d;rx:8}
+    .t{fill:#e6edf3;font-size:13px;font-weight:600}
+    .ts{fill:#9aa7b4;font-size:11px}
+    .ln{stroke:#58a6ff;stroke-width:1.6;fill:none;marker-end:url(#a)}
+    .lnd{stroke:#3fb950;stroke-width:1.6;fill:none;stroke-dasharray:5 4;marker-end:url(#a)}
+  </style>
+  <rect class="b" x="370" y="14" width="140" height="44" rx="8"/><text class="t" x="440" y="34" text-anchor="middle">Android app</text><text class="ts" x="440" y="50" text-anchor="middle">text·audio·images</text>
+  <rect class="b" x="360" y="100" width="160" height="40" rx="8"/><text class="t" x="440" y="124" text-anchor="middle">API layer</text>
+  <rect class="b" x="360" y="180" width="160" height="44" rx="8"/><text class="t" x="440" y="200" text-anchor="middle">Agent loop</text><text class="ts" x="440" y="216" text-anchor="middle">the brain</text>
+  <rect class="b" x="630" y="182" width="170" height="40" rx="8"/><text class="t" x="715" y="206" text-anchor="middle">Local LLM / provider</text>
+  <rect class="b" x="150" y="120" width="120" height="38" rx="8"/><text class="t" x="210" y="143" text-anchor="middle">coding agent</text>
+  <rect class="b" x="120" y="182" width="120" height="38" rx="8"/><text class="t" x="180" y="205" text-anchor="middle">subagents</text>
+  <rect class="b" x="60" y="240" width="130" height="46" rx="8"/><text class="ts" x="125" y="259" text-anchor="middle">skills /</text><text class="ts" x="125" y="273" text-anchor="middle">repeatable work</text>
+  <rect class="b" x="300" y="248" width="80" height="36" rx="8"/><text class="t" x="340" y="270" text-anchor="middle">CLIs</text>
+  <rect class="b" x="410" y="248" width="120" height="36" rx="8"/><text class="t" x="470" y="270" text-anchor="middle">long-term memory</text>
+  <rect class="b" x="600" y="248" width="110" height="36" rx="8"/><text class="t" x="655" y="270" text-anchor="middle">APIs / MCP</text>
+  <path class="ln" d="M440,60 L440,98"/>
+  <path class="ln" d="M440,142 L440,178"/>
+  <path class="lnd" d="M520,202 L628,202"/>
+  <path class="ln" d="M360,196 L272,150"/>
+  <path class="ln" d="M360,200 L242,200"/>
+  <path class="ln" d="M380,210 L190,242"/>
+  <path class="ln" d="M400,224 L350,248"/>
+  <path class="ln" d="M450,224 L468,248"/>
+  <path class="ln" d="M510,218 L600,250"/>
+</svg>
+<figcaption>Your sketch, transcribed. The bones are right. See <a href="architecture.html">Architecture</a> for the version with the missing safety/swap plumbing.</figcaption>
+</figure>
+
+<h2>The one-paragraph answer</h2>
+<div class="callout pick">
+  <span class="label">Recommendation</span>
+  <strong>Don't build the agent loop from scratch, and don't adopt a single heavyweight framework either.</strong> Build a <em>thin</em> orchestration core you fully understand (a few hundred lines over <strong>Pydantic AI</strong> or <strong>LangGraph</strong>), and <em>wrap</em> mature, boring components for everything underneath it: <strong>LiteLLM</strong> for local↔provider swapping, <strong>MCP servers</strong> for Google/GitHub, an existing <strong>coding CLI</strong> (Aider / opencode / Pi) as the coding subagent, <strong>Mem0 + sqlite-vec</strong> for memory, the open <strong>SKILL.md</strong> format for skills, and a <strong>native Android app</strong> (Kotlin + Compose) reaching the API through <strong>Cloudflare</strong> (Tunnel + Access) as the front-end. The Pi runs the components under <strong>Nix + systemd</strong> (no Docker); inference points at a provider now and a local GPU box later — a one-line config change. <em>See the <a href="gaca-plan.html">GACA Plan</a> for the current shape (four components, agent calls tools directly, dedicated memory) — it supersedes specifics on this study page.</em>
+</div>
+
+<h2>The five build-vs-buy calls</h2>
+<div class="table-scroll">
+<table>
+  <thead><tr><th>Layer</th><th>Verdict</th><th>Use</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Agent loop</strong></td><td><span class="badge pick">BUILD thin</span></td><td>Pydantic AI or LangGraph, wrapped in your own FastAPI</td><td>This is the part you want to <em>understand and control</em>. Keep it small; don't reinvent the model/tool plumbing under it.</td></tr>
+    <tr><td><strong>Model access</strong></td><td><span class="badge no">BUY</span></td><td>LiteLLM proxy</td><td>One endpoint; swap local model ↔ provider by config. Solves your "open source models or a provider" requirement directly.</td></tr>
+    <tr><td><strong>Coding subagent</strong></td><td><span class="badge no">BUY</span></td><td>Aider / opencode / Pi (shell out, headless)</td><td>Git-aware coding agents are a solved, deep problem. Don't rebuild; orchestrate one.</td></tr>
+    <tr><td><strong>Tools / integrations</strong></td><td><span class="badge no">BUY</span></td><td>Official GitHub MCP + Google Workspace MCP</td><td>Read-only Gmail, calendar writes, Drive, GitHub — all exist as MCP servers with scope controls.</td></tr>
+    <tr><td><strong>Memory</strong></td><td><span class="badge no">BUY</span></td><td>Mem0 + sqlite-vec (or Letta)</td><td>Pi-friendly, self-hosted. Letta if you'd rather get the loop+memory together.</td></tr>
+    <tr><td><strong>Android UI</strong></td><td><span class="badge pick">BUILD native</span></td><td>Kotlin + Jetpack Compose (<code>gaca-android</code>)</td><td>Decision updated: a native app, not a PWA — first-class mic, share-sheet, and notifications. See the <a href="gaca-plan.html">GACA Plan</a>.</td></tr>
+  </tbody>
+</table>
+</div>
+<p class="muted">Full reasoning, comparison tables, and the projects you named (Odysseus, Hermes, OpenClaw, Pi) are on the <a href="landscape.html">Tools &amp; Frameworks</a> page.</p>
+
+<h2>Browse the pages</h2>
+<div class="grid cols-2">
+  <a class="tile" href="landscape.html">
+    <span class="num">01</span><h3>Tools &amp; Frameworks →</h3>
+    <p>Odysseus, Hermes, OpenClaw, Pi — what they actually are — plus the wider field of agent frameworks and coding agents, with build-vs-buy tables.</p>
+  </a>
+  <a class="tile" href="architecture.html">
+    <span class="num">02</span><h3>Recommended Architecture →</h3>
+    <p>Your diagram, redrawn with the missing plumbing: model gateway, auth, sandbox, approval gate, scheduler. Plus remote access, MCP wiring, and sandboxing.</p>
+  </a>
+  <a class="tile" href="hardware-models.html">
+    <span class="num">03</span><h3>Hardware &amp; Models →</h3>
+    <p>What a Pi 5 can really run (spoiler: not the brain), the split-inference pattern, the 2026 "local but capable" hardware sweet spot, and the best small models for tool-use.</p>
+  </a>
+  <a class="tile" href="gaca-plan.html">
+    <span class="num">04</span><h3>GACA Plan →</h3>
+    <p>The build we're actually doing: one repo, four components (api · agent · memory · native android) + a React test UI, Nix + systemd (no Docker), async comms (no held request), the agent calls tools directly and spawns subagents, a dedicated memory system, MongoDB as the system of record with Redis Streams + pub/sub as the transport, and a small Phase 1.</p>
+  </a>
+</div>
+
+<h2>What you were missing in the draft</h2>
+<div class="grid cols-3">
+  <div class="card"><h4>Model gateway</h4><p>A box between the loop and the model so "local LLM or provider" is a config flip, with fallback. → LiteLLM.</p></div>
+  <div class="card"><h4>Auth + secrets</h4><p>The API layer needs auth (single-user API key/JWT) and a vault for OAuth tokens / provider keys.</p></div>
+  <div class="card"><h4>Sandbox boundary</h4><p>Subagents and the coding agent run untrusted code. Wrap them in bubblewrap + ephemeral worktrees.</p></div>
+  <div class="card"><h4>Approval gate</h4><p>You gave email read-only but calendar/GitHub <em>write</em>. Risky writes should pause for a phone tap.</p></div>
+  <div class="card"><h4>Scheduler</h4><p>Your draft is request→response only. A cron loop lets the agent act proactively (briefings, jobs).</p></div>
+  <div class="card"><h4>Observability</h4><p>To <em>trust</em> an agent you own, you need a log of every tool call and decision. Build this in from day one.</p></div>
+</div>
+
+<div class="callout warn">
+  <span class="label">Honesty notes</span>
+  GitHub star counts in 2026 search results are wildly inconsistent — treat all popularity figures as "order of magnitude." <strong>Odysseus</strong> is AGPL-3.0 (copyleft) and its PewDiePie attribution is plausible but not cryptographically verified. Google's <em>official</em> Calendar/Workspace MCP servers are still in Developer Preview; the community <code>taylorwilsdon/google_workspace_mcp</code> is the safer bet today. Verify these before you commit.
+</div>
+
+<div class="foot">
+  <p>Prepared 2026-06-13 from live research into the mid-2026 open-source agent landscape. Source links are cited inline on each page. This is a decision aid, not gospel — verify load-bearing facts (licenses, MCP preview status, hardware specs) before building.</p>
+</div>
+</div>
+</body>
+</html>

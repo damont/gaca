@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GACA · Recommended Architecture</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<nav class="topnav"><div class="inner">
+  <span class="brand">GACA<span>·</span></span>
+  <a class="navlink" href="index.html">Overview</a>
+  <a class="navlink" href="landscape.html">Tools &amp; Frameworks</a>
+  <a class="navlink active" href="architecture.html">Architecture</a>
+  <a class="navlink" href="hardware-models.html">Hardware &amp; Models</a>
+  <a class="navlink" href="gaca-plan.html">GACA Plan</a>
+  <a class="navlink" href="odysseus-experiment.html">Odysseus Experiment</a>
+  <a class="navlink" href="gaca-experiment.html">GACA Experiment</a>
+</div></nav>
+
+<div class="wrap">
+<header class="page">
+  <div class="kicker">02 · Recommended Architecture</div>
+  <h1>Your diagram, with the safety &amp; swap plumbing added</h1>
+  <p class="lede">Same bones as your sketch. I've added the five things that turn a demo into something you can trust on a server you own: a <strong>model gateway</strong>, an <strong>auth/secrets</strong> layer, a <strong>sandbox boundary</strong> around subagents, an <strong>approval gate</strong> for write actions, and a <strong>scheduler</strong> + <strong>audit log</strong>.</p>
+</header>
+
+<div class="callout warn"><span class="label">Superseded in places</span> This is the reference/principles page. The <a href="gaca-plan.html">GACA Plan</a> is canonical and updates three things shown below: the <strong>agent calls tools directly</strong> (the API publishes the catalog, it doesn't execute), <strong>memory is its own system</strong> (<code>gaca-memory</code>), and there's <strong>no Docker</strong> (Nix flake + systemd; isolation via bubblewrap, not containers). The safety concepts here — gateway, auth, sandbox, approval, audit — still apply.</div>
+
+<figure>
+<svg viewBox="0 0 980 620" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, sans-serif">
+  <defs>
+    <marker id="ar" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#58a6ff"/></marker>
+    <marker id="ag" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#3fb950"/></marker>
+    <marker id="ao" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#ffa657"/></marker>
+  </defs>
+  <style>
+    .box{fill:#1a2029;stroke:#2a323d}
+    .core{fill:#15212f;stroke:#58a6ff;stroke-width:1.5}
+    .t{fill:#e6edf3;font-size:13px;font-weight:600}
+    .ts{fill:#9aa7b4;font-size:10.5px}
+    .ln{stroke:#58a6ff;stroke-width:1.6;fill:none;marker-end:url(#ar)}
+    .lg{stroke:#3fb950;stroke-width:1.6;fill:none;stroke-dasharray:5 4;marker-end:url(#ag)}
+    .lo{stroke:#ffa657;stroke-width:1.6;fill:none;marker-end:url(#ao)}
+    .zone{fill:none;stroke:#2a323d;stroke-dasharray:4 4;rx:14}
+    .zt{fill:#9aa7b4;font-size:11px;font-weight:700;letter-spacing:1px}
+  </style>
+
+  <!-- Phone -->
+  <rect class="box" x="400" y="14" width="180" height="44" rx="8"/>
+  <text class="t" x="490" y="34" text-anchor="middle">Android app (PWA)</text>
+  <text class="ts" x="490" y="49" text-anchor="middle">text · audio · images · files</text>
+
+  <!-- Cloudflare link -->
+  <text class="zt" x="560" y="86" fill="#ffa657">Cloudflare Tunnel + Access · email allow-list (no open ports)</text>
+
+  <!-- Edge zone: API + Auth -->
+  <rect class="box" x="370" y="96" width="240" height="56" rx="8"/>
+  <text class="t" x="490" y="118" text-anchor="middle">API layer + Auth</text>
+  <text class="ts" x="490" y="135" text-anchor="middle">FastAPI · API key / JWT · intake</text>
+
+  <!-- The server boundary -->
+  <rect class="zone" x="24" y="172" width="932" height="392"/>
+  <text class="zt" x="40" y="192">RASPBERRY PI 5  ·  the agent host</text>
+
+  <!-- Agent loop (core) -->
+  <rect class="core" x="370" y="214" width="240" height="64" rx="10"/>
+  <text class="t" x="490" y="240" text-anchor="middle">AGENT LOOP</text>
+  <text class="ts" x="490" y="258" text-anchor="middle">plan · choose tool · call model</text>
+  <text class="ts" x="490" y="271" text-anchor="middle">Pydantic AI / LangGraph core</text>
+
+  <!-- Model gateway -->
+  <rect class="box" x="680" y="218" width="150" height="56" rx="8"/>
+  <text class="t" x="755" y="240" text-anchor="middle">Model gateway</text>
+  <text class="ts" x="755" y="257" text-anchor="middle">LiteLLM proxy</text>
+
+  <!-- Local / provider -->
+  <rect class="box" x="690" y="304" width="130" height="40" rx="8"/>
+  <text class="ts" x="755" y="322" text-anchor="middle">Local GPU box</text>
+  <text class="ts" x="755" y="335" text-anchor="middle">(Qwen3-Coder-30B)</text>
+  <rect class="box" x="690" y="356" width="130" height="38" rx="8"/>
+  <text class="ts" x="755" y="379" text-anchor="middle">Provider (Claude…)</text>
+
+  <!-- Memory -->
+  <rect class="box" x="395" y="320" width="190" height="44" rx="8"/>
+  <text class="t" x="490" y="340" text-anchor="middle">Long-term memory</text>
+  <text class="ts" x="490" y="356" text-anchor="middle">Mem0 + sqlite-vec</text>
+
+  <!-- Skills -->
+  <rect class="box" x="40" y="214" width="150" height="44" rx="8"/>
+  <text class="t" x="115" y="234" text-anchor="middle">Skills registry</text>
+  <text class="ts" x="115" y="250" text-anchor="middle">SKILL.md bundles</text>
+
+  <!-- Tool / MCP layer with permission policy -->
+  <rect class="box" x="40" y="320" width="300" height="48" rx="8"/>
+  <text class="t" x="190" y="341" text-anchor="middle">Tool router + permission policy</text>
+  <text class="ts" x="190" y="357" text-anchor="middle">MCP client · scope &amp; rate enforcement</text>
+
+  <!-- Approval gate -->
+  <rect class="box" x="370" y="172" width="240" height="0" rx="8" opacity="0"/>
+  <rect class="box" x="630" y="120" width="180" height="40" rx="8" style="stroke:#ffa657"/>
+  <text class="t" x="720" y="140" text-anchor="middle" fill="#ffa657">Approval gate</text>
+  <text class="ts" x="720" y="153" text-anchor="middle">writes pause → phone tap</text>
+
+  <!-- Sandbox zone -->
+  <rect class="zone" x="40" y="406" width="430" height="140" style="stroke:#ff7b72"/>
+  <text class="zt" x="56" y="426" fill="#ff7b72">SANDBOX  ·  bubblewrap + ephemeral worktree</text>
+  <rect class="box" x="60" y="440" width="180" height="40" rx="8"/>
+  <text class="t" x="150" y="464" text-anchor="middle">Coding subagent</text>
+  <rect class="box" x="60" y="494" width="180" height="40" rx="8"/>
+  <text class="t" x="150" y="518" text-anchor="middle">Other subagents</text>
+  <rect class="box" x="270" y="440" width="180" height="40" rx="8"/>
+  <text class="ts" x="360" y="463" text-anchor="middle">CLIs (gh, git, shell)</text>
+  <rect class="box" x="270" y="494" width="180" height="40" rx="8"/>
+  <text class="ts" x="360" y="517" text-anchor="middle">ephemeral containers</text>
+
+  <!-- MCP external -->
+  <rect class="box" x="510" y="430" width="430" height="110" rx="8" style="stroke:#d2a8ff"/>
+  <text class="zt" x="526" y="450" fill="#d2a8ff">EXTERNAL via MCP (your OAuth, narrow scopes)</text>
+  <rect class="box" x="528" y="464" width="120" height="34" rx="6"/><text class="ts" x="588" y="485" text-anchor="middle">GitHub MCP</text>
+  <rect class="box" x="660" y="464" width="120" height="34" rx="6"/><text class="ts" x="720" y="481" text-anchor="middle">Gmail MCP</text><text class="ts" x="720" y="493" text-anchor="middle" fill="#3fb950">read-only</text>
+  <rect class="box" x="792" y="464" width="130" height="34" rx="6"/><text class="ts" x="857" y="485" text-anchor="middle">Calendar (write)</text>
+  <rect class="box" x="588" y="504" width="140" height="30" rx="6"/><text class="ts" x="658" y="523" text-anchor="middle">Drive (read)</text>
+  <rect class="box" x="740" y="504" width="140" height="30" rx="6"/><text class="ts" x="810" y="523" text-anchor="middle">your own APIs</text>
+
+  <!-- Scheduler + audit -->
+  <rect class="box" x="40" y="172" width="150" height="0" opacity="0"/>
+  <rect class="box" x="800" y="172" width="156" height="34" rx="8"/>
+  <text class="ts" x="878" y="193" text-anchor="middle">Scheduler (cron jobs)</text>
+
+  <!-- edges -->
+  <path class="ln" d="M490,58 L490,94"/>
+  <path class="ln" d="M490,152 L490,212"/>
+  <path class="lg" d="M610,246 L678,246"/>
+  <path class="lg" d="M755,274 L755,302"/>
+  <path class="lg" d="M755,344 L755,354"/>
+  <path class="ln" d="M455,278 L490,318"/>
+  <path class="ln" d="M370,250 L192,238"/>
+  <path class="ln" d="M380,270 L300,322"/>
+  <path class="lo" d="M610,232 L632,160"/>
+  <path class="ln" d="M250,344 L150,438"/>
+  <path class="ln" d="M280,348 L355,440"/>
+  <path class="lo" d="M340,344 L520,452"/>
+  <path class="ln" d="M832,200 L610,228" opacity="0.5"/>
+</svg>
+<figcaption>GACA reference architecture. <span style="color:#58a6ff">Blue</span> = control/data flow · <span style="color:#3fb950">green dashed</span> = model inference (swappable) · <span style="color:#ffa657">orange</span> = human approval · red/purple zones = trust boundaries.</figcaption>
+</figure>
+
+<h2>Walking the request</h2>
+<ol>
+  <li>You speak/type/snap a photo in the <strong>native Android app</strong>. It reaches the Pi through <strong>Cloudflare</strong> (Tunnel + Access), which only lets your verified email through — no port is ever exposed to the internet.</li>
+  <li>The <strong>API layer</strong> authenticates the call (single-user API key or short JWT), transcribes audio, and hands the request to the loop.</li>
+  <li>The <strong>agent loop</strong> pulls relevant <strong>memory</strong>, may load a <strong>skill</strong>, and decides on a tool or a subagent. Model calls go through the <strong>LiteLLM gateway</strong> — local model or provider, its choice or your config.</li>
+  <li>Read actions (search email, list events) run straight through <strong>MCP</strong>. <strong>Write</strong> actions (create calendar event, push to GitHub) hit the <strong>approval gate</strong> — you get a notification and tap to confirm.</li>
+  <li>Coding/other subagents run inside the <strong>sandbox</strong>: bubblewrap + an ephemeral git worktree/container, network egress restricted, torn down after.</li>
+  <li>Every tool call and decision lands in the <strong>audit log</strong>, so you can always see what your agent did and why.</li>
+</ol>
+
+<h2>The five additions, justified</h2>
+<div class="grid cols-2">
+  <div class="card"><h3>1 · Model gateway (LiteLLM)</h3><p>Your draft has "local LLM or provider" as one box. In practice you want a thin proxy in front so switching is a one-line config change — and you get automatic <strong>fallback</strong> (try local, fail over to provider), spend tracking, and one endpoint everything points at. Runs fine on the Pi. <a href="hardware-models.html">Details →</a></p></div>
+  <div class="card"><h3>2 · Auth + secrets</h3><p>Even behind Cloudflare Access, the API keeps its own app-layer auth so a stolen device session can't drive your agent. Single-user: Cloudflare Access (email allow-list) as the outer gate, plus a static API key or short-lived JWT at the API. Plus a real home for OAuth tokens and provider keys (env/secret file, never in code).</p></div>
+  <div class="card"><h3>3 · Sandbox boundary</h3><p>Subagents and the coding agent run model-generated code. Plain Docker shares the host kernel and isn't enough for untrusted code. Mirror Anthropic's own approach: <strong>bubblewrap</strong> + network proxy, each task in an <strong>ephemeral container/worktree</strong>, non-root, egress allow-list. (gVisor if your Pi kernel supports it.)</p></div>
+  <div class="card"><h3>4 · Approval gate</h3><p>You deliberately scoped email <em>read-only</em> but calendar and GitHub get <em>writes</em>. That asymmetry is exactly where a human-in-the-loop checkpoint belongs: risky/irreversible actions pause and push a confirm to your phone. Cheap to build, huge for trust.</p></div>
+  <div class="card"><h3>5 · Scheduler + audit log</h3><p>Your draft is purely reactive. A cron loop lets GACA act proactively — morning briefing, watch a repo, run a recurring job (your <code>openclaw</code>-style jobs). The audit log is what makes an agent you <em>own</em> trustworthy: a complete, queryable record of every action.</p></div>
+  <div class="card"><h3>+ Permission policy on the tool router</h3><p>One place that knows "Gmail = read-only, Calendar = write-with-approval, GitHub = these repos only, rate-limit X." The loop asks the router; the router enforces. Keeps scope decisions out of prompt-engineering and in code you can audit.</p></div>
+</div>
+
+<h2>The integration surface (MCP)</h2>
+<p>Every external connection is an <strong>MCP server</strong> using <em>your own</em> OAuth client with the narrowest scopes. This is the cleanest way to satisfy "read-only email, write calendar, GitHub access."</p>
+<div class="table-scroll">
+<table>
+  <thead><tr><th>Need</th><th>Server</th><th>Scope</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>GitHub (coding subagent)</td><td><code>github/github-mcp-server</code> (official)</td><td>Fine-grained PAT, or <code>--read-only</code> + toolsets</td><td>Local Docker server + PAT is simpler than the remote OAuth flow for a single-user agent.</td></tr>
+    <tr><td>Gmail <span class="badge yes">read-only</span></td><td><code>taylorwilsdon/google_workspace_mcp</code></td><td><code>--permissions gmail:readonly</code> → <code>gmail.readonly</code></td><td>One server covers Gmail+Calendar+Drive with per-service scoping. Most actively maintained community option.</td></tr>
+    <tr><td>Calendar (create events)</td><td>same Workspace server</td><td><code>calendar.events</code> (write)</td><td>Or Google's <em>official</em> Calendar MCP — but it's still in Developer Preview; scopes for create-event are inconsistent in the preview docs. Verify before relying on it.</td></tr>
+    <tr><td>Drive (read)</td><td>same Workspace server</td><td><code>drive.readonly</code></td><td>Anthropic's old reference <code>gdrive</code> server is deprecated — use the community one.</td></tr>
+    <tr><td>Your own APIs</td><td>a small custom MCP server you write</td><td>your call</td><td>Wrap your endpoints as MCP tools so the loop treats them like any other capability.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2>Reaching it from your phone, securely</h2>
+<div class="grid cols-2">
+  <div class="card">
+    <h3>Remote access: Cloudflare</h3>
+    <p>The whole stack is fronted by <strong>Cloudflare</strong> (which you already use for everything). A <strong>Cloudflare Tunnel</strong> connects out from the Pi, so <strong>no port is ever exposed</strong> and there's no inbound firewall hole; <strong>Cloudflare Access</strong> sits in front with an <strong>email allow-list</strong> so only your identity reaches <code>gaca-api</code>. You get TLS, a stable hostname, and identity-based auth for free.</p>
+    <p class="muted">Defense in depth: keep app-layer auth on the API even behind Cloudflare Access — the email gate is the outer layer, the API key/JWT is the inner one.</p>
+  </div>
+  <div class="card">
+    <h3>Android client: native app <span class="tag">decision updated</span></h3>
+    <p>The current plan builds a <strong>native Android app</strong> (<code>gaca-android</code>, Kotlin + Jetpack Compose) talking to <code>gaca-api</code> through Cloudflare — <strong>text + audio capture + image/file attachments</strong> with first-class mic, share-sheet, and notification access. (The earlier PWA / Open WebUI recommendation is superseded; see the <a href="gaca-plan.html">GACA Plan</a>.)</p>
+    <p class="muted">A PWA over Open WebUI remains the fastest way to <em>prototype</em> the endpoint before the native client lands.</p>
+  </div>
+</div>
+
+<div class="callout"><span class="label b">Design principle</span> Make the model <strong>swappable</strong>, the tools <strong>scoped</strong>, the subagents <strong>sandboxed</strong>, the writes <strong>approved</strong>, and the actions <strong>logged</strong>. Everything else is detail you can change later without touching the core.</div>
+
+<div class="foot">
+  <p><strong>Sources:</strong> github.com/github/github-mcp-server · github.com/taylorwilsdon/google_workspace_mcp · developers.google.com/workspace/calendar/api (preview) · developers.cloudflare.com/cloudflare-one (Tunnel + Access) · github.com/open-webui/open-webui · github.com/containers/bubblewrap · docs.litellm.ai. Google's official Workspace/Calendar MCP servers are in Developer Preview — confirm scope/availability at build time.</p>
+</div>
+</div>
+</body>
+</html>
