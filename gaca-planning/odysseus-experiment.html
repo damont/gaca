@@ -11,11 +11,10 @@
   <span class="brand">GACA<span>·</span></span>
   <a class="navlink" href="index.html">Overview</a>
   <a class="navlink" href="landscape.html">Tools &amp; Frameworks</a>
-  <a class="navlink" href="architecture.html">Architecture</a>
-  <a class="navlink" href="hardware-models.html">Hardware &amp; Models</a>
-  <a class="navlink" href="gaca-plan.html">GACA Plan</a>
+  <a class="navlink" href="gaca-plan.html">Full GACA Plan</a>
   <a class="navlink active" href="odysseus-experiment.html">Odysseus Experiment</a>
   <a class="navlink" href="gaca-experiment.html">GACA Experiment</a>
+  <a class="navlink" href="hermes-plan.html">Hermes Plan</a>
 </div></nav>
 
 <div class="wrap">
@@ -24,6 +23,8 @@
   <h1>Odysseus on <code>shire</code>, reached through Cloudflare</h1>
   <p class="lede">The concrete plan you decided on: run Odysseus on your Raspberry Pi 5 <strong>shire</strong>, with <strong>Anthropic Opus</strong> as the agent brain (capped so it can't run up a bill) and your <strong>ChatGPT/Codex subscription</strong> doing the token-heavy coding via the <strong>Codex CLI</strong>. Reach it from your Android phone over <strong>Cloudflare</strong>, and let it deploy and drive your apps on a second Pi, <strong>piservices</strong>. Below: the architecture, what controls what, and step-by-step setup verified against the actual Odysseus repo, the Codex CLI docs, and Anthropic's spend-limit controls.</p>
 </header>
+
+<div class="callout warn"><span class="label">Outcome — we tried it, it wasn't what we wanted</span> We actually stood this up and ran it. In practice Odysseus wasn't the right fit: you live <em>inside its</em> agent rather than owning the loop, the API surface, and the trust layer — the parts where ownership is the whole point. This page stays as a record of the experiment and a working how-to, but the direction moved on to the <a href="gaca-experiment.html">GACA Experiment</a> (own the parts that matter, adopt the rest). Read what follows as "what we tried," not "what we're building."</div>
 
 <div class="pill-row">
   <span class="pill">Host: shire (Pi 5)</span>
@@ -167,7 +168,7 @@
   <div class="card"><h4>Codex does the coding, on your subscription</h4><p>When the brain decides "this is a coding job," it shells out to the <strong>Codex CLI</strong> (<code>codex exec</code>), which authenticates with your <strong>ChatGPT/Codex subscription</strong> and runs as a full coding agent (its own tools + sandbox). The token-heavy work runs flat-rate, not on the metered Anthropic key — that's the cost win.</p></div>
   <div class="card"><h4>You only ever talk to Odysseus</h4><p>Your phone hits <code>odysseus.example.com</code> → Cloudflare → the tunnel → Odysseus. Everything downstream (Anthropic, Codex, piservices, tools) is Odysseus acting on your behalf. piservices has no UI here; Odysseus reaches it.</p></div>
   <div class="card"><h4>Cloudflare is the doorway, not a component</h4><p>Cloudflare does two jobs: terminate HTTPS (which also lets your phone's mic work) and enforce <strong>Access</strong> so only your email gets in. It holds no app logic. The tunnel is outbound from shire, so your home network exposes nothing.</p></div>
-  <div class="card"><h4>Only the model is rented — and it's capped</h4><p>Everything runs on your hardware except the two model providers. Opus is metered (pay-per-token) but <strong>hard-capped by an Anthropic workspace spend limit</strong> so a confused loop can't run up a bill; coding rides your flat subscription. Swap Opus for a local model later (per the <a href="hardware-models.html">Hardware page</a>) and nothing else changes.</p></div>
+  <div class="card"><h4>Only the model is rented — and it's capped</h4><p>Everything runs on your hardware except the two model providers. Opus is metered (pay-per-token) but <strong>hard-capped by an Anthropic workspace spend limit</strong> so a confused loop can't run up a bill; coding rides your flat subscription. Swap Opus for a local model later and nothing else changes.</p></div>
 </div>
 
 <div class="callout warn"><span class="label">Two things to keep in mind</span> Odysseus is <strong>AGPL-3.0</strong>, fast-moving, and its default branch is unstable — build from the <code>main</code> branch and re-check the README before pulling updates. And its <code>bash</code>/SSH tools are powerful and run as your admin user with no built-in approval gate — only you should have an account, and be deliberate about what you let it do to piservices.</div>
@@ -436,7 +437,7 @@ journalctl -u cloudflared -f            # watch it connect</code></pre>
   </ul></div>
 </div>
 
-<div class="callout pick"><span class="label">Where this can grow</span> This experiment rents a capped Opus brain, runs coding on your Codex subscription, deploys piservices apps over SSH, and acts on them via their REST APIs. Upgrades that drop in without changing the shape: (1) swap the Opus brain for a <strong>local model</strong> — see <a href="hardware-models.html">Hardware &amp; Models</a> — and your API bill goes to $0 (a provider change in Settings); (2) graduate Mode B from "skill + curl" to a per-app <strong>OpenAPI→MCP</strong> bridge so every endpoint is a first-class tool. If you later outgrow Odysseus's "you live inside its agent" model, the <a href="gaca-plan.html">GACA Plan</a> is your path to a core you fully own — and your apps' agent contract carries over unchanged.</div>
+<div class="callout pick"><span class="label">Where this can grow</span> This experiment rents a capped Opus brain, runs coding on your Codex subscription, deploys piservices apps over SSH, and acts on them via their REST APIs. Upgrades that drop in without changing the shape: (1) swap the Opus brain for a <strong>local model</strong> and your API bill goes to $0 (a provider change in Settings); (2) graduate Mode B from "skill + curl" to a per-app <strong>OpenAPI→MCP</strong> bridge so every endpoint is a first-class tool. If you later outgrow Odysseus's "you live inside its agent" model, the <a href="gaca-plan.html">Full GACA Plan</a> is your path to a core you fully own — and your apps' agent contract carries over unchanged.</div>
 
 <div class="foot">
   <p><strong>Verified against:</strong> the Odysseus repo — <code>src/llm_core.py</code> + <code>src/endpoint_resolver.py</code> confirm the <em>Anthropic</em> path uses native <code>/v1/messages</code> with <code>x-api-key</code>, passes <code>tools</code> as <code>input_schema</code>, and sends real image blocks (full tools + vision), while <code>src/chatgpt_subscription.py</code> sets <code>supports_tools = False</code> and drops vision; per-role models live in <code>src/settings.py</code>/<code>endpoint_resolver.py</code>. Codex CLI: developers.openai.com/codex (Sign-in-with-ChatGPT auth, <code>codex exec</code> non-interactive/<code>--json</code>, arm64 binary, built-in sandbox; docs recommend API keys for unattended automation). Anthropic spend controls: platform.claude.com/docs/en/api/rate-limits + Console workspace spend limits (hard monthly cap; not settable on the default workspace; keys bound to their workspace). Model pricing (per 1M in/out): Opus 4.8/4.7/4.6 $5/$25 · Sonnet 4.6 $3/$15 · Haiku 4.5 $1/$5. Plus your <code>newbuild</code> docs (Phase 10 agent-auth, Phase 08 Pi deploy) and Cloudflare's current Tunnel/Access docs. Flags to test yourself: live SSE streaming behaviour through Cloudflare, the first-build compile time on the Pi, and the current Codex subscription usage caps/ToS for headless use. Odysseus is AGPL-3.0 and fast-moving — re-check the README before a fresh install.</p>

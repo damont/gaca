@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>GACA · Plan</title>
+<title>GACA · Full GACA Plan</title>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -11,23 +11,22 @@
   <span class="brand">GACA<span>·</span></span>
   <a class="navlink" href="index.html">Overview</a>
   <a class="navlink" href="landscape.html">Tools &amp; Frameworks</a>
-  <a class="navlink" href="architecture.html">Architecture</a>
-  <a class="navlink" href="hardware-models.html">Hardware &amp; Models</a>
-  <a class="navlink active" href="gaca-plan.html">GACA Plan</a>
+  <a class="navlink active" href="gaca-plan.html">Full GACA Plan</a>
   <a class="navlink" href="odysseus-experiment.html">Odysseus Experiment</a>
   <a class="navlink" href="gaca-experiment.html">GACA Experiment</a>
+  <a class="navlink" href="hermes-plan.html">Hermes Plan</a>
 </div></nav>
 
 <div class="wrap">
 <header class="page">
-  <div class="kicker">04 · GACA Plan</div>
+  <div class="kicker">04 · Full GACA Plan</div>
   <h1>One repo, four components, the Pi as host</h1>
-  <p class="lede">The build we're actually doing. <strong>One git repo (<code>gaca/</code>)</strong> with four components built under it: <code>gaca-api</code> (the front door and system of record), <code>gaca-agent</code> (the brain — it calls tools <em>directly</em>), <code>gaca-memory</code> (a dedicated memory system), and <code>gaca-android</code> (a native app). The API knows <em>which</em> tools exist and owns sessions, policy config, the audit trail, and long-term memory; the agent fetches that catalog and then <strong>executes tools itself, on the host</strong>, streaming audit back. There is <strong>no Docker</strong> — a <strong>Nix flake</strong> pins every dependency and <strong>systemd</strong> supervises each component.</p>
+  <p class="lede">The full build, if we built <em>everything</em>. <strong>One git repo (<code>gaca/</code>)</strong> with four components built under it: <code>gaca-api</code> (the front door and system of record), <code>gaca-agent</code> (the brain — it calls tools <em>directly</em>), <code>gaca-memory</code> (a dedicated memory system), and <code>gaca-android</code> (a native app). The API knows <em>which</em> tools exist and owns sessions, policy config, the audit trail, and long-term memory; the agent fetches that catalog and then <strong>executes tools itself, on the host</strong>, streaming audit back. There is <strong>no Docker</strong> — a <strong>Nix flake</strong> pins every dependency and <strong>systemd</strong> supervises each component.</p>
 </header>
 
 <div class="callout"><span class="label b">What changed from the previous plan</span> Three structural changes. <strong>(1) The agent calls tools directly.</strong> The old plan routed every side effect through <code>POST /tools/{name}:execute</code> on the API. Now the API only publishes the <em>catalog</em> of available tools; the agent executes them in-process against the host and streams audit events back. The agent is now the privileged component. <strong>(2) Memory is its own system.</strong> A dedicated <code>gaca-memory</code> service holds long-term memory (the API recalls/writes it) and short-term working memory (the agent loads it into the live session). <strong>(3) No containers.</strong> A Nix flake + systemd units replace <code>docker-compose</code>. The Android client also becomes a <strong>native app</strong> rather than a PWA.</p></div>
 
-<div class="callout"><span class="label b">And in this revision</span> <strong>(4) Communication is async — the session is a timeline, not a request/response.</strong> <code>POST /sessions/{id}/messages</code> returns <code>202</code> instantly; the session <strong>event stream is the only return path</strong>. No request is ever held open. The agent is a <strong>long-running supervisor</strong> per session that stays snappy by <strong>streaming its progress as it works</strong>; heavy fan-out to <strong>background subagents</strong> is a later phase. <strong>(5) Two stores, one job each.</strong> <strong>MongoDB</strong> is the system of record (sessions, messages, audit, runs); <strong>Redis</strong> is pure transport — Streams for the run queue + per-session inbox, pub/sub for the event fan-out. <strong>(6) A React test UI</strong> (<code>gaca-testui</code>) is built alongside to exercise the API/agents while the native app comes together.</p></div>
+<div class="callout"><span class="label b">And in this revision</span> <strong>(4) Communication is async — the session is a timeline, not a request/response.</strong> <code>POST /sessions/{id}/messages</code> returns <code>202</code> instantly; the session <strong>event stream is the only return path</strong>. No request is ever held open. The agent is a <strong>long-running supervisor</strong> per session that stays snappy by <strong>streaming its progress as it works</strong>; heavy fan-out to <strong>background subagents</strong> is a later phase. <strong>(5) Two stores, one job each.</strong> <strong>SQLite</strong> is the system of record (sessions, messages, audit, runs); <strong>Redis</strong> is pure transport — Streams for the run queue + per-session inbox, pub/sub for the event fan-out. <strong>(6) A React test UI</strong> (<code>gaca-testui</code>) is built alongside to exercise the API/agents while the native app comes together.</p></div>
 
 <h2>Guiding principles</h2>
 <div class="grid cols-2">
@@ -42,10 +41,10 @@
 <div class="grid cols-2">
   <div class="card">
     <h3><code>gaca-api</code> <span class="tag">the front door</span></h3>
-    <p>One FastAPI app. The single HTTP surface for the phone and the agent. Owns sessions + audit (MongoDB), publishes the tool catalog, brokers long-term memory, enforces auth. Never blocks — it dispatches work and streams results back.</p>
+    <p>One FastAPI app. The single HTTP surface for the phone and the agent. Owns sessions + audit (SQLite), publishes the tool catalog, brokers long-term memory, enforces auth. Never blocks — it dispatches work and streams results back.</p>
     <ul>
       <li>All client-facing endpoints, grouped by resource</li>
-      <li><strong>MongoDB</strong> (local) for sessions, messages, audit, runs</li>
+      <li><strong>SQLite</strong> (embedded, single file) for sessions, messages, audit, runs</li>
       <li>Dispatches runs via <strong>Redis Streams</strong>; fans events out via Redis pub/sub → SSE</li>
       <li>Auth: single-user API key for clients; service token for the agent</li>
       <li>Publishes the tool <em>catalog</em> — it does <strong>not</strong> run tools</li>
@@ -127,7 +126,7 @@
   <rect class="api" x="290" y="150" width="180" height="104" rx="10"/>
   <text class="t" x="380" y="176" text-anchor="middle">gaca-api</text>
   <text class="ts" x="380" y="196" text-anchor="middle">sessions · tool catalog</text>
-  <text class="ts" x="380" y="211" text-anchor="middle">policy · audit · MongoDB</text>
+  <text class="ts" x="380" y="211" text-anchor="middle">policy · audit · SQLite</text>
   <text class="ts" x="380" y="226" text-anchor="middle">auth · LT-memory broker</text>
 
   <!-- Agent -->
@@ -184,19 +183,19 @@
 <h2>How the agent and API communicate — async by default</h2>
 <p>The API <strong>never holds a request open</strong>. The session is a <strong>timeline</strong>, not a request/response pair: your message goes in, the API acknowledges instantly, and everything the agent produces — tokens, tool calls, "I've kicked off X," a subagent result that lands 40 seconds later — comes back on a <strong>single event stream</strong>. That's what keeps it snappy even when the answer isn't ready yet.</p>
 <div class="grid cols-2">
-  <div class="card"><h4>Inbound is non-blocking</h4><p><code>POST /sessions/{id}/messages</code> persists the message to Mongo, <code>XADD</code>s a run to a <strong>Redis Stream</strong>, and returns <code>202 Accepted</code> with a turn id — <em>immediately</em>. No waiting on the agent.</p></div>
+  <div class="card"><h4>Inbound is non-blocking</h4><p><code>POST /sessions/{id}/messages</code> persists the message to SQLite, <code>XADD</code>s a run to a <strong>Redis Stream</strong>, and returns <code>202 Accepted</code> with a turn id — <em>immediately</em>. No waiting on the agent.</p></div>
   <div class="card"><h4>The event stream is the only return path</h4><p>The phone is already subscribed to <code>GET /sessions/{id}/events</code> (SSE). It renders whatever appears, whenever it appears. There is no "response" to wait for — just the timeline filling in.</p></div>
 </div>
-<p>The comms substrate between the two services is <strong>Redis</strong> — pure transport, with <strong>MongoDB as the system of record</strong> behind it. There are <strong>two distinct dispatch channels</strong>, each with one job:</p>
+<p>The comms substrate between the two services is <strong>Redis</strong> — pure transport, with <strong>SQLite as the system of record</strong> behind it. There are <strong>two distinct dispatch channels</strong>, each with one job:</p>
 <ul>
   <li><strong>Route signal (shared, API → agent service):</strong> when a session needs attention, the API <code>XADD</code>s a lightweight <em>"ensure session S has a live supervisor"</em> signal to a shared <strong>dispatch stream</strong>. The agent service consumes it with <code>XREADGROUP ... BLOCK 0</code> (consumer group + <code>XACK</code>, at-least-once) and, if no supervisor is alive for S, spawns one. This stream carries <strong>routing/spawn signals, not messages</strong>.</li>
   <li><strong>Per-session inbox (the message path):</strong> the actual message is <code>XADD</code>ed to a <strong>per-session stream</strong> (<code>inbox:{session_id}</code>) that the live supervisor for that session reads in order. Your typed messages flow here — and later, subagent results too. One ordered queue per session, drained by exactly one supervisor.</li>
-  <li><strong>Return path (agent → frontend):</strong> the agent <code>POST</code>s each event + audit entry to the API. The API does two things with it — <strong>persist to Mongo</strong> (the durable log) and <strong>publish to a per-session Redis pub/sub channel</strong>. Every open <code>GET /sessions/{id}/events</code> handler is subscribed to that channel, so it flushes the event straight down the already-open SSE connection to the phone.</li>
+  <li><strong>Return path (agent → frontend):</strong> the agent <code>POST</code>s each event + audit entry to the API. The API does two things with it — <strong>persist to SQLite</strong> (the durable log) and <strong>publish to a per-session Redis pub/sub channel</strong>. Every open <code>GET /sessions/{id}/events</code> handler is subscribed to that channel, so it flushes the event straight down the already-open SSE connection to the phone.</li>
 </ul>
-<p>That last point answers "how does the agent's reply reach the frontend": the agent never talks to the phone — it posts to the API, the API persists-then-publishes, and Redis pub/sub fans the event out to every subscribed SSE stream. Because the event is in Mongo first, a phone that was disconnected replays what it missed (by last-seen event id) on reconnect, then resumes live. And because the fan-out is Redis pub/sub rather than an in-process queue, it keeps working even if the API runs more than one worker.</p>
+<p>That last point answers "how does the agent's reply reach the frontend": the agent never talks to the phone — it posts to the API, the API persists-then-publishes, and Redis pub/sub fans the event out to every subscribed SSE stream. Because the event is in SQLite first, a phone that was disconnected replays what it missed (by last-seen event id) on reconnect, then resumes live. And because the fan-out is Redis pub/sub rather than an in-process queue, it keeps working even if the API runs more than one worker.</p>
 <pre><code>Phone           gaca-api              gaca-agent (supervisor)      host / memory / provider
   │ POST /sessions/{id}/messages │                            │
-  │ ─────────────────────────────► persist(Mongo)             │
+  │ ─────────────────────────────► persist(SQLite)            │
   │                  │  XADD route-signal ─► dispatch stream   │
   │                  │  XADD message ─────► inbox:{sid}        │
   │ ◄─── 202 Accepted {turn_id} ──┤                            │
@@ -207,7 +206,7 @@
   │                  │             │ load short-term ─► gaca-memory
   │   SSE: assistant "On it — checking the repo…"  (instant)   │
   │ ◄──[Redis pub/sub]┤◄───────────  POST /sessions/{id}/events│
-  │                  │  persist(Mongo) + publish               │
+  │                  │  persist(SQLite) + publish              │
   │                  │             │ run tools DIRECTLY ─► host, model ─► provider
   │                  │   POST /audit  (structured, per tool)   │
   │   SSE: assistant streams progress as it works …            │
@@ -224,7 +223,7 @@
 <p>The agent is a <strong>long-running supervisor</strong> per active session. It owns the live context, so it can answer a turn and <em>keep going</em> instead of being rebuilt per request. It is not immortal, though — it has a defined lifecycle:</p>
 <div class="grid cols-2">
   <div class="card"><h4>Spawned on demand</h4><p>The shared dispatch stream's only job is routing: when a message arrives for session S and no supervisor is alive for it, the agent service <strong>spawns one</strong>. Exactly one supervisor owns session S and drains its <code>inbox:{S}</code> stream in order.</p></div>
-  <div class="card"><h4>Idle-timeout + rehydrate</h4><p>After a quiet period the supervisor <strong>flushes its short-term memory and exits</strong> (no idle processes). The next message for S routes through dispatch, a fresh supervisor spawns, and it <strong>rehydrates from Mongo</strong> (recent turns/state) + <code>gaca-memory</code> (short-term working set) before it answers.</p></div>
+  <div class="card"><h4>Idle-timeout + rehydrate</h4><p>After a quiet period the supervisor <strong>flushes its short-term memory and exits</strong> (no idle processes). The next message for S routes through dispatch, a fresh supervisor spawns, and it <strong>rehydrates from SQLite</strong> (recent turns/state) + <code>gaca-memory</code> (short-term working set) before it answers.</p></div>
 </div>
 <p>Both your typed messages <em>and</em> (later) subagent results are just <strong>inputs</strong> on that one serialized <code>inbox:{S}</code> stream, drained in order — so a genuinely concurrent situation (you typing while work lands) never becomes a race.</p>
 
@@ -244,7 +243,7 @@ Plus the guardrails that make fan-out safe: a <strong>max-concurrent-subagents</
   <thead><tr><th>Group</th><th>Endpoints</th><th>Purpose</th><th>Phase</th></tr></thead>
   <tbody>
     <tr><td><code>/session</code></td><td><code>POST /sessions</code> · <code>GET /sessions/{id}</code> · <code>POST /sessions/{id}/messages</code> (→ <code>202</code>) · <code>GET /sessions/{id}/events</code> (SSE) · <code>POST /sessions/{id}/events</code> (agent) · <code>DELETE /sessions/{id}</code></td><td>Conversations and their event streams. <code>POST …/messages</code> returns <code>202</code> instantly; all output comes back on the SSE event stream. The client's primary surface.</td><td><span class="badge yes">P1</span></td></tr>
-    <tr><td><code>/agents</code></td><td><code>GET /agents</code> · <code>POST /agents/runs</code> · <code>GET /agents/runs/{id}</code> · <code>PATCH /agents/runs/{id}</code></td><td>Agent definitions and runs. <code>POST /agents/runs</code> records the run in Mongo, then <code>XADD</code>s a <strong>route signal</strong> to the shared dispatch stream and the message to <code>inbox:{session}</code> — non-blocking; the agent service consumes dispatch via <code>XREADGROUP</code>.</td><td><span class="badge yes">P1</span></td></tr>
+    <tr><td><code>/agents</code></td><td><code>GET /agents</code> · <code>POST /agents/runs</code> · <code>GET /agents/runs/{id}</code> · <code>PATCH /agents/runs/{id}</code></td><td>Agent definitions and runs. <code>POST /agents/runs</code> records the run in SQLite, then <code>XADD</code>s a <strong>route signal</strong> to the shared dispatch stream and the message to <code>inbox:{session}</code> — non-blocking; the agent service consumes dispatch via <code>XREADGROUP</code>.</td><td><span class="badge yes">P1</span></td></tr>
     <tr><td><code>/tasks</code></td><td><code>GET /tasks</code> · <code>GET /tasks/{id}</code> · <code>POST /tasks/{id}:cancel</code></td><td>Registry of background subagent tasks ("3 tasks running" + cancellation). Lands with fan-out, not Phase 1.</td><td>later</td></tr>
     <tr><td><code>/tools</code></td><td><code>GET /tools</code> · <code>GET /tools/{name}</code></td><td><strong>Catalog only.</strong> Policy-scoped list of available tools + their JSON schemas. The agent reads this, then executes locally. No execution endpoint.</td><td><span class="badge yes">P1</span></td></tr>
     <tr><td><code>/skills</code></td><td><code>GET /skills</code> · <code>GET /skills/{name}</code> · <code>PUT /skills/{name}</code></td><td>SKILL.md registry. Agent fetches a skill's instructions on demand.</td><td><span class="badge yes">P1</span> (read)</td></tr>
@@ -288,7 +287,7 @@ Plus the guardrails that make fan-out safe: a <strong>max-concurrent-subagents</
 </div>
 <div class="callout"><span class="label b">Why these</span> You named <strong>read files</strong>, <strong>write files</strong>, and <strong>run + monitor CLIs</strong>. Rounding out the set: <strong>code search</strong> (grep/glob) so the agent finds things cheaply; <strong>process management</strong> so it can run a server/build and watch it, not just fire one-shot commands; <strong>http fetch + web search</strong> so it can read the live web; and <strong>git/gh</strong> because almost every useful task touches a repo. Deferred to later phases: <strong>MCP tools</strong> (Gmail read, Calendar write, Drive read), <strong>subagent spawn</strong> (coding/other), and <strong>image/attachment handling</strong>.</p></div>
 
-<div class="callout warn"><span class="label">Trust trade-off — the agent is now privileged</span> Because the agent executes tools directly on the host (no central pre-execution gate), <strong><code>gaca-agent</code> is the component that touches the OS</strong>. Phase-1 guardrails are local and code-level: a <strong>working-directory jail</strong>, a <strong>tool allow-list</strong> the agent honors, and the <strong>audit stream</strong> to the API so you can always see what ran. Real isolation for risky/subagent work — <strong>bubblewrap + ephemeral worktree</strong> (no Docker), egress allow-list — is a later phase. See <a href="architecture.html">Architecture</a>. This is an <strong>open question</strong> flagged below.</div>
+<div class="callout warn"><span class="label">Trust trade-off — the agent is now privileged</span> Because the agent executes tools directly on the host (no central pre-execution gate), <strong><code>gaca-agent</code> is the component that touches the OS</strong>. Phase-1 guardrails are local and code-level: a <strong>working-directory jail</strong>, a <strong>tool allow-list</strong> the agent honors, and the <strong>audit stream</strong> to the API so you can always see what ran. Real isolation for risky/subagent work — <strong>bubblewrap + ephemeral worktree</strong> (no Docker), egress allow-list — is a later phase. This is an <strong>open question</strong> flagged below.</div>
 
 <h2>Repo layout</h2>
 <p>One repo. The four components live side by side under the root, share a <code>schemas/</code> package (the contract between them), and are built + run by a Nix flake and systemd units. No <code>Dockerfile</code>, no <code>docker-compose.yml</code>.</p>
@@ -312,8 +311,8 @@ Plus the guardrails that make fan-out safe: a <strong>max-concurrent-subagents</
 │       ├── bus.py             #   Redis Streams (dispatch, inbox) + pub/sub (events)
 │       ├── routers/           #   HTTP layer — sessions, agents, tasks, tools, skills, audit, memory
 │       ├── services/          #   business logic (no HTTP) — raises domain errors mapped centrally
-│       ├── db/                #   DB layer — Mongo client + per-collection data access
-│       ├── models/            #   database models (stored documents; the _id alias lives here)
+│       ├── db/                #   DB layer — SQLite connection + per-table data access
+│       ├── models/            #   database models (stored rows; plain `id` — no `_id` alias needed)
 │       └── schemas/           #   request/response models (client-facing DTOs; always `id`)
 │
 ├── gaca-agent/                # the brain + hands
@@ -344,8 +343,7 @@ Plus the guardrails that make fan-out safe: a <strong>max-concurrent-subagents</
 │   ├── gaca-api.service
 │   ├── gaca-agent.service
 │   ├── gaca-memory.service
-│   ├── mongodb.service        #   system of record (sessions, audit, runs)
-│   └── redis.service          #   transport (Streams + pub/sub)
+│   └── redis.service          #   transport (Streams + pub/sub) — SQLite is embedded, no unit
 │
 └── tests/
     ├── test_policy.py         # jail + allow-list is security — test hard
@@ -363,7 +361,7 @@ Plus the guardrails that make fan-out safe: a <strong>max-concurrent-subagents</
       gaca-memory = pkgs.callPackage ./gaca-memory {};
     };
     devShells.default = pkgs.mkShell {
-      packages = [ python uv nodejs ripgrep git gh mongodb mongosh redis ];  # + Android SDK for gaca-android
+      packages = [ python uv nodejs ripgrep git gh sqlite redis ];  # + Android SDK for gaca-android
     };
   };
 }
@@ -380,7 +378,7 @@ ExecStart=/run/current-system/sw/bin/gaca-agent
 Restart=on-failure
 [Install]
 WantedBy=multi-user.target</code></pre>
-<p class="muted">Each thing has one job and one systemd unit: <code>gaca-api</code> :41700, <code>gaca-memory</code> :41702, <code>gaca-agent</code> driving runs (dev endpoint :41704), <strong>MongoDB</strong> (<code>mongod</code>, :27017) as the <strong>system of record</strong>, and <strong>Redis</strong> (:6379) as the <strong>transport</strong>. (Ports are intentionally uncommon, not the usual 8080/8000.) The flake gives reproducible deps and a one-command dev shell; systemd gives supervision, restart-on-failure, and journald logs. Later additions (a LiteLLM service, a scheduler) are just more units. If the Pi ever runs NixOS, these units become declarative NixOS modules.</p>
+<p class="muted">Each thing has one job and one systemd unit: <code>gaca-api</code> :41700, <code>gaca-memory</code> :41702, <code>gaca-agent</code> driving runs (dev endpoint :41704), and <strong>Redis</strong> (:6379) as the <strong>transport</strong>. The <strong>system of record</strong> is <strong>SQLite</strong> — an embedded file with no daemon and no port to manage, so it needs no unit of its own. (Ports are intentionally uncommon, not the usual 8080/8000.) The flake gives reproducible deps and a one-command dev shell; systemd gives supervision, restart-on-failure, and journald logs. Later additions (a LiteLLM service, a scheduler) are just more units. If the Pi ever runs NixOS, these units become declarative NixOS modules.</p>
 
 <h2>The agent, in pseudocode</h2>
 <pre><code># gaca-agent — the service ROUTES; a per-session supervisor does the work. Tools run HERE, on the host.
@@ -397,7 +395,7 @@ async def route():
 async def supervise(session_id):
     catalog = await api.get("/tools")               # policy-scoped catalog (names + schemas)
     short   = await memory.load(session_id)         # rehydrate short-term working set
-    history = await api.get(f"/sessions/{session_id}")   # rehydrate recent turns from Mongo
+    history = await api.get(f"/sessions/{session_id}")   # rehydrate recent turns from SQLite
 
     async for msg in xread(f"inbox:{session_id}", block=IDLE_TIMEOUT):  # THE message path
         if msg is None:                             # idle: flush short-term + exit (no idle procs)
@@ -428,7 +426,7 @@ async def fs_read(ctx, path: str) -> str:           # an INLINE tool — runs no
     <h4><code>gaca-api</code></h4>
     <ul>
       <li>FastAPI app + API-key auth + agent service token</li>
-      <li><code>/sessions</code> on <strong>MongoDB</strong>; <code>POST …/messages</code> → <code>202</code>, SSE events out</li>
+      <li><code>/sessions</code> on <strong>SQLite</strong>; <code>POST …/messages</code> → <code>202</code>, SSE events out</li>
       <li><code>/agents/runs</code> → <strong>route signal + per-session inbox</strong> (Redis Streams); events fanned out via Redis pub/sub</li>
       <li><code>/tools</code> <strong>catalog</strong> (names + schemas + policy scope)</li>
       <li><code>/audit</code> ingest + read; <code>/memory</code> broker; <code>/skills</code> read; <code>/health</code></li>
@@ -438,7 +436,7 @@ async def fs_read(ctx, path: str) -> str:           # an INLINE tool — runs no
     <h4><code>gaca-agent</code></h4>
     <ul>
       <li>Pydantic AI <strong>supervisor</strong> per session over a provider model</li>
-      <li>Router spawns a supervisor <strong>on demand</strong>; idle-timeout + rehydrate from Mongo</li>
+      <li>Router spawns a supervisor <strong>on demand</strong>; idle-timeout + rehydrate from SQLite</li>
       <li><strong>Direct host tools:</strong> fs read/write/list, cli run, proc start/poll/stop, grep/glob, http fetch, git/gh</li>
       <li><strong>Narrates progress inline</strong> as it works — no subagents/fan-out yet</li>
       <li>Local policy (jail + allow-list); short-term load/flush; structured event + audit streaming back</li>
@@ -493,11 +491,11 @@ async def fs_read(ctx, path: str) -> str:           # an INLINE tool — runs no
   <li><strong>The agent executes tools directly, on the host.</strong> <code>gaca-agent</code> runs each tool in-process against the box, enforces a local policy (working-dir jail + allow-list), and is the privileged component that touches the OS.</li>
   <li><strong>Every tool call is audited.</strong> The agent streams an audit entry to <code>POST /audit</code> for each tool it runs. The audit log is on from day one.</li>
   <li><strong>Communication is async; no request is held open.</strong> <code>POST /sessions/{id}/messages</code> returns <code>202</code> immediately; the session SSE event stream is the only return path. All output — tokens, tool calls, subagent results — arrives on that timeline.</li>
-  <li><strong>The agent is a long-running supervisor, one per session, spawned on demand.</strong> A shared Redis <strong>dispatch stream</strong> (consumer group) carries <em>route/spawn signals only</em>; the message path is a per-session <code>inbox:{session}</code> stream the supervisor drains in order. The supervisor <strong>idle-times-out</strong> (flushing short-term memory) and <strong>rehydrates from Mongo + gaca-memory</strong> on the next message. <strong>Phase 1 ships the supervisor + direct tools only and narrates progress inline; <code>spawn</code>/subagents are a later phase.</strong></li>
+  <li><strong>The agent is a long-running supervisor, one per session, spawned on demand.</strong> A shared Redis <strong>dispatch stream</strong> (consumer group) carries <em>route/spawn signals only</em>; the message path is a per-session <code>inbox:{session}</code> stream the supervisor drains in order. The supervisor <strong>idle-times-out</strong> (flushing short-term memory) and <strong>rehydrates from SQLite + gaca-memory</strong> on the next message. <strong>Phase 1 ships the supervisor + direct tools only and narrates progress inline; <code>spawn</code>/subagents are a later phase.</strong></li>
   <li><strong>The agent reaches the API only over HTTP, never by import</strong> — components share <em>data shapes</em> via <code>schemas/</code>, never <em>logic</em>. Session-message transport runs over Redis, but the agent <strong>does call the API for state</strong> (tool catalog, run records, audit, long-term memory). Those calls are <strong>typed/structured</strong> (shared schemas), so what the agent is doing is captured as data — never lost in plain English. (The exact catalog of state calls is a boundary to refine in practice.)</li>
   <li><strong>The agent is built on Pydantic AI</strong> — chosen as the most straightforward option with the least framework baggage. It supplies tool-calling and model machinery; we own the host tool impls, the local policy, the audit stream, and memory wiring.</li>
   <li><strong>Memory is a dedicated system.</strong> <code>gaca-memory</code> holds long-term memory and short-term working memory. <strong>Clients write durable (long-term) facts through the API</strong> (it's state); the agent loads/flushes <strong>short-term</strong> directly. <strong>Promotion (short→long) is internal to <code>gaca-memory</code></strong>, run on flush (idle-timeout or session close). Neither the API nor the agent grows its own memory store.</li>
-  <li><strong>MongoDB is the system of record; Redis is the transport.</strong> Application data/state lives in <strong>local MongoDB</strong> — the API works in <em>objects</em>, MongoDB is already used elsewhere, and document storage fits app state. (Internal or speed-critical data may later use SQLite/Postgres where objects aren't the point.) Redis is pure transport: the shared dispatch stream + per-session inboxes are <strong>Redis Streams</strong>, the event fan-out is <strong>Redis pub/sub</strong>. <code>gaca-memory</code> owns its own store. The Pi is the Phase 1 host; tools run directly on the box and real sandbox isolation (bubblewrap, no Docker) is deferred.</li>
+  <li><strong>SQLite is the system of record; Redis is the transport.</strong> Application data/state lives in an <strong>embedded SQLite file</strong> — serverless (no separate service, no port to manage), and trivial and reproducible under Nix with <strong>no MongoDB-on-ARM packaging pain</strong>, the deciding factor for the Pi target. Backups are a single file copy, and Hermes itself runs on embedded SQLite. Objects stay natural via Pydantic — store the model as JSON in a column and load it back with <code>model_validate_json()</code>; single-writer is fine for a single-user box. (If a single-file store is ever outgrown, <strong>Postgres + JSONB</strong> is the scale-up path — same whole-object ergonomics, now a real server.) Redis is pure transport: the shared dispatch stream + per-session inboxes are <strong>Redis Streams</strong>, the event fan-out is <strong>Redis pub/sub</strong>. <code>gaca-memory</code> owns its own store. The Pi is the Phase 1 host; tools run directly on the box and real sandbox isolation (bubblewrap, no Docker) is deferred.</li>
   <li><strong>The client is a native Android app.</strong> <code>gaca-android</code> (Kotlin + Jetpack Compose) reaching the API through Cloudflare — not a PWA. A React <code>gaca-testui</code> is built alongside as a dev/test client and is not the shipping UI.</li>
   <li><strong>Everything beyond Phase 1 is additive.</strong> Approval gate, sandbox isolation, scheduler, MCP, subagents, and the LiteLLM gateway bolt on without reshaping the four components.</li>
 </ol>
@@ -519,10 +517,10 @@ async def fs_read(ctx, path: str) -> str:           # an INLINE tool — runs no
   </ul></div>
 </div>
 
-<div class="callout pick"><span class="label">Start here</span> Stand up <code>gaca-api</code> on MongoDB with <code>/health</code>, auth, a <code>/tools</code> catalog, <code>/audit</code> ingest, and Redis — <code>POST …/messages</code> returns <code>202</code>, <code>XADD</code>s a route signal + the message to <code>inbox:{session}</code>, and serves an SSE stream fed by Redis pub/sub. Then <code>gaca-agent</code> as a <strong>router that spawns one supervisor per session</strong> (<code>XREADGROUP</code> on dispatch, then drains <code>inbox:{session}</code>), with a Pydantic AI loop and <strong>one real host tool</strong> (<code>cli.run</code> behind a working-dir jail) that posts a structured audit entry. The supervisor <strong>narrates as it works</strong>. Point <code>gaca-testui</code> (React) at it to watch the event stream. That round-trip — text → <code>202</code> → routed to a supervisor → command on the Pi → events stream back, audited, while the session stays responsive — is the whole spine. Subagents, memory, and the native app are additive.</div>
+<div class="callout pick"><span class="label">Start here</span> Stand up <code>gaca-api</code> on SQLite with <code>/health</code>, auth, a <code>/tools</code> catalog, <code>/audit</code> ingest, and Redis — <code>POST …/messages</code> returns <code>202</code>, <code>XADD</code>s a route signal + the message to <code>inbox:{session}</code>, and serves an SSE stream fed by Redis pub/sub. Then <code>gaca-agent</code> as a <strong>router that spawns one supervisor per session</strong> (<code>XREADGROUP</code> on dispatch, then drains <code>inbox:{session}</code>), with a Pydantic AI loop and <strong>one real host tool</strong> (<code>cli.run</code> behind a working-dir jail) that posts a structured audit entry. The supervisor <strong>narrates as it works</strong>. Point <code>gaca-testui</code> (React) at it to watch the event stream. That round-trip — text → <code>202</code> → routed to a supervisor → command on the Pi → events stream back, audited, while the session stays responsive — is the whole spine. Subagents, memory, and the native app are additive.</div>
 
 <div class="foot">
-  <p>Supersedes the earlier two-service / docker-compose plan. The agent calls tools directly, communication is async (no held request), memory is its own system, MongoDB is the system of record with Redis Streams + pub/sub as the transport, and deploy is Nix + systemd. Stack reflects the mid-2026 ecosystem (Pydantic AI, FastAPI, MongoDB, Redis, Mem0, LiteLLM, MCP Python SDK; React for the test UI). See <a href="architecture.html">Architecture</a> for the target topology and <a href="landscape.html">Tools &amp; Frameworks</a> for alternatives at each layer.</p>
+  <p>Supersedes the earlier two-service / docker-compose plan. The agent calls tools directly, communication is async (no held request), memory is its own system, SQLite is the system of record with Redis Streams + pub/sub as the transport, and deploy is Nix + systemd. Stack reflects the mid-2026 ecosystem (Pydantic AI, FastAPI, SQLite, Redis, Mem0, LiteLLM, MCP Python SDK; React for the test UI). See <a href="landscape.html">Tools &amp; Frameworks</a> for alternatives at each layer.</p>
 </div>
 </div>
 </body>

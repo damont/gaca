@@ -11,11 +11,10 @@
   <span class="brand">GACA<span>·</span></span>
   <a class="navlink" href="index.html">Overview</a>
   <a class="navlink" href="landscape.html">Tools &amp; Frameworks</a>
-  <a class="navlink" href="architecture.html">Architecture</a>
-  <a class="navlink" href="hardware-models.html">Hardware &amp; Models</a>
-  <a class="navlink" href="gaca-plan.html">GACA Plan</a>
+  <a class="navlink" href="gaca-plan.html">Full GACA Plan</a>
   <a class="navlink" href="odysseus-experiment.html">Odysseus Experiment</a>
   <a class="navlink active" href="gaca-experiment.html">GACA Experiment</a>
+  <a class="navlink" href="hermes-plan.html">Hermes Plan</a>
 </div></nav>
 
 <div class="wrap">
@@ -42,7 +41,7 @@
     <tr><td><strong>Agent loop</strong></td><td><span class="badge pick">OWN</span></td><td>Thin loop over Pydantic AI <span class="muted">(or raw SDK)</span></td><td>The part you want to understand. Keep it small; don't reinvent tool plumbing.</td></tr>
     <tr><td><strong>Model gateway</strong></td><td><span class="badge pick">OWN</span> (thin)</td><td>A <code>ModelGateway</code> port; OpenAI/Anthropic now, LiteLLM-ready</td><td>Flexible by config, minimal infra today.</td></tr>
     <tr><td><strong>Coding agent</strong></td><td><span class="badge no">ADOPT</span></td><td>Shell out to a CLI — Codex (your sub) default; Pi / Aider swappable</td><td>Deep, solved problem. Orchestrate it; don't rebuild it.</td></tr>
-    <tr><td><strong>Memory</strong></td><td><span class="badge maybe">OWN thin</span></td><td>MongoDB (your stack) for docs; brute-force vectors; sqlite-vec later</td><td>"What my agent remembers about me" is trust — own the logic, store it where you already do.</td></tr>
+    <tr><td><strong>Memory</strong></td><td><span class="badge maybe">OWN thin</span></td><td>SQLite (embedded, one file) for docs; brute-force vectors; sqlite-vec later</td><td>"What my agent remembers about me" is trust — own the logic, store it where you already do.</td></tr>
     <tr><td><strong>Tools / integrations</strong></td><td><span class="badge no">ADOPT</span></td><td>MCP — GitHub, Google Workspace, your apps</td><td>Read-only Gmail, calendar writes, GitHub all exist as MCP servers.</td></tr>
     <tr><td><strong>Trust layer</strong></td><td><span class="badge pick">OWN</span></td><td>Approval gate · permission policy · audit log</td><td>Small, and the entire reason you're not using Odysseus.</td></tr>
     <tr><td><strong>Subagents</strong></td><td><span class="badge pick">OWN</span></td><td>Another run of your loop, scoped — Pydantic AI delegation</td><td>Keep the main context lean, fan out, specialize. Route them to a cheaper model.</td></tr>
@@ -119,7 +118,7 @@
   <!-- memory -->
   <rect class="own" x="64" y="434" width="446" height="48" rx="8"/>
   <text class="t" x="287" y="455" text-anchor="middle" fill="#3fb950">Memory (thin, yours)</text>
-  <text class="ts" x="287" y="470" text-anchor="middle">MongoDB (host) · brute-force vectors · sqlite-vec later</text>
+  <text class="ts" x="287" y="470" text-anchor="middle">SQLite (embedded) · brute-force vectors · sqlite-vec later</text>
 
   <!-- ports to adopted -->
   <rect class="box" x="64" y="494" width="446" height="40" rx="8"/>
@@ -127,7 +126,7 @@
   <text class="ts" x="287" y="528" text-anchor="middle">swap any adopted piece without touching the core</text>
 
   <text class="ts" x="287" y="556" text-anchor="middle">Runtime: backend on the host (api+loop+scheduler,</text>
-  <text class="ts" x="287" y="570" text-anchor="middle">as you) · web container · Mongo on host</text>
+  <text class="ts" x="287" y="570" text-anchor="middle">as you) · web container · SQLite file on host</text>
 
   <!-- adopted column -->
   <rect class="zone" x="552" y="184" width="372" height="436" rx="12" style="stroke:#d2a8ff"/>
@@ -227,10 +226,10 @@
 <h2>6 · Memory <span class="tag">OWN thin</span></h2>
 <p>Memory is where "what does my agent know about me" lives — that's trust, so you want to own it. But keep it tiny; don't build a research project.</p>
 <div class="grid cols-2">
-  <div class="card"><h4>Own thin, on MongoDB <span class="badge pick">decided</span></h4><ul><li><strong>MongoDB</strong> (your existing self-hosted instance, its own DB) for conversation history + a <code>notes/facts</code> collection + the audit log. Reuses what you already run and back up.</li><li><strong>Vectors:</strong> for your scale (hundreds–low-thousands of notes) store embeddings as arrays in Mongo and do <strong>brute-force cosine in an aggregation pipeline</strong> — no new infra. Add a <code>sqlite-vec</code> sidecar only if it grows.</li><li><strong>Embedder:</strong> local <code>fastembed</code> (free, private) — separate from the store.</li></ul><p class="muted">You own the "what to remember" logic; Mongo stores it. Legible, and one backup.</p></div>
+  <div class="card"><h4>Own thin, on SQLite <span class="badge pick">decided</span></h4><ul><li><strong>SQLite</strong> (embedded, file-based — its own DB file) for conversation history + a <code>notes/facts</code> table + the audit log. No separate service or port, and a backup is a single file copy.</li><li><strong>Vectors:</strong> for your scale (hundreds–low-thousands of notes) store embeddings as JSON in SQLite and do <strong>brute-force cosine in Python</strong> — no new infra. Add a <code>sqlite-vec</code> sidecar only if it grows.</li><li><strong>Embedder:</strong> local <code>fastembed</code> (free, private) — separate from the store.</li></ul><p class="muted">You own the "what to remember" logic; SQLite stores it — objects stay natural via Pydantic (store the model as JSON in a column, reload with <code>model_validate_json()</code>). Legible, and one backup.</p></div>
   <div class="card"><h4>Adopt: Mem0 (later)</h4><ul><li>Drop-in memory layer that does <strong>fact extraction + dedup + recall</strong> for you.</li><li>Apache-2.0, self-hostable, popular.</li></ul><p class="muted">Saves writing the "is this worth remembering?" logic — but it's another dependency and still needs an embedder + store under it. Add it only if hand-rolled recall feels weak.</p></div>
 </div>
-<div class="callout"><span class="label b">My pick</span> <strong>Own the logic, store it in MongoDB</strong> — the database you already run — behind a <code>Memory</code> port. Documents (conversations, notes, audit) in Mongo; vectors brute-forced in Mongo at your scale, with a <code>sqlite-vec</code> sidecar as the later upgrade. If you want smarter automatic memory, <strong>Mem0</strong> slots in behind the same port. You own what's remembered; the storage is boring and familiar. <a href="#memory">Short-term vs long-term memory, where the vectors live &amp; why embeddings ↓</a></div>
+<div class="callout"><span class="label b">My pick</span> <strong>Own the logic, store it in SQLite</strong> — embedded, file-based, no separate service or port — behind a <code>Memory</code> port. Documents (conversations, notes, audit) in SQLite; vectors brute-forced in SQLite at your scale, with a <code>sqlite-vec</code> sidecar as the later upgrade. If you want smarter automatic memory, <strong>Mem0</strong> slots in behind the same port. You own what's remembered; the storage is boring and rock-solid — Hermes itself runs on embedded SQLite, and single-writer is fine for a single-user box. <a href="#memory">Short-term vs long-term memory, where the vectors live &amp; why embeddings ↓</a></div>
 
 <h2>7 · Tools / integrations <span class="tag">ADOPT</span></h2>
 <p>Don't write integrations — wire in <strong>MCP servers</strong>, each scoped narrowly with your own OAuth:</p>
@@ -272,7 +271,7 @@
 <p>So far GACA is reactive — you talk, it answers. Scheduled jobs make it <strong>proactive</strong>: an agent run triggered by <em>time</em> instead of by you. "Brief me at 7am," "watch this repo for new issues," "check email hourly and ping me if something's urgent." A scheduled job is just an agent run with a preset prompt, fired on a cron/interval.</p>
 <div class="grid cols-2">
   <div class="card"><h4>How it works in GACA</h4><ul>
-    <li>Runs <strong>inside the host backend process</strong>: <code>APScheduler</code> with a job store in Mongo (or systemd timers). Each fire = an <code>agent.run()</code> — same process, no separate watcher.</li>
+    <li>Runs <strong>inside the host backend process</strong>: <code>APScheduler</code> with a job store in SQLite (or systemd timers). Each fire = an <code>agent.run()</code> — same process, no separate watcher.</li>
     <li>Jobs are defined in config <em>or</em> created by the agent itself via a <code>schedule_job</code> tool — so you can just say "every morning, brief me" and it sets it up.</li>
     <li>Results are <strong>pushed to your phone</strong> (ntfy / web push) or stored to read later — you're not in the chat when it runs.</li>
   </ul></div>
@@ -376,9 +375,9 @@
 </ol>
 For your "install it on the box and use it" instinct, <strong>option 1 is the answer</strong>: the backend isn't in Docker, so a tool call running the CLI as you is just… true. (The queue-and-worker idea is gone — it only existed to bridge an in-container agent to a host CLI, which we no longer have.)</div>
 
-<p>The other two needs are pure networking and don't care about any of this:</p>
+<p>The other two needs don't care about any of this either:</p>
 <div class="grid cols-2">
-  <div class="card"><h4>Reach Mongo</h4><p>The host backend → just <code>localhost:27017</code>; a container → <code>mongodb://host.docker.internal:27017</code>. Either way, a normal connection.</p></div>
+  <div class="card"><h4>Open the store</h4><p>No network hop at all — SQLite is an embedded file the host backend opens in-process (<code>gaca.db</code>). No port, no daemon, no connection string; just one file to back up.</p></div>
   <div class="card"><h4>SSH piservices</h4><p>The <code>ssh</code> client + your key + a LAN route — an outbound connection. From the host backend it's literally <code>ssh piservices</code> as you.</p></div>
 </div>
 
@@ -390,7 +389,7 @@ For your "install it on the box and use it" instinct, <strong>option 1 is the an
     <h4>Short-term (working) memory</h4>
     <p>The messages you send <em>this</em> turn: the system prompt, the recent conversation turns, and the current tool results. It's not stored specially — it <em>is</em> the request. You manage it by deciding how much recent history to include.</p>
     <p><strong>The catch:</strong> context windows are big but finite, and stuffing everything is slow, costly, and dilutes the model's attention. So when a conversation gets long, you <strong>summarize older turns into a running recap</strong> ("compaction") and keep only the recent verbatim turns + the recap. Anthropic/OpenAI even offer server-side compaction, but you can also just do it yourself.</p>
-    <p class="muted">Storage: the messages array in the request, plus a <code>conversations</code> collection in MongoDB so a session survives an app restart.</p>
+    <p class="muted">Storage: the messages array in the request, plus a <code>conversations</code> table in SQLite so a session survives an app restart.</p>
   </div>
   <div class="card">
     <h4>Long-term memory</h4>
@@ -400,7 +399,7 @@ For your "install it on the box and use it" instinct, <strong>option 1 is the an
       <li><strong>Episodic</strong> — the log of what happened (your conversation history + audit log).</li>
       <li><strong>Semantic</strong> — distilled, durable facts/notes you want to recall later.</li>
     </ul>
-    <p class="muted">Storage: a MongoDB <code>notes</code>/<code>facts</code> collection; add vectors (next section) when you want meaning-based recall.</p>
+    <p class="muted">Storage: a SQLite <code>notes</code>/<code>facts</code> table; add vectors (next section) when you want meaning-based recall.</p>
   </div>
 </div>
 
@@ -410,26 +409,26 @@ For your "install it on the box and use it" instinct, <strong>option 1 is the an
   <li><strong>Keyword / SQL search.</strong> "Find notes containing 'dentist'." Great for exact matches and tags. Fails the moment the wording differs — a stored note "tooth doctor on the 14th" won't match a query about "my dentist appointment."</li>
   <li><strong>Semantic search via embeddings.</strong> An <strong>embedding</strong> turns a piece of text into a vector — a long list of numbers that captures its <em>meaning</em>. Texts with similar meaning land near each other in that number-space. So you embed the user's current request, find the stored notes whose vectors are <em>closest</em>, and you retrieve by meaning, not spelling — "tooth doctor" matches "dentist." That's the entire reason embeddings exist in this context: <strong>meaning-based recall over a growing pile of memories.</strong></li>
 </ul>
-<div class="callout"><span class="label b">Do you need them?</span> <strong>Not to start.</strong> If your memory is small or you mostly need "the last N turns + a few exact-match facts," a plain Mongo query (including its text index) is enough — skip embeddings entirely. You <em>want</em> embeddings once you've accumulated lots of notes and want the agent to surface <em>what's relevant to this moment</em> regardless of phrasing. The honest path: ship with recent-history + a notes collection, add vector recall when the notes pile up and keyword search starts missing things.</div>
+<div class="callout"><span class="label b">Do you need them?</span> <strong>Not to start.</strong> If your memory is small or you mostly need "the last N turns + a few exact-match facts," a plain SQLite query (including its FTS full-text index) is enough — skip embeddings entirely. You <em>want</em> embeddings once you've accumulated lots of notes and want the agent to surface <em>what's relevant to this moment</em> regardless of phrasing. The honest path: ship with recent-history + a notes table, add vector recall when the notes pile up and keyword search starts missing things.</div>
 <div class="callout warn"><span class="label">The Anthropic embeddings gotcha (again)</span> Embeddings are a <em>separate</em> model from your chat brain, and <strong>Anthropic doesn't offer one</strong>. So even with Claude as your brain, vectors come from elsewhere: a <strong>local embedder</strong> (<code>fastembed</code> — ONNX, free, runs on the Pi, keeps your memories private) or <strong>OpenAI embeddings</strong> (<code>text-embedding-3-small</code>, cheap, per-token, leaves your machine). For a personal assistant, the local embedder is the better default — it's free and nothing about your memories leaves shire.</div>
 
-<h3>Where do the vectors live? "Since we use Mongo for everything…"</h3>
-<p>Good instinct — reuse Mongo. The nuance is only about the <em>vector index</em>, and at your scale it barely matters:</p>
+<h3>Where do the vectors live? "Since we use SQLite for everything…"</h3>
+<p>Good instinct — reuse SQLite. The nuance is only about the <em>vector index</em>, and at your scale it barely matters:</p>
 <div class="table-scroll">
 <table>
   <thead><tr><th>Option</th><th>Fit for a single-user Pi</th></tr></thead>
   <tbody>
-    <tr><td><strong>Brute-force in Mongo</strong> — store embeddings as arrays, compute cosine similarity in an aggregation pipeline, sort, limit <span class="badge pick">start here</span></td><td>For hundreds–low-thousands of notes this is milliseconds, needs <strong>zero new infrastructure</strong>, and keeps one store + one backup. The right default.</td></tr>
-    <tr><td><strong>sqlite-vec sidecar</strong> — Mongo stays system-of-record for documents; a tiny SQLite file holds the vectors with a real KNN index</td><td>Add this only if the store grows past ~10k notes or brute-force latency bugs you. Pure-C, ARM64, no daemon — but it's a <em>second store to keep in sync</em>.</td></tr>
+    <tr><td><strong>Brute-force in SQLite</strong> — store embeddings as JSON, compute cosine similarity in Python, sort, limit <span class="badge pick">start here</span></td><td>For hundreds–low-thousands of notes this is milliseconds, needs <strong>zero new infrastructure</strong>, and keeps one store + one backup. The right default.</td></tr>
+    <tr><td><strong>sqlite-vec sidecar</strong> — SQLite stays system-of-record for documents; a sqlite-vec virtual table holds the vectors with a real KNN index</td><td>Add this only if the store grows past ~10k notes or brute-force latency bugs you. Pure-C, ARM64, no daemon — but it's a <em>second store to keep in sync</em>.</td></tr>
     <tr><td><strong>MongoDB native vector search</strong> (the <code>mongot</code> search process)</td><td><span class="badge no">Skip on the Pi.</span> It's a JVM/Lucene service still in <strong>public preview (not for production)</strong>, wants dedicated hardware + multiple GB of heap, and has no confirmed ARM64 support. Overkill for a personal memory store on a shared Pi.</td></tr>
   </tbody>
 </table>
 </div>
-<p class="muted">So: <strong>yes, keep everything in your existing Mongo</strong> — documents <em>and</em> brute-forced vectors — and reach for a sqlite-vec sidecar only if it ever outgrows that. All behind the <code>Memory</code> port, so the swap is an adapter, not a rewrite.</p>
+<p class="muted">So: <strong>yes, keep everything in one SQLite file</strong> — documents <em>and</em> brute-forced vectors — and reach for a sqlite-vec sidecar only if it ever outgrows that. All behind the <code>Memory</code> port, so the swap is an adapter, not a rewrite.</p>
 
 <div class="card">
 <h4>The practical GACA memory recipe</h4>
-<p><strong>Per turn, assemble the context as:</strong> system prompt + last N conversation turns (short-term) + a running summary of older turns + top-K long-term notes retrieved for this query. <strong>After a conversation</strong>, decide what's worth keeping — either by simple rules or a cheap LLM call ("extract any durable facts/preferences") — and write those to the Mongo <code>notes</code> collection (with an embedding once you've turned vectors on). Start with everything except the embeddings; turn on <code>fastembed</code> + brute-force cosine in Mongo (or a <code>sqlite-vec</code> sidecar) behind your <code>Memory</code> port the day keyword recall isn't enough. If you'd rather not hand-write the "what's worth remembering + retrieve relevant" logic at all, that's exactly what <strong>Mem0</strong> does — slot it behind the same port later.</p>
+<p><strong>Per turn, assemble the context as:</strong> system prompt + last N conversation turns (short-term) + a running summary of older turns + top-K long-term notes retrieved for this query. <strong>After a conversation</strong>, decide what's worth keeping — either by simple rules or a cheap LLM call ("extract any durable facts/preferences") — and write those to the SQLite <code>notes</code> table (with an embedding once you've turned vectors on). Start with everything except the embeddings; turn on <code>fastembed</code> + brute-force cosine in SQLite (or a <code>sqlite-vec</code> sidecar) behind your <code>Memory</code> port the day keyword recall isn't enough. If you'd rather not hand-write the "what's worth remembering + retrieve relevant" logic at all, that's exactly what <strong>Mem0</strong> does — slot it behind the same port later.</p>
 </div>
 
 <hr>
@@ -459,10 +458,10 @@ For your "install it on the box and use it" instinct, <strong>option 1 is the an
       <li><strong>gaca-backend</strong> — <strong>one host service</strong> (systemd + uv, as your user): FastAPI + the agent loop + the scheduler + subagents. Runs on the host so tool calls reach your installed <code>codex</code>/<code>gh</code>/<code>git</code>/<code>ssh</code> directly — no queue, no separate worker.</li>
       <li><strong>web</strong> (container) — the built PWA behind nginx (static; happy in a container).</li>
       <li><strong>mcp servers</strong> — subprocesses the backend spawns, or small containers.</li>
-      <li><strong>MongoDB</strong> — your existing host instance (its own DB), reached at <code>localhost:27017</code>.</li>
+      <li><strong>SQLite</strong> — an embedded file in the backend's data dir (its own DB file); no service, no port.</li>
       <li><em>Later:</em> a <strong>litellm</strong> proxy; and the coding part can move into a sandbox container if you ever want isolation.</li>
     </ul>
-    <p class="muted"><strong>MongoDB stays on the host</strong> (your existing shared instance, GACA gets its own DB) — the containers reach it at <code>mongodb://host.docker.internal:27017</code>, exactly like your newbuild apps. <strong>Cloudflare</strong> reused — repoint a tunnel at the <code>web</code>/<code>api</code> port.</p>
+    <p class="muted"><strong>SQLite lives with the backend</strong> (an embedded file, GACA gets its own DB file) — the host backend opens it in-process, so there's nothing for the containers to reach: no service, no port, and it's trivial and reproducible under Nix with no MongoDB-on-ARM packaging pain (the deciding factor for the Pi). <strong>Cloudflare</strong> reused — repoint a tunnel at the <code>web</code>/<code>api</code> port.</p>
   </div>
 </div>
 
@@ -501,20 +500,20 @@ FastAPI + a thin agent loop over Pydantic AI (Anthropic <em>or</em> OpenAI by co
   <tbody>
     <tr><td><strong>Agent loop</strong></td><td>Thin loop over <strong>Pydantic AI</strong> (own the decisions, it handles provider/tool plumbing)</td><td><span class="badge pick">decided</span></td></tr>
     <tr><td><strong>Coding agent</strong></td><td><strong>Codex CLI</strong> (flat-rate on your ChatGPT sub), behind a <code>CodingAgent</code> port</td><td><span class="badge pick">decided</span></td></tr>
-    <tr><td><strong>Memory store</strong></td><td><strong>MongoDB</strong> (your existing instance) for documents; brute-force vectors in Mongo at this scale; sqlite-vec sidecar later — behind a <code>Memory</code> port</td><td><span class="badge pick">decided</span></td></tr>
+    <tr><td><strong>Memory store</strong></td><td><strong>SQLite</strong> (embedded, one file) for documents; brute-force vectors in SQLite at this scale; sqlite-vec sidecar later — behind a <code>Memory</code> port</td><td><span class="badge pick">decided</span></td></tr>
     <tr><td><strong>Embeddings</strong></td><td>Off to start; local <strong>fastembed</strong> when you turn vectors on (Anthropic has none)</td><td><span class="badge pick">decided</span></td></tr>
     <tr><td><strong>Model gateway</strong></td><td>A <code>ModelGateway</code> port; OpenAI/Anthropic now via Pydantic AI; <strong>LiteLLM</strong>-ready</td><td><span class="badge pick">decided</span></td></tr>
     <tr><td><strong>Repos &amp; runtime</strong></td><td>One <strong>monorepo</strong>; the <strong>backend runs on the host</strong> (api + loop + scheduler, as your user); the <strong>web PWA</strong> is a container; MCP servers as subprocesses/containers</td><td><span class="badge pick">decided</span></td></tr>
     <tr><td><strong>Coding execution</strong></td><td><strong>Direct tool call</strong>: <code>run_coding_task</code> → <code>subprocess</code> → <code>codex exec</code>, run on the host as your user (your codex/gh/git/ssh). No queue. <strong>Sandbox deferred</strong>; keep a scoped GitHub token + approval on push/PR.</td><td><span class="badge maybe">host now · sandbox later</span></td></tr>
     <tr><td><strong>App / API / trust layer</strong></td><td>Own — React PWA, FastAPI + JWT, policy + approval gate + audit</td><td><span class="badge pick">decided</span></td></tr>
-    <tr><td><strong>Subagents &amp; scheduler</strong></td><td>Both <strong>own</strong>, in the host backend process — subagents via Pydantic AI delegation (cheap model by default, depth-capped); scheduled jobs via APScheduler + a Mongo job store, agent-creatable, results pushed to your phone</td><td><span class="badge pick">decided</span></td></tr>
+    <tr><td><strong>Subagents &amp; scheduler</strong></td><td>Both <strong>own</strong>, in the host backend process — subagents via Pydantic AI delegation (cheap model by default, depth-capped); scheduled jobs via APScheduler + a SQLite job store, agent-creatable, results pushed to your phone</td><td><span class="badge pick">decided</span></td></tr>
   </tbody>
 </table>
 </div>
 <p class="muted">Still genuinely open (fine to defer): how aggressive the approval gate is, voice via Web Speech vs a Whisper endpoint, and whether memory uses simple rules vs an LLM call to decide what's worth remembering. None block the Phase-1 scaffold.</p>
 
 <div class="foot">
-  <p>Decisions reflect our talk-through and the mid-2026 landscape on the <a href="landscape.html">Tools &amp; Frameworks</a> and <a href="gaca-plan.html">GACA Plan</a> pages. Anything here is still flippable — but with these locked, the <strong>Phase-1 scaffold</strong> (FastAPI + Pydantic AI loop + JWT + PWA shell + audit log + Google Workspace MCP, as separate containers) is a short, concrete next step.</p>
+  <p>Decisions reflect our talk-through and the mid-2026 landscape on the <a href="landscape.html">Tools &amp; Frameworks</a> and <a href="gaca-plan.html">Full GACA Plan</a> pages. Anything here is still flippable — but with these locked, the <strong>Phase-1 scaffold</strong> (FastAPI + Pydantic AI loop + JWT + PWA shell + audit log + Google Workspace MCP, as separate containers) is a short, concrete next step.</p>
 </div>
 </div>
 </body>
