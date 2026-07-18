@@ -7,16 +7,36 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "pydantic-settings>=2.6",
-    "pymongo>=4.9",
+    "aiosqlite>=0.20",
     "sse-starlette>=2.1",
+    "httpx>=0.27",
 ]
+
+# Console entry point. `gaca-api` on PATH starts the server via main:run().
+# uv installs this into .venv/bin; Nix installs it into the packaged venv, and
+# that same binary is what a systemd ExecStart will point at on the Pi.
+[project.scripts]
+gaca-api = "gaca_api.main:run"
 
 [dependency-groups]
 dev = [
     "pytest>=8",
-    "httpx>=0.27",
 ]
 
-# No [build-system] on purpose: this is an application, not a library.
-# uv treats it as a "virtual" project — it manages the .venv and deps, and the
-# local gaca_api/ package is importable when you run from this directory.
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+# We now DO declare a build-system. Packaging the app with Nix (uv2nix) needs a
+# real, installable artifact — a wheel — not just a "virtual" project whose code
+# is imported from the source dir. hatchling is the build backend that produces
+# that wheel; it's a *build-time* dependency only, not shipped at runtime.
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# Tell hatchling exactly which package directory to put in the wheel. (It would
+# usually infer gaca_api/ from the project name, but being explicit is clearer
+# and avoids surprises if we add more top-level modules later.)
+[tool.hatch.build.targets.wheel]
+packages = ["gaca_api"]
