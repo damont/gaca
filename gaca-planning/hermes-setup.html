@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GACA · Hermes Setup</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<nav class="topnav"><div class="inner">
+  <span class="brand">GACA<span>·</span></span>
+  <a class="navlink" href="index.html">Overview</a>
+  <a class="navlink" href="landscape.html">Tools &amp; Frameworks</a>
+  <a class="navlink" href="gaca-plan.html">Full GACA Plan</a>
+  <a class="navlink" href="odysseus-experiment.html">Odysseus Experiment</a>
+  <a class="navlink" href="gaca-experiment.html">GACA Experiment</a>
+  <a class="navlink" href="hermes-plan.html">Hermes Plan</a>
+  <a class="navlink active" href="hermes-setup.html">Hermes Setup</a>
+</div></nav>
+
+<div class="wrap">
+<header class="page">
+  <div class="kicker">08 · Setup Log</div>
+  <h1>Standing Hermes up by hand</h1>
+  <p class="lede">The <a href="hermes-plan.html">Hermes Plan</a> says <em>adopt the engine</em>. This page is the record of actually doing that — and of a deliberate choice: <strong>take the most minimal initial setup Hermes offers, then turn every capability on manually.</strong> The point isn't speed. Every switch flipped by hand here is a switch the <code>HermesAdapter</code> will eventually have to flip <em>programmatically</em>, because <a href="hermes/0001-runtime-model-and-provider-config.md">ADR 0001</a> puts model and provider config at runtime, through the API. You cannot automate a setup you have never performed.</p>
+</header>
+
+<div class="pill-row">
+  <span class="pill">State dir: <code>~/.hermes</code></span>
+  <span class="pill">Gateway: <code>127.0.0.1:8642</code></span>
+  <span class="pill">Auth: ChatGPT subscription (OAuth)</span>
+  <span class="pill">Model: <code>gpt-5.6-sol</code></span>
+  <span class="pill">Web backend: <code>tavily</code></span>
+  <span class="pill">GitHub: PAT via <code>gh</code> CLI</span>
+  <span class="pill">Memory: Hermes built-in</span>
+  <span class="pill">Front end: Telegram (temporary)</span>
+  <span class="pill">Google: read-only via skill</span>
+  <span class="pill">Apps: self-describing + agent tokens</span>
+  <span class="pill">Reach: SSH → <code>piservices</code></span>
+  <span class="pill">Pi stack: nginx · docker · cloudflared · gh</span>
+  <span class="pill">Host: base Ubuntu Desktop</span>
+  <span class="pill">Posture: minimal-on-purpose</span>
+</div>
+
+<div class="callout pick"><span class="label">Why the minimal path was chosen on purpose</span>
+A generous first-run wizard is exactly the wrong thing for this project. If the installer configures auth, web search, image gen, and platform integrations for you, then <strong>you never learn where any of that state lives</strong> — and the adapter we have to write is precisely the thing that must write that state on a user's behalf. So: take the smallest setup that boots, then add capabilities one at a time and watch what changes on disk. <strong>Every manual step below becomes a line item in the adapter's first-time-setup routine</strong> — and, as the last section shows, one of them has already graduated from a hand-typed command into the launcher.</div>
+
+<h2>The capabilities turned on so far</h2>
+<p>Booting Hermes gets you a gateway. It does not get you a <em>useful</em> agent. Four acts of <em>access</em> were needed first, and — this is the finding that keeps recurring — <strong>each one lands its credential in a different place</strong>. (Before any of them, the machine itself needed work: see <a href="#step0">Step 0</a>.)</p>
+
+<div class="grid cols-2">
+  <div class="card"><h4>1 · A model to think with</h4><p>OAuth into a <strong>ChatGPT subscription</strong> so Hermes can drive <strong><code>gpt-5.6-sol</code></strong>. Without a provider credential the gateway starts, accepts a run, and dies at the first completion. → <em>interactive browser flow</em></p></div>
+  <div class="card"><h4>2 · A minimal baseline</h4><p>Skip every optional integration. Boot, confirm the gateway comes up on <code>:8642</code>, stop there — so anything that works later is something turned on knowingly. → <em>nothing to store</em></p></div>
+  <div class="card"><h4>3 · Eyes on the world</h4><p>Get a <strong>Tavily</strong> API key, get the web tools switched on, and <strong>select <code>tavily</code> as the web backend</strong>. → <em><code>~/.hermes/.env</code> + <code>config.yaml</code></em></p></div>
+  <div class="card"><h4>4 · Hands on the repos</h4><p>A <strong>GitHub personal access token</strong>, authenticated through the <strong><code>gh</code> CLI</strong> — which Hermes installed for itself. → <em>the CLI's own credential store, outside <code>~/.hermes</code> entirely</em></p></div>
+</div>
+
+<h2 id="step0">Step 0 — The host: a desktop image doing a server's job</h2>
+<p>Before any of that, there is a machine. It is a <strong>base Ubuntu Desktop image</strong> on its own box — and two of its defaults are actively wrong for something that has to sit there and answer requests. Both had to be undone by hand, and neither is a Hermes problem: <strong>a desktop image assumes a person is sitting at it.</strong> An agent host assumes nobody is.</p>
+
+<div class="grid cols-2">
+  <div class="card"><h4>Sleep had to be switched off</h4>
+    <p>Ubuntu Desktop suspends an idle machine by default. For a workstation that's a feature; for this it is <strong>fatal, and it fails silently</strong>. A suspended box drops off the network, so:</p>
+    <ul>
+      <li>the <strong>gateway stops answering</strong> on <code>:8642</code> — <code>gaca-api</code>'s adapter gets connection errors, not a useful failure;</li>
+      <li>the <strong>in-process cron scheduler stops firing</strong>, so scheduled jobs don't run late — they just never run;</li>
+      <li>an <strong>in-flight run dies mid-turn</strong>, and its <code>read_run</code> task on the API side is left holding an orphan.</li>
+    </ul>
+    <p class="muted">The symptom is "the assistant is sometimes dead," which is a miserable thing to debug precisely because everything looks fine once you touch the machine and wake it.</p>
+  </div>
+  <div class="card"><h4>SSH had to be installed and enabled</h4>
+    <p>Ubuntu Desktop ships <strong>no <code>openssh-server</code></strong> — a headless box you cannot log into is not much use, so it was installed and enabled manually:</p>
+<pre><code>sudo apt install -y openssh-server
+sudo systemctl enable --now ssh</code></pre>
+    <p class="muted">Diagnostic worth keeping: before this, every port on the box answered <strong><code>Connection refused</code></strong> while <code>ping</code> succeeded perfectly. That pairing is conclusive — a refusal is the kernel sending <code>RST</code>, meaning the host is up and nothing is listening. <strong>A firewall would drop the packet and you'd get a timeout instead.</strong> Refused = no daemon; timeout = something in the way.</p>
+  </div>
+</div>
+
+<div class="callout warn"><span class="label">On turning sleep off properly</span>
+The Settings → Power toggle only governs the <strong>logged-in session</strong>. A box can still suspend from the login screen, and a laptop still suspends on lid close. The belt-and-braces version masks the targets outright, which no session or lid event can override:
+<pre><code>sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
+systemctl status sleep.target        # expect: masked</code></pre>
+<span class="badge no">CONFIRMED — still open</span> Checked on the box: the sleep targets report <code>static</code>, <strong>not <code>masked</code></strong>, so the GUI toggle was what got used. The chassis is a <code>desktop</code>, so lid-close is moot — but the login-screen path is still live. Running the <code>mask</code> line above closes it permanently.</div>
+
+<div class="callout"><span class="label b">Why this belongs on the page at all</span>
+It looks like sysadmin trivia; it is actually the <strong>same finding as the GitHub PAT</strong>, one layer down. Sleep policy and <code>sshd</code> are <strong>host state that lives nowhere in the project</strong> — not in the flake, not in <code>~/.hermes</code>, not in any config GACA writes. A perfectly reproducible artifact deployed onto a box that suspends is a broken assistant. <strong>So "distributable" needs a documented host-prerequisites checklist, not just a pinned build.</strong> This is also the clearest argument for the eventual NixOS move: <code>services.openssh.enable = true</code> and masked sleep targets are two declarative lines there, versus imperative steps here that can silently drift back.</div>
+
+<h2>Step 1 — Auth: OAuth against a ChatGPT subscription</h2>
+<p>Hermes reaches a model through a provider credential. The notable choice here was <strong>subscription OAuth rather than a metered API key</strong>: authenticate against an existing ChatGPT plan and let Hermes drive <code>gpt-5.6-sol</code> through it, instead of dropping a pay-per-token platform key into <code>~/.hermes/.env</code>.</p>
+
+<div class="grid cols-2">
+  <div class="card"><h4>What this buys</h4><ul>
+    <li><strong>No per-token bill.</strong> Usage rides a flat subscription instead of a metered balance — the failure mode is a rate limit, not an invoice.</li>
+    <li><strong>No long-lived secret sitting in a dotfile.</strong> OAuth stores refreshable tokens rather than a permanent key.</li>
+    <li>It sidesteps the exact wall this box already hit on a metered key. From the live log: <code>Your credit balance is too low to access the Anthropic API</code> → <code>credential pool: marking ANTHROPIC_API_KEY exhausted (status=400), rotating</code>. That run died mid-turn. A subscription cannot run out of credit that way.</li>
+  </ul></div>
+  <div class="card"><h4>What it costs — and this one matters</h4><ul>
+    <li><strong>OAuth is an interactive browser flow.</strong> A human opens a URL and approves. That is categorically different from writing a key into a file.</li>
+    <li><a href="hermes/0001-runtime-model-and-provider-config.md">ADR 0001</a> assumes the adapter performs first-time setup by <strong>writing credentials into <code>~/.hermes/.env</code></strong>. That model covers API keys cleanly and <strong>does not cover OAuth at all</strong>.</li>
+    <li><strong>Tokens expire and refresh.</strong> A stored API key is static; an OAuth session is a lifecycle the adapter has to survive — including re-auth after it lapses.</li>
+  </ul></div>
+</div>
+
+<div class="callout warn"><span class="label">First real gap found by doing it manually</span>
+This is the payoff of the slow path. Subscription OAuth breaks the "adapter writes the secret to a file" assumption in <strong>ADR 0001</strong>. The Android app cannot silently mint an OAuth session — at minimum it must <strong>hand the user a device/browser flow and then detect completion</strong>. So the <code>AgentBackend</code> port's credential surface needs <strong>two shapes, not one</strong>: <em>store this credential</em> (synchronous, adapter-writable) and <em>begin an interactive auth flow</em> (asynchronous, user-completed, pollable). Better to learn that now than after the port is frozen.</div>
+
+<h2>Step 2 — The minimal baseline</h2>
+<p>With auth in place the gateway boots, and that is deliberately all it does. Hermes discovers a large plugin surface at startup and enables most of it, but <strong>a registered plugin is not a working capability</strong> — it is an available slot. Nearly all of them stay inert until you supply a credential and select them.</p>
+<p>What that separation looks like, from this box's own boot log:</p>
+<pre><code>Plugin 'web-brave-free' registered web provider: brave-free
+Plugin 'web-ddgs'       registered web provider: ddgs
+Plugin 'web-exa'        registered web provider: exa
+Plugin 'web-firecrawl'  registered web provider: firecrawl
+Plugin 'web-parallel'   registered web provider: parallel
+Plugin 'web-searxng'    registered web provider: searxng
+Plugin 'web-tavily'     registered web provider: tavily
+Plugin 'web-xai'        registered web provider: xai
+Plugin discovery complete: 51 found, 44 enabled</code></pre>
+<p class="muted">Eight web providers <em>registered</em>; zero <em>selected</em>. "44 enabled" counts plugins loaded into the process, not features the agent can use. The same boot logs capability checks failing closed — <code>check_web_api_key … returned False</code>, <code>check_image_generation_requirements returned False; dependent tools will be unavailable this turn</code> — which is the minimal posture working exactly as intended: <strong>unconfigured capability ⇒ the tool is absent from the turn</strong>, not present-and-erroring.</p>
+
+<div class="callout"><span class="label b">Worth stealing for GACA</span> That failure mode — a capability with no credential simply <strong>does not appear in the toolset</strong> — is the right behavior, and it is what <code>GET /capabilities</code> in the <a href="hermes-plan.html">Hermes Plan</a> exists for. The app should render its feature surface from what the backend reports it can actually do, not from a hardcoded list that produces runtime errors.</div>
+
+<h2>Step 3 — Web search: a credential and a choice</h2>
+<p>Giving the agent the web was two writes to two different files, and they are separate on purpose:</p>
+
+<h3>The credential — a secret, so it goes in <code>.env</code></h3>
+<pre><code>echo 'TAVILY_API_KEY=tvly-…' &gt;&gt; ~/.hermes/.env</code></pre>
+<p>This alone is what <em>switches the web tools on</em>. Hermes gates <code>web_search</code> and <code>web_extract</code> behind a check function, <code>check_web_api_key</code>, that flips to true as soon as <strong>any</strong> backend has usable credentials. Each backend maps to its own env var — <code>TAVILY_API_KEY</code>, <code>EXA_API_KEY</code>, <code>FIRECRAWL_API_KEY</code>, <code>BRAVE_SEARCH_API_KEY</code>, <code>SEARXNG_URL</code>, and so on. Supply one and the tools appear in the next turn's toolset.</p>
+
+<h3>The choice — not a secret, so it goes in <code>config.yaml</code></h3>
+<pre><code>hermes config set web.backend tavily</code></pre>
+<p>Which persists exactly one thing:</p>
+<pre><code>web:
+  backend: tavily</code></pre>
+<p>That split is the whole shape of Hermes configuration in miniature, and it is good news for the adapter: <strong>secrets go to <code>.env</code>, choices go to <code>config.yaml</code></strong>, both plain mutable files under a relocatable <code>HERMES_HOME</code>. Swapping to <code>exa</code> or a self-hosted <code>searxng</code> later is one key plus one config write — not a reinstall.</p>
+
+<h2>Why web search was worth the detour</h2>
+<div class="callout warn"><span class="label">The real motivation: the browser is broken in the Nix build</span>
+Web search is not a nice-to-have here — it is the fix for a concrete performance bug. Running Hermes from the flake (<code>nix run .#hermes</code>), the browser tools register but their checks fail: <code>_browser_cdp_check</code> and <code>_browser_dialog_check</code> both return <code>False</code>, because <strong>Chromium is not in the Nix closure</strong>. With no search backend configured, the agent reached for the browser instead and ate roughly <strong>31-second timeouts</strong> per attempt. Configuring Tavily gave it a fast structured-search path and sidestepped the broken browser entirely. <strong>Packaging Chromium is the lower-priority fix; search is the lever that actually mattered.</strong></div>
+
+<div class="grid cols-2">
+  <div class="card"><h4>The alternatives that were passed over</h4>
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>Provider</th><th>Env key</th><th>Shape</th></tr></thead>
+      <tbody>
+        <tr><td><code>tavily</code> <span class="badge pick">CHOSEN</span></td><td><code>TAVILY_API_KEY</code></td><td>Agent-oriented search, free tier</td></tr>
+        <tr><td><code>brave-free</code></td><td><code>BRAVE_SEARCH_API_KEY</code></td><td>Free tier, lower ceiling</td></tr>
+        <tr><td><code>ddgs</code></td><td>— (none)</td><td>Keyless — but the <code>ddgs</code> package is <strong>not bundled in the Nix Hermes closure</strong>, so it isn't actually available here</td></tr>
+        <tr><td><code>exa</code></td><td><code>EXA_API_KEY</code></td><td>Neural / semantic search</td></tr>
+        <tr><td><code>firecrawl</code></td><td><code>FIRECRAWL_API_KEY</code></td><td>Crawl + extract rather than search; self-hostable</td></tr>
+        <tr><td><code>parallel</code></td><td><code>PARALLEL_API_KEY</code></td><td>Key required</td></tr>
+        <tr><td><code>searxng</code></td><td><code>SEARXNG_URL</code></td><td>Self-hosted meta-search — no key, but one more service to run</td></tr>
+        <tr><td><code>xai</code></td><td>—</td><td>Key required</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </div>
+  <div class="card"><h4>Why Tavily</h4>
+    <p>Tavily is built for agent retrieval — it returns cleaned, ranked, model-ready content rather than a page of links to scrape. That is the difference between a tool the loop uses in one hop and a tool that needs a second extraction step, which matters doubly here because the extraction fallback (the browser) is the thing that's broken.</p>
+    <p>Practically: a <strong>free tier</strong> makes it a zero-commitment trial, and the one-line <code>web.backend</code> swap means exhausting that tier is a config change, not a migration. <strong><code>searxng</code> is the natural fallback</strong> if the free credits run dry — no key at all, at the cost of running one more service on the Pi. <code>ddgs</code> would be the other keyless option but isn't packaged in this closure.</p>
+    <p class="muted"><span class="badge maybe">TO CONFIRM</span> The stated reason for reaching for Tavily was a favorable read on <strong>Nebius</strong>. Worth checking that association before it goes in writing — as far as this page can establish, Tavily and Nebius are separate companies. The choice stands on its own merits either way.</p>
+  </div>
+</div>
+
+<h2>Step 4 — GitHub: personal access token through the <code>gh</code> CLI</h2>
+<p>The route chosen was deliberate: <strong>a personal access token, not a GitHub App and not an OAuth app.</strong> For a single-user, self-hosted assistant that is the right call — a GitHub App exists to let <em>many</em> users install a shared integration under an identity that isn't a person's. There is only one user here, the assistant acts <em>as</em> that user, and a PAT says exactly that with no installation flow, no app registration, and no webhook plumbing.</p>
+
+<h3>How it went in</h3>
+<ol class="lede-list">
+  <li><strong>Create a scoped personal access token</strong> on GitHub with read/write across the surface the agent needs.</li>
+  <li><strong>Hermes installed the <code>gh</code> CLI onto the box itself</strong> — the agent used its own terminal tool to provision its own dependency.</li>
+  <li><strong>Authenticate <code>gh</code> with the token</strong>, which hands credential storage to the CLI rather than to Hermes.</li>
+  <li><strong>Validate read-only first</strong> — ask Hermes to list the public repos. It worked, which proves the whole chain end to end: model → terminal tool → <code>gh</code> → GitHub API → back through the run's SSE.</li>
+</ol>
+<p class="muted">Validating with a <em>read</em> before trusting a token with <em>write</em> is the right instinct and worth keeping as a habit: a listing call exercises binary, credential, network path, and tool wiring all at once, and the worst case if something is misconfigured is an error message rather than a mutated repo.</p>
+
+<div class="callout"><span class="label b">The third credential shape — and the first one Hermes doesn't own</span>
+Auth was a browser flow. Tavily was a key in <code>~/.hermes/.env</code>. This one is neither: the token lives in <strong><code>gh</code>'s own credential store on the Hermes host</strong> — its config directory or, on a box with a keyring, the system keyring. <strong>It is not in <code>~/.hermes</code> at all.</strong> Hermes reaches GitHub by shelling out to a CLI that is <em>already</em> authenticated, so the capability is configured by <strong>host state that Hermes neither owns nor can see</strong>. Backing up <code>HERMES_HOME</code> does not back this up. Moving <code>HERMES_HOME</code> to a new machine does not bring it along.</div>
+
+<h3>What this does to the adapter's job</h3>
+<p>Steps 1–3 fit ADR 0001's model: the adapter writes files under a relocatable <code>HERMES_HOME</code>. Step 4 does not fit it at all, and that is the useful part.</p>
+<div class="grid cols-3">
+  <div class="card"><h4>A capability can be a binary</h4><p>"Configure GitHub" here means <em>install a program and authenticate it</em>, not write a config key. The adapter cannot express that as a file write, and <code>GET /capabilities</code> can't report it either — Hermes has no idea whether <code>gh</code> is logged in until a tool call succeeds or fails.</p></div>
+  <div class="card"><h4>State outside the state dir</h4><p>ADR 0001 leans on <code>HERMES_HOME</code> being the whole story. It isn't. Any tool that shells out to an authenticated CLI puts part of the deployment's identity somewhere else on the host — a real gap in the backup, migration, and "distributable artifact" story.</p></div>
+  <div class="card"><h4>Nix packaging implication</h4><p><code>gh</code> arriving via the agent's terminal is mutable host state <strong>outside the flake</strong>. If GitHub is a real capability rather than an experiment, <code>gh</code> belongs in the Hermes closure — the same class of gap as the missing Chromium.</p></div>
+</div>
+
+<div class="callout warn"><span class="label">Two things to go back and tighten</span>
+<strong>The agent installed its own software.</strong> Hermes reached for <code>terminal</code> and provisioned its own dependency — worth naming out loud, because the same shell now has a GitHub token sitting next to it.<br><br>
+<strong>"Read/write to most everything" is broader than the job needs.</strong> A token that can write across the account can force-push, rewrite history, or delete a repo — no exploit required, just a confidently wrong agent. Nothing to undo today; the follow-up is to narrow the token to the repos GACA actually touches once it's clear which those are. <span class="badge pick">CONFIRMED</span> The token is <strong>fine-grained</strong> (<code>github_pat_…</code>) rather than a long-lived classic <code>ghp_</code> — the better of the two, since a fine-grained token can carry an expiry, and expiry is a lifecycle the adapter will eventually have to handle exactly like OAuth refresh.</div>
+
+<div class="callout pick"><span class="label">A deviation from the plan, and it's fine</span>
+The <a href="index.html">Overview</a>'s build-vs-buy table calls for the <strong>official GitHub MCP server</strong> under "tools / integrations." Reality took the <strong><code>gh</code> CLI through the terminal tool</strong> instead. That is a reasonable trade — the CLI is one install with no server to run, no MCP wiring, and it covers the entire GitHub surface rather than a curated tool subset. The costs are worth stating: <strong>no per-tool scoping</strong> (an MCP server can expose read-only operations; a shell with <code>gh</code> exposes everything the token allows), and <strong>coarser audit</strong> — the <a href="hermes-plan.html">Hermes Plan</a>'s audit trail sees a <code>terminal</code> call, not <code>github.create_issue</code>. If the audit timeline matters as much as that page argues, the MCP server becomes the better answer later. For getting access working today, the CLI won on effort and it was the right call.</div>
+
+<h2>Step 5 — Memory: the first adopted subsystem switched on</h2>
+<p>Everything up to here was <em>access</em> — a model, the web, the repos. Memory is the first step that turns on a <strong>subsystem the GACA plan has a named port for</strong>, so it is the first one where the setup choice and the architecture touch. The decision for now: <strong>use Hermes' out-of-the-box memory management</strong> rather than building or substituting anything.</p>
+<pre><code>memory:
+  memory_enabled: true          # long-term memory across sessions
+  user_profile_enabled: true    # persistent model of the user
+  memory_char_limit: 2200
+  user_char_limit: 1375
+  nudge_interval: 10
+  flush_min_turns: 6</code></pre>
+<p>Those are two distinct features sharing a config block. <strong><code>memory_enabled</code></strong> is the cross-session store — facts the agent chooses to keep. <strong><code>user_profile_enabled</code></strong> is a persistent model of <em>you</em> specifically, with its own separate character budget. Turning both on is the right call for a personal assistant; they're worth understanding as separate things because the adapter may well want to expose them separately later.</p>
+
+<div class="callout pick"><span class="label">Two switches, two subsystems — and no command that does both</span>
+Memory is not one setting. It is a <strong>tool-visibility</strong> decision and a <strong>subsystem-feature</strong> decision, held in different places and changed by different commands. Both are now done:<br><br>
+<strong>1 · Is the <code>memory</code> tool offered to the model?</strong> Governed by <code>agent.disabled_toolsets</code>, managed interactively with <code>hermes tools</code>.<br>
+<strong>2 · Is the memory subsystem itself running?</strong> Governed by the <code>memory:</code> block:
+<pre><code>hermes config set memory.memory_enabled true
+hermes config set memory.user_profile_enabled true</code></pre>
+The trap is that <strong><code>hermes tools</code> silently does only the first.</strong> It is a tool manager, not a feature manager — it never touches the <code>memory:</code> block and gives no hint a second step exists. Enable it there alone and you get the tool visible to the model with the subsystem switched off: <em>looks configured, stores nothing.</em><br><br>
+This is the <em>third</em> appearance of the same shape — a credential plus a backend choice for web search, a toolset plus a feature flag for memory. <strong>"Enabled" in Hermes is routinely two switches in two places, and no single command spans them.</strong> A direct requirement on the adapter: enabling a capability through <code>MemoryBackend</code> is a <em>compound</em> operation, and an implementation that writes only the obvious key will report success and do nothing. <span class="badge maybe">ADJACENT</span> <code>session_search</code> and <code>context_engine</code> are still disabled; both are memory-shaped and worth a deliberate call rather than being left off by inheritance.</div>
+
+<div class="callout warn"><span class="label">Where memories actually land — not where the plan assumed</span>
+Confirmed by watching the disk after the first turn: Hermes writes memory as <strong>plain Markdown files under <code>~/.hermes/memories/</code></strong>. The user profile arrived first, as <strong><code>USER.md</code></strong>, with a sibling <strong><code>USER.md.lock</code></strong>. <strong><code>memory_store.db</code> was never created.</strong><br><br>
+That directly answers an open question the <a href="hermes-plan.html">Hermes Plan</a> left for build time — <em>"does Hermes expose a memory HTTP API? If not, the adapter reads <code>memory_store.db</code> on disk"</em>. The real answer is <strong>neither</strong>: it reads a directory of Markdown. Which is the best of the available outcomes — human-readable, greppable, diffable, trivially backed up, and no database schema to reverse-engineer or contend with. <strong>But the <code>.lock</code> file means there is a concurrency protocol to respect</strong>: the adapter must honour it rather than reading or writing the files naively while Hermes has them open.</div>
+
+<h3>Why this one matters more than the others</h3>
+<div class="grid cols-2">
+  <div class="card"><h4>It fills a port that was empty</h4>
+    <p>The <a href="hermes-plan.html">Hermes Plan</a> defines a <code>MemoryBackend</code> port and says Phase 1 the <code>HermesAdapter</code> implements it by <strong>reading Hermes' own memory</strong> — its HTTP API if one exists, otherwise <code>memory_store.db</code> on disk. Until now that port had nothing behind it, so "adopt memory from the engine" was an untested claim. Switching it on is what makes it testable.</p>
+    <p class="muted"><span class="badge pick">ANSWERED</span> That page's open question — <em>memory HTTP endpoint, or read the SQLite file?</em> — turned out to be a false dichotomy. It is a directory of Markdown files (see below), which is a materially easier thing for <code>gaca-memory</code> to read now and to migrate off later.</p>
+  </div>
+  <div class="card"><h4>There are two state axes, not one</h4>
+    <p>Worth keeping straight, because conflating them produces confusing recall behavior: <strong>session-transcript continuity</strong> (what was said in this conversation) is a different axis from the <strong>global cross-session memory store</strong> (<code>memory_store.db</code>, scoped by <code>X-Hermes-Session-Key</code>). A brand-new session that still recalls a fact is demonstrating the <em>second</em> one.</p>
+    <p class="muted">GACA should model both independently — the API owns the transcript, while memory scope is its own key. Turning memory on is what makes that distinction observable.</p>
+  </div>
+</div>
+
+<div class="callout"><span class="label b">A hole in the audit timeline to expect</span>
+Memory <strong>writes</strong> surface as ordinary tool events (<code>tool.started</code> / <code>tool.completed</code> with <code>tool=memory</code>), so they land in the audit trail like any other tool call. Memory <strong>reads</strong> do not — retrieved context is injected into the prompt with <strong>no event emitted at all</strong>. So the timeline the Hermes Plan wants to be trustworthy will show what the assistant <em>recorded</em> but not what it <em>recalled</em> before answering. That's a genuine gap, it's inherent to reading through the engine rather than owning memory, and it's an argument for <code>gaca-memory</code> later — not a reason to avoid adopting now.</div>
+
+<h2>Step 6 — Reach: SSH access to a second machine</h2>
+<p>The architecture here is deliberate and worth stating plainly, because there was an alternative and it was not taken. <strong>Hermes stays on <code>david-claw</code>.</strong> Its terminal backend remains <code>local</code>. A second box — <code>piservices</code>, a Raspberry Pi running Ubuntu 24.04.4 on <code>aarch64</code> — hosts other apps and APIs, and Hermes simply <strong>SSHes into it</strong> when something over there needs updating. The Pi is a <em>target</em>, not a sandbox: one agent, one home, many machines it can reach.</p>
+
+<p>What that took, and it is a better setup than a hand-rolled one usually gets:</p>
+<div class="grid cols-2">
+  <div class="card"><h4>A dedicated, purpose-named key</h4>
+<pre><code>~/.ssh/hermes_piservices_ed25519
+  ed25519 · comment: hermes-agent@piservices</code></pre>
+    <p>Not a reused general-purpose key. One key, one destination, one job — so revoking the agent's access to the Pi is deleting a single file, with nothing else caught in the blast radius. The naming makes it self-documenting a year from now.</p>
+  </div>
+  <div class="card"><h4>A <code>~/.ssh/config</code> host alias</h4>
+<pre><code>Host piservices
+    HostName piservices
+    User david
+    IdentityFile ~/.ssh/hermes_piservices_ed25519
+    IdentitiesOnly yes
+    ServerAliveInterval 30
+    ServerAliveCountMax 3</code></pre>
+    <p>Three of those lines are doing real work, not decoration — see below.</p>
+  </div>
+</div>
+
+<div class="callout pick"><span class="label">Why those config lines matter for an agent specifically</span>
+<strong>The <code>Host</code> alias reduces the command to <code>ssh piservices</code>.</strong> That sounds cosmetic and isn't: the agent has to <em>reproduce</em> this command from memory on every future turn. A short, stable, flagless invocation is far more reliably repeated than a long one carrying <code>-i</code>, a user, and a hostname — and it means the connection details can change later without invalidating everything the agent has learned.<br><br>
+<strong><code>IdentitiesOnly yes</code> prevents a real failure mode.</strong> Without it, SSH offers every key it can find in turn; on a box that accumulates keys, that can trip the server's <code>MaxAuthTries</code> and fail <em>even though the correct key was present</em>. Pinning one identity makes the auth deterministic.<br><br>
+<strong>The keepalives protect long jobs.</strong> <code>ServerAliveInterval 30</code> with <code>ServerAliveCountMax 3</code> stops a router or NAT table from silently dropping an idle-looking connection mid-build — precisely the kind of failure that would otherwise show up as an inexplicable truncated deploy.</div>
+
+<div class="callout warn"><span class="label">The trade-off to name, not to fix</span>
+The private key is <strong>unencrypted</strong> — it has to be, for unattended use. Combined with <code>terminal.backend: local</code>, this means <strong>the agent can read its own SSH key</strong>, because Hermes' shell runs as the same user that owns <code>~/.ssh</code>. So the Pi's security boundary is exactly the boundary around <code>david-claw</code>, no tighter. That is inherent to the chosen shape, and the mitigations are ordinary ones rather than architectural: keep the key scoped to one destination (done), and give the <code>david</code> account on the Pi only the privileges the work actually needs.<br><br>
+It also adds another entry to the running list: <strong><code>~/.ssh/</code> is now a second place holding deployment-critical state that lives outside <code>~/.hermes</code></strong> — joining the GitHub PAT in the system keyring. Back up <code>HERMES_HOME</code> and you still have neither.</div>
+
+<h2>Step 7 — The Pi becomes a real host</h2>
+<p>With reach established, Hermes built out <code>piservices</code> itself: <strong>nginx, Docker, cloudflared, and <code>gh</code></strong>. But the raw list undersells it — what actually got assembled is a <strong>properly closed edge</strong>, with everything above Docker running as containers, and a real application already serving through it.</p>
+
+<h3>What is actually running</h3>
+<div class="table-scroll">
+<table>
+  <thead><tr><th>Container</th><th>Image</th><th>Host binding</th><th>Role</th></tr></thead>
+  <tbody>
+    <tr><td><code>piservices-gateway-cloudflared-1</code></td><td><code>cloudflare/cloudflared:2026.7.3</code></td><td class="muted">none</td><td>The tunnel — dials <em>out</em> to Cloudflare</td></tr>
+    <tr><td><code>piservices-gateway-nginx-1</code></td><td><code>nginx:alpine</code></td><td><code>127.0.0.1:8080</code></td><td>Reverse proxy — <strong>loopback only</strong></td></tr>
+    <tr><td><code>calendarapp-frontend-1</code></td><td><code>calendarapp-frontend</code></td><td class="muted">none (<code>80/tcp</code> internal)</td><td>An actual app, healthy</td></tr>
+    <tr><td><code>calendarapp-api-1</code></td><td><code>calendarapp-api</code></td><td class="muted">none (<code>8005/tcp</code> internal)</td><td>Its API, healthy</td></tr>
+  </tbody>
+</table>
+</div>
+<p class="muted">Two Compose projects — <code>piservices-gateway</code> (the edge) and <code>calendarapp</code> (the workload) — cleanly separated, so apps come and go without touching the gateway. Every container is <code>restart: unless-stopped</code>, so the whole stack survives a reboot unattended.</p>
+
+<div class="callout pick"><span class="label">The ingress path is genuinely closed</span>
+The full listening surface of the machine is <strong><code>0.0.0.0:22</code> and <code>127.0.0.1:8080</code></strong> — plus <code>systemd-resolved</code> on loopback. <strong>No <code>:80</code>. No <code>:443</code>. Nothing but SSH is reachable from the LAN, let alone the internet.</strong> Traffic arrives by exactly one route:
+<pre><code>Internet → Cloudflare edge → tunnel (outbound-initiated)
+         → cloudflared container → nginx container (127.0.0.1:8080)
+         → app containers (Docker network only)</code></pre>
+The apps have <strong>no host port binding at all</strong> — they exist only on the Compose network, reachable by nginx and nothing else. This is precisely the edge model the <a href="gaca-plan.html">Full GACA Plan</a> specified — Cloudflare Tunnel with no inbound ports — now running on ARM hardware, <em>before</em> GACA depends on it. That de-risks a load-bearing assumption by proving it rather than diagramming it.</div>
+
+<h3>The permission model, and why containerising the edge is what makes it work</h3>
+<p>The headline is that <strong>Hermes updates and adds applications without needing <code>sudo</code></strong>. Verified: <code>sudo -n</code> <strong>fails</strong> — <code>david</code> is in the <code>sudo</code> group but every escalation wants a password, and no human is at the prompt. Meanwhile <code>docker ps</code> succeeds as <code>david</code> via <code>docker</code> group membership.</p>
+<div class="callout"><span class="label b">This is the design decision, not a happy accident</span>
+Had nginx and cloudflared been installed as ordinary system services, the agent would need <code>sudo</code> to touch <code>/etc/nginx</code> or reload a unit — and those commands would <strong>hang forever</strong> waiting on a password prompt nobody answers. <strong>Putting the edge in containers is exactly what converts "no sudo" from a limitation into a complete capability.</strong> Adding a site, changing a route, rolling the tunnel: all of it is now <code>docker compose</code> work against user-owned files, and the agent is fully autonomous over the entire stack rather than only the leaf apps.</div>
+
+<div class="callout warn"><span class="label">Two things to stay clear-eyed about</span>
+<strong>Docker group membership is effectively root.</strong> Anyone who can reach the Docker socket can start a container that mounts the host filesystem and write to it as root — <code>docker run -v /:/host</code> is the whole trick. So "Hermes has no sudo" is accurate about <em>ergonomics</em> but overstates <em>isolation</em>: the agent has a straightforward path to root whenever it wants one. That is the standard trade for any single-user Docker host, with no clean fix short of rootless Docker — worth recording rather than assuming away, because the real boundary is "trusted machine," not "unprivileged user."<br><br>
+<strong>There is a second, vestigial nginx — but not a second cloudflared.</strong> The apt-installed host nginx is genuinely running (systemd <code>MainPID</code>, master plus four workers) yet binds <strong>nothing</strong>, because <code>/etc/nginx/sites-enabled/</code> is <strong>empty</strong>. The nginx serving traffic is the <code>nginx:alpine</code> container. Harmless today, a debugging trap tomorrow: editing <code>/etc/nginx/sites-available/…</code> and reloading will appear to do nothing, because the config that matters is mounted into the container. <code>sudo systemctl disable --now nginx</code> leaves exactly one nginx on the box — a rare case where a little <code>sudo</code> now buys back a lot of confusion later.<br><br>
+<strong>The contrast is the lesson.</strong> Host <code>cloudflared</code> needs no such cleanup — its unit is already <code>inactive</code> and <code>disabled</code>. The difference is <em>how each was installed</em>: apt packages on Debian/Ubuntu <strong>auto-enable and auto-start on install</strong>, so <code>apt install nginx</code> silently leaves a running, boot-enabled service behind; <code>cloudflared</code> arrived as a plain binary in <code>/usr/local/bin</code>, so nothing started on its own. <strong>When an agent provisions a host, the package manager it happens to use decides whether you inherit a stray daemon</strong> — which is precisely the kind of invisible side effect a host-prerequisites manifest has to account for. <span class="badge maybe">LOOSE END</span> <code>/etc/cloudflared/token</code> also survives from a <code>cloudflared service install</code>: a real tunnel credential on disk for a service that never runs. Confirm the container takes its token from the Compose config, then it can go.</div>
+
+<div class="callout"><span class="label b">What this adds to the adapter picture</span>
+This step involves <strong>no Hermes configuration whatsoever</strong> — no key in <code>.env</code>, no value in <code>config.yaml</code>. It is capability existing purely as <strong>the state of another machine</strong>: which packages are present, which groups a user is in, which containers are running. Nothing in <code>~/.hermes</code> records any of it and <code>GET /capabilities</code> can never report it. It is the strongest form yet of the pattern this page keeps hitting — <strong>a distributable GACA artifact needs a host-prerequisites manifest that reaches beyond its own machine</strong>, or a first-run probe that checks for these things and reports plainly what is missing.</div>
+
+<h2>Step 8 — Telegram: a temporary front door</h2>
+<p>Until <code>gaca-api</code> and the Android app exist, there is no way to <em>talk</em> to the assistant away from the box. <strong>Telegram fills that gap as an explicitly temporary front end</strong> — a bot token from <code>@BotFather</code>, an allowlist, and a home channel, all in <code>~/.hermes/.env</code>:</p>
+<pre><code>TELEGRAM_BOT_TOKEN=…      # from @BotFather
+TELEGRAM_ALLOWED_USERS=…  # allowlist — who may talk to it
+TELEGRAM_HOME_CHANNEL=…   # where unprompted / scheduled output lands</code></pre>
+<p>Hermes treats it as a first-class <strong>gateway platform</strong>, exactly like <code>api_server</code>: <code>platform_toolsets.telegram</code> gives it its own toolset (<code>hermes-telegram</code>), so the two front ends run side by side against the same agent, sessions, and memory.</p>
+<div class="callout"><span class="label b">Two things worth taking from this</span>
+<strong>The allowlist is the security model.</strong> A Telegram bot is reachable by <em>anyone who finds it</em> — unlike the gateway, which binds loopback and sits behind a bearer token. <code>TELEGRAM_ALLOWED_USERS</code> is the only thing standing between a stranger and an agent that has a shell, a GitHub token, and SSH into the Pi. Earlier boot logs warned about exactly this (<em>"platforms default to pairing/allowlist policies and will deny unknown senders"</em>) — it matters far more now than when <code>api_server</code> was the only platform.<br><br>
+<strong>It validates the multi-platform shape ahead of time.</strong> <code>gaca-api</code> will be one front end among several rather than the only one — and <code>TELEGRAM_HOME_CHANNEL</code> is a preview of a problem GACA inherits: when a scheduled job or an unprompted message fires, <em>which</em> client should it reach? Hermes answers with a configured home channel. GACA will need its own answer.</div>
+
+<h2>Step 9 — Google Workspace: the first capability delivered by a skill</h2>
+<p>Everything so far was configured through Hermes — a flag, a key, a backend name. Google is different: <strong>the capability arrives as a <em>skill</em></strong> (<code>skills/productivity/google-workspace/</code>, a <code>SKILL.md</code> plus helper scripts), and the decision was to <strong>lean on it rather than wire the APIs by hand</strong> — the skill authors clearly knew the terrain better than a first-time integrator would.</p>
+<p>What that took on the Google side, all of it outside Hermes entirely:</p>
+<ol class="lede-list">
+  <li>Create a dedicated Google Cloud project — <strong>Hermes</strong>.</li>
+  <li>Enable the <strong>Gmail, Drive, Sheets, and Docs</strong> APIs on it.</li>
+  <li>Create an <strong>OAuth client</strong>.</li>
+  <li>Set the audience to <strong>testing</strong> rather than published — no Google verification review, which for a single-user assistant is the right call.</li>
+  <li>Complete the consent flow and let the skill store the resulting credentials.</li>
+</ol>
+<p class="muted">The friction was real and worth recording: <strong>copying values between the Cloud console and Hermes was fiddly</strong>, and it took a few attempts before it took. That is a data point, not a complaint — <em>this</em> is the step a user is most likely to abandon, so whatever GACA eventually does here needs to be markedly smoother than a chain of copy-pastes.</p>
+
+<h3>Verified on the box</h3>
+<div class="grid cols-2">
+  <div class="card"><h4>Where the credentials landed</h4>
+<pre><code>~/.hermes/google_client_secret.json   0600
+~/.hermes/google_token.json           0600</code></pre>
+    <p><strong>Finally, a credential inside <code>HERMES_HOME</code></strong> — after the ChatGPT OAuth, the keyring-stored GitHub PAT, and the SSH key in <code>~/.ssh</code>, this one is where a backup of the state dir would actually capture it. The token carries a <code>refresh_token</code> and an <code>expiry</code>, so it renews itself without another consent round.</p>
+    <p class="muted">Note the split, which mirrors the pattern from web search: the <strong>client secret</strong> (who the app is) and the <strong>token</strong> (what the user granted) are separate files with separate lifetimes.</p>
+  </div>
+  <div class="card"><h4>The scopes are read-only — all four</h4>
+<pre><code>gmail.readonly
+drive.readonly
+spreadsheets.readonly
+documents.readonly</code></pre>
+    <p>Worth noticing, because it wasn't stated as a goal and it's a <strong>good</strong> default: the agent can read your mail, files, sheets, and docs, and <strong>cannot alter or delete any of it</strong>. Combined with <a href="index.html">the Overview's</a> original stance — email read-only, calendar and GitHub writable — this is squarely in line with the plan.</p>
+    <p class="muted"><span class="badge maybe">NOTE</span> No <strong>Calendar</strong> scope is present, though the plan calls for calendar writes. If calendar is wanted, that is a second consent round with a wider scope — a deliberate choice, not an oversight to fix silently.</p>
+  </div>
+</div>
+
+<div class="callout warn"><span class="label">The testing-audience expiry trap</span>
+An OAuth client left in <strong>testing</strong> mode issues refresh tokens that <strong>Google expires after seven days</strong>. The assistant will simply stop being able to read anything roughly a week from consent, and the symptom is an auth failure deep inside a skill rather than an obvious "your token expired." Two ways out: re-consent when it lapses, or move the app to <em>published/in production</em> — which for a single-user app using only these scopes is a formality rather than a review. <strong>Worth deciding now instead of debugging it next week.</strong></div>
+
+<div class="callout"><span class="label b">What the skill route means for GACA</span>
+This is the first capability that arrived as a <strong>SKILL.md plus scripts</strong> rather than a config value — which is the <a href="hermes-plan.html">Hermes Plan</a>'s "skills come free with the engine" claim finally being exercised. Two consequences for the adapter: the credentials live at <strong>paths the skill chose</strong> (<code>HERMES_HOME/google_token.json</code>), so provisioning Google means satisfying a skill's private contract rather than writing a documented Hermes setting; and the capability is invisible to <code>GET /capabilities</code>, since it is a skill's own concern. <strong>A skill-delivered capability is a third configuration shape</strong>, alongside <code>.env</code> secrets and <code>config.yaml</code> choices — and the one furthest outside the adapter's reach.</div>
+
+<h2>Step 10 — The agent-ready app: a pattern worth naming</h2>
+<p>With apps now running on the Pi, the question becomes how the agent <em>works</em> them. The answer that emerged is the most reusable thing on this page, and it generalises well past any one app. Call it the <strong>agent-ready application</strong>: an app that ships its own instructions for being operated by an agent, and issues its own credential for doing so.</p>
+
+<div class="callout pick"><span class="label">The pattern in one line</span>
+<strong>The app exposes an API, mints a scoped token for the agent, and hands out skills describing how to drive itself — the operator downloads those skills into the agent, and from then on the agent acts on the user's behalf against the app's public interface.</strong> No plugin written for the agent. No agent-side integration code. The app teaches the agent, not the reverse.</div>
+
+<h3>The four moving parts</h3>
+<div class="grid cols-2">
+  <div class="card"><h4>1 · An API, self-describing at runtime</h4>
+    <p>The app publishes a machine-readable contract — an OpenAPI document — and the skill tells the agent to <strong>fetch it before the first operation each session and treat it as the source of truth</strong>, rather than trusting endpoint paths it remembers.</p>
+    <p class="muted">That single instruction is what makes the integration durable: the app can add fields, move routes, or version endpoints, and the agent re-reads reality instead of failing against a stale memory. <strong>The contract is discovered, never hardcoded.</strong></p>
+  </div>
+  <div class="card"><h4>2 · An operator-minted token</h4>
+    <p>The app has a dedicated endpoint that mints a <strong>long-lived bearer token scoped to one user</strong>, with a caller-chosen lifetime. The operator generates it from their own profile page while logged in — so issuing agent access is a normal, authenticated user action, not an admin or database task.</p>
+    <p class="muted">Crucially the agent <strong>never sees a password</strong>. It holds one revocable credential representing one user, which can be re-minted or expired without touching the account itself.</p>
+  </div>
+  <div class="card"><h4>3 · Skills, packaged by the app</h4>
+    <p>The app generates <strong>downloadable skill archives</strong> — each a <code>SKILL.md</code> written by the people who built the API. They cover the base URL, the auth header, the discovery step, the workflow, and the error contract (<em>401 → stop and ask for a fresh token, don't retry</em>).</p>
+    <p class="muted">Because the app builds them, they ship <em>with</em> the app and stay correct as it evolves. Compare the alternative: integration code living in the agent, drifting quietly out of date every time the API changes.</p>
+  </div>
+  <div class="card"><h4>4 · A human-in-the-loop install</h4>
+    <p>The operator downloads the skill and drops it into the agent's skills directory. Deliberately manual — <strong>the human is the trust boundary</strong>. Nothing is auto-discovered, nothing self-installs, and adding a capability is an act someone performed on purpose.</p>
+    <p class="muted">This is the same instinct as the rest of this page: capability arrives one knowing step at a time.</p>
+  </div>
+</div>
+
+<div class="callout"><span class="label b">Why this inverts everything else on this page</span>
+Every earlier step configured <em>Hermes</em> to reach outward — a key in <code>.env</code>, a backend name in <code>config.yaml</code>, a skill's private credential path. <strong>This one requires nothing of the agent at all.</strong> The app supplies the interface, the instructions, and the credential; the agent supplies only a place to put them. Which means the integration surface belongs to the app, and <strong>the same app works with any agent that can read a <code>SKILL.md</code> and send a bearer token</strong> — Hermes today, <code>gaca-agent</code> later, something else after that. It is the opposite of a plugin ecosystem: instead of every agent shipping an integration for every app, every app ships one description of itself for all agents.</div>
+
+<h3>What this means for GACA</h3>
+<div class="grid cols-3">
+  <div class="card"><h4>A template for everything we build</h4><p>Any future app on the Pi can be made agent-operable the same way: publish an OpenAPI doc, add a token-minting endpoint behind normal auth, write a <code>SKILL.md</code>, offer it for download. <strong>Repeatable, and it survives the engine swap</strong> because it depends on nothing engine-specific.</p></div>
+  <div class="card"><h4>The security story is better</h4><p>Per-app, per-user, expiring tokens the operator issues and revokes — a real improvement on the broad GitHub PAT and the passwordless SSH key. <strong>Every app gets its own narrow credential</strong> rather than the agent accumulating account-wide power.</p></div>
+  <div class="card"><h4>It re-raises the audit gap</h4><p>The agent's calls arrive as ordinary authenticated API requests, so <strong>the app's own logs become an audit trail</strong> — with a caveat: they show the user's token, not "the agent did this." Distinguishing agent traffic from human traffic is worth designing in early.</p></div>
+</div>
+
+<div class="callout warn"><span class="label">Two things to get right when repeating this</span>
+<strong>Token lifetime is a real decision.</strong> A long-lived bearer token stored where an unsupervised agent can read it is a standing grant — convenient, and exactly why per-app scoping matters. Prefer the shortest lifetime that avoids constant re-minting, and make sure revocation genuinely works before relying on it.<br><br>
+<strong>The skills carry security instructions, so they must be followed.</strong> These <code>SKILL.md</code> files tell the agent never to print, log, or commit the token, and never to expose it in generated output. That is the right guidance — but it is <em>guidance to a language model</em>, not an enforced boundary. Treat it as defence in depth, and keep the token out of any output path that ends up somewhere public.</div>
+
+<h2>Where each thing landed on disk</h2>
+<p>The reason to do this by hand is to end up with this table — the map the adapter needs:</p>
+<div class="table-scroll">
+<table>
+  <thead><tr><th>Manual step</th><th>State lands in</th><th>Kind</th><th>What GACA-API must automate</th></tr></thead>
+  <tbody>
+    <tr><td>Disable sleep / suspend</td><td><code>systemd</code> targets (masked) — host-level</td><td><span class="badge no">host prereq</span></td><td>Nothing to automate — <strong>document it</strong>. Declarative on NixOS later; a checklist item until then.</td></tr>
+    <tr><td>Install + enable <code>openssh-server</code></td><td>host packages + <code>systemd</code> unit</td><td><span class="badge no">host prereq</span></td><td>Same — outside the artifact entirely. <code>services.openssh.enable</code> on a NixOS host.</td></tr>
+    <tr><td>OAuth to ChatGPT subscription</td><td><code>~/.hermes/auth.json</code> (credential pool)</td><td><span class="badge no">interactive</span></td><td>Cannot be written blind — needs a <strong>begin-auth / poll-for-completion</strong> pair on the port, plus refresh handling.</td></tr>
+    <tr><td>Select model <code>gpt-5.6-sol</code></td><td><code>config.yaml</code> → <code>model.default</code>, <code>model.provider</code></td><td><span class="badge pick">declarative</span></td><td>Straight ADR 0001: set active model + provider through the API.</td></tr>
+    <tr><td>Tavily API key</td><td><code>~/.hermes/.env</code> → <code>TAVILY_API_KEY</code></td><td><span class="badge pick">secret</span></td><td>Adapter writes it. Never logged, never returned by a read endpoint.</td></tr>
+    <tr><td>Choose the web backend</td><td><code>config.yaml</code> → <code>web.backend</code></td><td><span class="badge pick">declarative</span></td><td>Same mechanism as model selection — a capability-config write. <strong>Already automated</strong> (below).</td></tr>
+    <tr><td>Enable memory (toolset + subsystem)</td><td><code>config.yaml</code> → <code>agent.disabled_toolsets</code> <em>and</em> <code>memory.*</code>; data in <code>~/.hermes/memories/*.md</code></td><td><span class="badge pick">declarative</span></td><td><strong>Two writes, not one</strong> — no single command does both. Read path for <code>MemoryBackend</code> is a Markdown dir, honouring the <code>.lock</code>.</td></tr>
+    <tr><td>SSH reach to <code>piservices</code></td><td><code>~/.ssh/hermes_piservices_ed25519</code> + <code>~/.ssh/config</code> — <em>outside <code>~/.hermes</code></em></td><td><span class="badge no">external</span></td><td>Key generation, key distribution, and a host-alias entry. Not a config write at all — provisioning a second machine's trust.</td></tr>
+    <tr><td>Host stack on <code>piservices</code></td><td><strong>another machine entirely</strong> — packages, group membership, systemd units</td><td><span class="badge no">external</span></td><td>Unreachable from any config write. Needs a host-prerequisites manifest or a first-run probe that reports what is missing.</td></tr>
+    <tr><td>Telegram front end</td><td><code>~/.hermes/.env</code> → <code>TELEGRAM_BOT_TOKEN</code>, <code>_ALLOWED_USERS</code>, <code>_HOME_CHANNEL</code></td><td><span class="badge pick">secret</span></td><td>Adapter-writable. The allowlist is the whole security model — treat it as required, not optional.</td></tr>
+    <tr><td>Google Workspace (via skill)</td><td><code>~/.hermes/google_client_secret.json</code> + <code>google_token.json</code></td><td><span class="badge no">interactive</span></td><td>Consent flow, then files at paths <em>the skill</em> chose. Invisible to <code>/capabilities</code>; refresh + 7-day testing expiry to handle.</td></tr>
+    <tr><td>App skill + agent token</td><td><strong>supplied by the app</strong> — skill archive into the skills dir; token minted from the app UI</td><td><span class="badge maybe">app-owned</span></td><td>Nothing for the adapter to write. GACA's job is to <em>be</em> such an app, and to give the agent somewhere to put what it receives.</td></tr>
+    <tr><td>Gateway on <code>:8642</code></td><td><code>.env</code> → <code>API_SERVER_ENABLED</code>, <code>API_SERVER_KEY</code></td><td><span class="badge pick">secret</span></td><td>Adapter both <em>writes</em> this key and <em>authenticates with</em> it. Localhost-only, never through Cloudflare.</td></tr>
+    <tr><td>GitHub PAT via <code>gh auth</code></td><td><strong>the <code>gh</code> CLI's own store</strong> — config dir or system keyring, <em>outside <code>~/.hermes</code></em></td><td><span class="badge no">external</span></td><td>Not a file the adapter writes and not visible to <code>/capabilities</code>. Needs its own provisioning path, and <code>gh</code> needs to be a packaged dependency.</td></tr>
+  </tbody>
+</table>
+</div>
+<div class="callout"><span class="label b">The pattern underneath — and its two exceptions</span> Hermes configuration splits cleanly in two — <strong>secrets to <code>.env</code>, choices to <code>config.yaml</code></strong> — both plain mutable files under a relocatable <code>HERMES_HOME</code>, no interactive wizard required. That is what makes ADR 0001 viable at all. But four setup steps produced <strong>two things that don't fit the pattern</strong>: <strong>subscription OAuth</strong>, which is interactive by nature, and the <strong>GitHub PAT</strong>, which lives in another program's credential store on the host. ADR 0001 currently accounts for neither. <em>Two exceptions out of four steps is not an edge case — it's a third of the design.</em></div>
+
+<h2>When a manual step graduates</h2>
+<p>This is the arc the page is really about. One of the hand-typed <code>hermes config set …</code> commands above has already moved into the flake's gateway wrapper, so <code>nix run .#hermes</code> re-asserts them at every launch:</p>
+<pre><code>hermes-gateway = pkgs.writeShellScriptBin "hermes-gateway" ''
+  # Batteries-included policy, enforced on every launch (idempotent,
+  # self-healing — re-asserted each start so config can't drift).
+  ${hermes}/bin/hermes config set web.backend tavily
+  exec ${hermes}/bin/hermes gateway run "$@"
+'';</code></pre>
+<p>Three things worth noticing about that:</p>
+<div class="grid cols-3">
+  <div class="card"><h4>It has to be a launch step</h4><p>The Nix build is sandboxed and pure — it <em>cannot</em> write <code>~/.hermes</code>. So policy can't be baked into the derivation; it is asserted when the wrapper runs. <code>HERMES_HOME</code> must stay writable for the same reason.</p></div>
+  <div class="card"><h4>Only the choice, never the secret</h4><p>The wrapper names <code>tavily</code>; it never contains <code>TAVILY_API_KEY</code>. That is ADR 0001's line held exactly — a distributable artifact can carry a default <em>choice</em>, never an operator's credential.</p></div>
+  <div class="card"><h4>Idempotent by design</h4><p>Re-running <code>config set</code> every launch means config can't drift out from under the deployment. This is the same shape the adapter's first-time-setup will take.</p></div>
+</div>
+
+<h2>Verified on the box</h2>
+<p>This is a <strong>dedicated Hermes machine</strong> — a box whose only job is to be a working Hermes install, so the ins and outs of standing one up get learned <em>before</em> GACA has to automate them. Readings below were taken over SSH from its live state on <strong>2026-07-29</strong>.</p>
+<div class="grid cols-2">
+  <div class="card"><h4>Confirmed</h4><ul>
+    <li><strong>The subscription-OAuth route is exactly as described.</strong> <code>config.yaml</code> reads <code>model.default: gpt-5.6-sol</code>, <code>provider: openai-codex</code>, <code>base_url: https://chatgpt.com/backend-api/codex</code>. <code>auth.json</code> reports <code>active_provider: openai-codex</code> holding <strong>one credential of type <code>oauth</code></strong>. No OpenAI API key anywhere — the plan-not-platform path, confirmed on disk.</li>
+    <li><strong>The web-search split holds.</strong> <code>web.backend: tavily</code> in <code>config.yaml</code>, <code>TAVILY_API_KEY</code> in <code>.env</code> — the choice and the secret in their separate files, exactly as the adapter will have to write them.</li>
+    <li><strong>The GitHub token is fine-grained</strong> (<code>github_pat_…</code>, not a classic <code>ghp_</code>) and lives in the <strong>system keyring</strong> rather than any file. That closes the earlier open question, and it is the better of the two options.</li>
+    <li><strong>Host:</strong> Ubuntu 26.04 LTS, x86_64, chassis reports <code>desktop</code> — so lid-close suspend is not a risk here.</li>
+  </ul></div>
+  <div class="card"><h4>Found while verifying — needs action</h4><ul>
+    <li><span class="badge no">!</span> <strong>Sleep targets are <code>static</code>, not <code>masked</code></strong> — the GUI toggle was used. On a desktop chassis that is <em>mostly</em> fine, but the login screen can still suspend. The <code>systemctl mask</code> line in Step 0 closes it for good.</li>
+    <li><span class="badge maybe">?</span> <strong>Both <code>hermes</code> and <code>gh</code> live in <code>~/.local/bin</code></strong> and there is <strong>no <code>/nix</code> on the box</strong>. This is a plain user-local install, not the packaged artifact — so nothing the flake wrapper asserts at launch applies here, and the flake's Chromium/<code>ddgs</code> gaps don't apply in the same form either.</li>
+    <li><span class="badge maybe">?</span> <strong>Most toolsets are switched off.</strong> <code>agent.disabled_toolsets</code> disables <code>skills</code>, <code>delegation</code>, <code>cronjob</code>, <code>browser</code>, <code>code_execution</code>, <code>vision</code>, and more. That is the minimal posture made literal — see the warning below for where it collides with the plan. <strong><code>memory</code> is the first one fully back on</strong> (Step 5) — toolset enabled, <code>memory_enabled</code> and <code>user_profile_enabled</code> both <code>true</code>, and <code>~/.hermes/memories/USER.md</code> written, so it is confirmed live end to end.</li>
+    <li>The gateway was <strong>not running</strong> at read time — nothing listening on <code>:8642</code>, only <code>sshd</code>.</li>
+  </ul></div>
+</div>
+
+<div class="callout warn"><span class="label">The one that matters for the plan</span>
+The <a href="hermes-plan.html">Hermes Plan</a> banks on <strong>skills, scheduler, subagents, and memory coming free with the engine</strong> — a whole row of its own own-vs-adopt table. On this box those arrived <strong>switched off</strong>: <code>skills</code>, <code>cronjob</code>, and <code>delegation</code> are all still in <code>disabled_toolsets</code>. Nothing is broken — this is the minimal posture working as intended — but "adopted for free" is a claim that only becomes true one switch at a time. <strong>Memory is the first to be turned on</strong> (Step 5), which makes the <code>MemoryBackend</code> port testable for the first time. The scheduler and subagents remain unexercised, so the plan's claim about them is still on credit.</div>
+
+<h2>What this changes in the plan</h2>
+<div class="callout pick"><span class="label">Carry these forward</span>
+<ol style="margin-top:6px">
+  <li><strong>The credential port needs an interactive mode.</strong> ADR 0001's "adapter writes the key" covers API keys only. Add <em>begin interactive auth → poll status</em> alongside <em>store credential</em> before the <code>AgentBackend</code> port is frozen.</li>
+  <li><strong>Capability config and secrets are separate writes</strong> (<code>config.yaml</code> vs <code>.env</code>) and should stay separate in GACA's own config API — different lifetimes, different exposure rules, and only one of them is safe to ship in an artifact.</li>
+  <li><strong><code>GET /capabilities</code> is load-bearing, not a nicety.</strong> Hermes already drops unconfigured tools from the turn; the app should mirror that instead of hardcoding a feature list.</li>
+  <li><strong>Provider choice is one config key.</strong> Running out of Tavily free credits is an operational event, not an architectural one — <code>searxng</code> is a one-line swap.</li>
+  <li><strong>Launch-time assertion is the deploy pattern.</strong> Pure builds can't touch <code>~/.hermes</code>, so batteries-included policy belongs in an idempotent wrapper — the same shape the adapter's first-time setup will take.</li>
+  <li><strong><code>HERMES_HOME</code> is not the whole deployment.</strong> The GitHub PAT lives in another program's credential store, so backup, migration, and "distributable artifact" claims that assume the state dir captures everything are wrong. Either bring such credentials under a GACA-owned provisioning path or document them as host prerequisites — but don't let ADR 0001 keep implying they don't exist.</li>
+  <li><strong>"Distributable" needs a host-prerequisites checklist, not just a pinned build.</strong> A reproducible artifact on a box that suspends is a broken assistant. Sleep policy, <code>sshd</code>, and packaged CLI dependencies are all deployment requirements that live outside the flake — write them down, and treat them as the concrete case for the eventual NixOS move, where they collapse into declarative config.</li>
+  <li><strong>Shelling out to a CLI trades audit granularity for reach.</strong> The plan's audit timeline sees <code>terminal</code>, not the GitHub operation inside it. Acceptable now; revisit the MCP server if the timeline is meant to be trustworthy on its own.</li>
+</ol></div>
+
+<div class="foot">
+  <p>Setup log for the <a href="hermes-plan.html">Hermes Plan</a>'s build-order step 1 — "stand up Hermes with the api_server adapter on <code>:8642</code>." Deliberately minimal first install, then auth, then web, then GitHub, each step performed by hand so the <code>HermesAdapter</code>'s first-time-setup routine is written from observation rather than guesswork. Configuration claims here are <strong>read back from the box's live state over SSH</strong> — the OAuth credential, <code>gpt-5.6-sol</code> on <code>openai-codex</code>, <code>web.backend: tavily</code>, and the fine-grained <code>github_pat_</code> in the system keyring all confirmed. The running score on the adapter design: <strong>four setup steps, three distinct credential shapes, two of which ADR 0001 does not currently cover.</strong></p>
+</div>
+</div>
+</body>
+</html>
