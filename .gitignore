@@ -13,6 +13,18 @@ __pycache__/
 data/
 *.log
 
+# SQLite system-of-record (the db_path file plus its WAL/shared-memory
+# sidecars). Local runtime state — never commit it.
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Nix build outputs (the `result` symlink from `nix build`)
+result
+result-*
+
 # Editor / OS
 .DS_Store
 .idea/
