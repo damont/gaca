@@ -10,10 +10,6 @@
 <nav class="topnav"><div class="inner">
   <span class="brand">GACA<span>·</span></span>
   <a class="navlink" href="index.html">Overview</a>
-  <a class="navlink" href="landscape.html">Tools &amp; Frameworks</a>
-  <a class="navlink" href="gaca-plan.html">Full GACA Plan</a>
-  <a class="navlink" href="odysseus-experiment.html">Odysseus Experiment</a>
-  <a class="navlink" href="gaca-experiment.html">GACA Experiment</a>
   <a class="navlink" href="hermes-plan.html">Hermes Plan</a>
   <a class="navlink active" href="hermes-setup.html">Hermes Setup</a>
 </div></nav>
@@ -34,8 +30,10 @@
   <span class="pill">GitHub: PAT via <code>gh</code> CLI</span>
   <span class="pill">Memory: Hermes built-in</span>
   <span class="pill">Front end: Telegram (temporary)</span>
+  <span class="pill">Dashboard: <code>127.0.0.1:9119</code></span>
   <span class="pill">Google: read-only via skill</span>
   <span class="pill">Apps: self-describing + agent tokens</span>
+  <span class="pill">Build skill: FastAPI · React · Docker</span>
   <span class="pill">Reach: SSH → <code>piservices</code></span>
   <span class="pill">Pi stack: nginx · docker · cloudflared · gh</span>
   <span class="pill">Host: base Ubuntu Desktop</span>
@@ -285,7 +283,7 @@ The full listening surface of the machine is <strong><code>0.0.0.0:22</code> and
 <pre><code>Internet → Cloudflare edge → tunnel (outbound-initiated)
          → cloudflared container → nginx container (127.0.0.1:8080)
          → app containers (Docker network only)</code></pre>
-The apps have <strong>no host port binding at all</strong> — they exist only on the Compose network, reachable by nginx and nothing else. This is precisely the edge model the <a href="gaca-plan.html">Full GACA Plan</a> specified — Cloudflare Tunnel with no inbound ports — now running on ARM hardware, <em>before</em> GACA depends on it. That de-risks a load-bearing assumption by proving it rather than diagramming it.</div>
+The apps have <strong>no host port binding at all</strong> — they exist only on the Compose network, reachable by nginx and nothing else. This is precisely the edge model the <a href="hermes-plan.html">plan</a> specified — Cloudflare Tunnel with no inbound ports — now running on ARM hardware, <em>before</em> GACA depends on it. That de-risks a load-bearing assumption by proving it rather than diagramming it.</div>
 
 <h3>The permission model, and why containerising the edge is what makes it work</h3>
 <p>The headline is that <strong>Hermes updates and adds applications without needing <code>sudo</code></strong>. Verified: <code>sudo -n</code> <strong>fails</strong> — <code>david</code> is in the <code>sudo</code> group but every escalation wants a password, and no human is at the prompt. Meanwhile <code>docker ps</code> succeeds as <code>david</code> via <code>docker</code> group membership.</p>
@@ -346,7 +344,7 @@ An OAuth client left in <strong>testing</strong> mode issues refresh tokens that
 <div class="callout"><span class="label b">What the skill route means for GACA</span>
 This is the first capability that arrived as a <strong>SKILL.md plus scripts</strong> rather than a config value — which is the <a href="hermes-plan.html">Hermes Plan</a>'s "skills come free with the engine" claim finally being exercised. Two consequences for the adapter: the credentials live at <strong>paths the skill chose</strong> (<code>HERMES_HOME/google_token.json</code>), so provisioning Google means satisfying a skill's private contract rather than writing a documented Hermes setting; and the capability is invisible to <code>GET /capabilities</code>, since it is a skill's own concern. <strong>A skill-delivered capability is a third configuration shape</strong>, alongside <code>.env</code> secrets and <code>config.yaml</code> choices — and the one furthest outside the adapter's reach.</div>
 
-<h2>Step 10 — The agent-ready app: a pattern worth naming</h2>
+<h2 id="step10">Step 10 — The agent-ready app: a pattern worth naming</h2>
 <p>With apps now running on the Pi, the question becomes how the agent <em>works</em> them. The answer that emerged is the most reusable thing on this page, and it generalises well past any one app. Call it the <strong>agent-ready application</strong>: an app that ships its own instructions for being operated by an agent, and issues its own credential for doing so.</p>
 
 <div class="callout pick"><span class="label">The pattern in one line</span>
@@ -386,6 +384,74 @@ Every earlier step configured <em>Hermes</em> to reach outward — a key in <cod
 <strong>Token lifetime is a real decision.</strong> A long-lived bearer token stored where an unsupervised agent can read it is a standing grant — convenient, and exactly why per-app scoping matters. Prefer the shortest lifetime that avoids constant re-minting, and make sure revocation genuinely works before relying on it.<br><br>
 <strong>The skills carry security instructions, so they must be followed.</strong> These <code>SKILL.md</code> files tell the agent never to print, log, or commit the token, and never to expose it in generated output. That is the right guidance — but it is <em>guidance to a language model</em>, not an enforced boundary. Treat it as defence in depth, and keep the token out of any output path that ends up somewhere public.</div>
 
+<h2>Step 11 — Making it start every time: user services for the dashboard</h2>
+<p>Hermes has a <strong>browser dashboard</strong> — a local web UI for driving the agent, watching runs, and generally living in the thing day to day. Starting it by hand after every reboot gets old immediately, so it needed to come up on its own. That turned into a small lesson about <em>user-level</em> background jobs on Linux.</p>
+
+<p>Three things now start automatically, all as <strong>systemd user units</strong> (<code>systemctl --user</code>) rather than root services:</p>
+<div class="table-scroll">
+<table>
+  <thead><tr><th>Unit</th><th>What it runs</th><th>Restart</th></tr></thead>
+  <tbody>
+    <tr><td><code>hermes-dashboard</code></td><td>the browser UI, bound <code>127.0.0.1:9119</code> with <code>--no-open</code></td><td><code>on-failure</code></td></tr>
+    <tr><td><code>hermes-gateway</code></td><td><code>gateway run</code> — the api_server platform and Telegram</td><td><code>always</code></td></tr>
+    <tr><td><code>hermes-tui</code></td><td>a persistent terminal UI inside <code>screen</code>, reattachable</td><td><code>on-failure</code></td></tr>
+  </tbody>
+</table>
+</div>
+<p class="muted">All three are <code>enabled</code> and wanted by <code>default.target</code>. The dashboard binds <strong>loopback only</strong> — consistent with the gateway, and correct: it is an unauthenticated local UI onto an agent with a shell, a GitHub token, and SSH into another box. It should never be exposed, and reaching it from elsewhere should be an SSH tunnel, not a bind-address change.</p>
+
+<div class="callout pick"><span class="label">The bit that actually makes it work: linger</span>
+A user service normally lives and dies with your login session — systemd starts your user manager when you log in and tears it down when the last session ends, taking every user service with it. On a box you mostly reach over SSH, that means <strong>the dashboard would die the moment you disconnected</strong>, and would never start at all after an unattended reboot.
+<pre><code>loginctl enable-linger david     # confirmed: Linger=yes</code></pre>
+<strong>Linger is what makes a user manager persist without a login session</strong> — so the units start at boot and survive logout. It is the one non-obvious step, and skipping it produces the maddening symptom of services that work perfectly while you're watching and vanish when you aren't.</div>
+
+<div class="callout"><span class="label b">Why user units rather than a crontab or a root service</span>
+All three approaches would "start it every time," but they are not equivalent:<br><br>
+<strong>vs. <code>@reboot</code> in a crontab</strong> — cron fires the command once at boot and then forgets it. If the dashboard crashes at 3am, cron will not notice. systemd's <code>Restart=</code> brings it straight back, and <code>journalctl --user -u hermes-dashboard</code> gives you the logs and history. For a long-running daemon, "supervised" beats "launched."<br><br>
+<strong>vs. a root/system service</strong> — the whole stack reads and writes <code>~/.hermes</code>, which is <code>david</code>'s. Running as root would mean either running with more privilege than the job needs or fighting file ownership forever. <strong>User units keep the agent running as exactly the user whose resources it operates</strong> — the same principle as no-passwordless-sudo on the Pi.</div>
+
+<div class="callout warn"><span class="label">What this adds to the deployment picture</span>
+This is more host state living outside <code>HERMES_HOME</code>: <strong>three unit files under <code>~/.config/systemd/user/</code>, plus a linger flag in <code>/var/lib/systemd/linger/</code></strong>. Nothing in <code>~/.hermes</code> records that any of it exists — restore the state dir onto a fresh machine and you get the configuration back but nothing that <em>runs</em>. It is the same gap as the GitHub keyring entry and the SSH key, and it lands on the same conclusion: <strong>a distributable GACA needs its process supervision described somewhere</strong>. Worth noting the Full GACA Plan already assumes systemd units for <code>gaca-api</code> — this is that decision arriving early, at user scope, and it is the right rehearsal for it.</div>
+
+<h2>Step 12 — The build skill: the agent starts writing code</h2>
+<p>Everything so far gave the agent <em>access</em> — a model, the web, repos, memory, a second machine, apps to drive. This step gives it <strong>competence at a specific job</strong>. A personal <code>build</code> skill was pulled from <a href="https://github.com/damont/build"><code>damont/build</code></a> and installed as <strong><code>david-build</code></strong>, and it is what actually lets the agent write code on the operator's behalf and stand up small apps that are usable straight away.</p>
+
+<div class="callout pick"><span class="label">Why a skill beats a prompt for this</span>
+"Build me an app" against a bare model produces something shaped by whatever the model felt like that day — a different stack, a different layout, a different testing story every time. <strong>A build skill fixes the conventions once and applies them every time.</strong> The agent stops improvising architecture and starts executing a house style, which is what makes the output <em>maintainable by the person who asked for it</em> rather than a plausible-looking pile. The value is less that the agent can code, and more that it codes <strong>the same way twice</strong>.</div>
+
+<h3>What the skill actually carries</h3>
+<p>It is not one instruction file — it is a <strong>reference library</strong>, and the structure is the interesting part:</p>
+<div class="grid cols-2">
+  <div class="card"><h4>A phased build order</h4>
+    <p>Ten ordered phase documents, from project setup through backend foundation, domain, and testing, then frontend, then Docker and deploy, then cross-app concerns and agent auth.</p>
+    <p class="muted">This is the same instinct as this whole page: <strong>one deliberate step at a time, in an order that makes each step verifiable</strong>. It also gives long builds a natural place to pause and resume — a real concern when a single run has a turn budget.</p>
+  </div>
+  <div class="card"><h4>Conventions and cross-cutting references</h4>
+    <p>Alongside the phases sit topic references — conventions, file storage, background workers, auth — so recurring decisions are answered from a document rather than re-litigated per project.</p>
+    <p class="muted">Notably one phase covers <strong>agent auth and API</strong> — meaning apps built this way come out <em>agent-ready by default</em>, with the token-minting and self-describing-API pattern from <a href="#step10">Step 10</a> baked in rather than retrofitted.</p>
+  </div>
+</div>
+<p class="muted">The stack it encodes — <strong>FastAPI + React + Docker</strong> — is the same one the apps on the Pi already run, which is what makes the whole loop close: the agent builds in the shape the host is already prepared to serve.</p>
+
+<h3>The second skill is the clever bit</h3>
+<p>Installed alongside it is <strong><code>david-build-update</code></strong>, whose only job is to <strong>refresh <code>david-build</code> from newer commits in the source repo</strong> — and it tracks its own progress in a small state file:</p>
+<pre><code>{
+  "repo": "…", "remote_url": "https://github.com/damont/build.git",
+  "branch": "main",
+  "last_used_commit": "9e2fdd2…",
+  "updated_at": "2026-08-06T12:58:17Z"
+}</code></pre>
+<div class="callout"><span class="label b">Why the pairing matters more than either skill alone</span>
+A skill copied into an agent is a <strong>fork the moment it lands</strong> — the upstream conventions improve, the installed copy doesn't, and it silently rots. That is the standard failure mode of copy-in integrations, and it is the same problem the <a href="#step10">Step 10</a> pattern solves for APIs by making the agent re-read the contract.<br><br>
+Recording <code>last_used_commit</code> turns updating into a <strong>bounded, incremental diff</strong> — "what changed since the commit I already absorbed?" — rather than a re-read of the whole repo or a blind overwrite. <strong>The agent maintains its own capability, with a checkpoint.</strong> That is a genuinely reusable idea: any skill sourced from a living repo should ship with something that knows how to update it and how far it has got.</div>
+
+<div class="callout warn"><span class="label">Two things worth watching</span>
+<strong>Skills are prompts, not code paths.</strong> A build skill improves consistency; it does not <em>enforce</em> anything. Nothing rejects output that ignores a convention, so the real check remains running the tests and reading the diff. Treat the skill as a strong default, not a guarantee — the same caveat as the security instructions carried in the <a href="#step10">Step 10</a> skills.<br><br>
+<strong>An updating skill executes what it fetches.</strong> <code>david-build-update</code> pulls from a remote repo and rewrites the instructions the agent will later follow, on a box where <code>terminal</code> is unsupervised. That is fine here — it is the operator's own repo, pinned to a known branch — but it is worth naming as a supply-chain path: <strong>whoever can push to that repo can change how the agent builds.</strong></div>
+
+<div class="callout"><span class="label b">Where this lands for GACA</span>
+This is the clearest instance yet of the <a href="hermes-plan.html">Hermes Plan</a>'s "skills come free with the engine" claim paying off — and the format is <strong>portable</strong>. A <code>SKILL.md</code> plus reference documents is not Hermes-specific; the open skill format is exactly what the <a href="index.html">Overview</a> proposed adopting. <strong>When <code>gaca-agent</code> eventually replaces Hermes behind the port, this skill library moves across unchanged.</strong> It is capability accumulating in a form that survives the engine swap — which is precisely what the adapter architecture was designed to protect.</div>
+
 <h2>Where each thing landed on disk</h2>
 <p>The reason to do this by hand is to end up with this table — the map the adapter needs:</p>
 <div class="table-scroll">
@@ -404,6 +470,8 @@ Every earlier step configured <em>Hermes</em> to reach outward — a key in <cod
     <tr><td>Telegram front end</td><td><code>~/.hermes/.env</code> → <code>TELEGRAM_BOT_TOKEN</code>, <code>_ALLOWED_USERS</code>, <code>_HOME_CHANNEL</code></td><td><span class="badge pick">secret</span></td><td>Adapter-writable. The allowlist is the whole security model — treat it as required, not optional.</td></tr>
     <tr><td>Google Workspace (via skill)</td><td><code>~/.hermes/google_client_secret.json</code> + <code>google_token.json</code></td><td><span class="badge no">interactive</span></td><td>Consent flow, then files at paths <em>the skill</em> chose. Invisible to <code>/capabilities</code>; refresh + 7-day testing expiry to handle.</td></tr>
     <tr><td>App skill + agent token</td><td><strong>supplied by the app</strong> — skill archive into the skills dir; token minted from the app UI</td><td><span class="badge maybe">app-owned</span></td><td>Nothing for the adapter to write. GACA's job is to <em>be</em> such an app, and to give the agent somewhere to put what it receives.</td></tr>
+    <tr><td>Auto-start dashboard + gateway + TUI</td><td><code>~/.config/systemd/user/*.service</code> + <code>loginctl enable-linger</code></td><td><span class="badge no">host prereq</span></td><td>Process supervision, not configuration. Must be described in a deploy manifest — a restored <code>HERMES_HOME</code> alone runs nothing.</td></tr>
+    <tr><td>Personal build skills</td><td><code>~/.hermes/skills/software-development/david-build{,-update}/</code></td><td><span class="badge maybe">skill</span></td><td>Portable across engines — moves to <code>gaca-agent</code> unchanged. Self-updating from its source repo via a tracked <code>last_used_commit</code>.</td></tr>
     <tr><td>Gateway on <code>:8642</code></td><td><code>.env</code> → <code>API_SERVER_ENABLED</code>, <code>API_SERVER_KEY</code></td><td><span class="badge pick">secret</span></td><td>Adapter both <em>writes</em> this key and <em>authenticates with</em> it. Localhost-only, never through Cloudflare.</td></tr>
     <tr><td>GitHub PAT via <code>gh auth</code></td><td><strong>the <code>gh</code> CLI's own store</strong> — config dir or system keyring, <em>outside <code>~/.hermes</code></em></td><td><span class="badge no">external</span></td><td>Not a file the adapter writes and not visible to <code>/capabilities</code>. Needs its own provisioning path, and <code>gh</code> needs to be a packaged dependency.</td></tr>
   </tbody>

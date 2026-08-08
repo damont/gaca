@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>GACA test UI</title>
+  </head>
+  <body>
+    <h1>GACA test UI</h1>
+    <p id="status">If you can read this, your browser drew a web page from a plain text file.</p>
+
+    <script>
+      // This code runs in the browser, AFTER the DOM tree above has been built.
+      // `document` is the browser's live handle to that tree.
+      const p = document.getElementById("status"); // find the <p> by its id
+      p.textContent = "This sentence was rewritten by JavaScript running in your browser.";
+    </script>
+  </body>
+</html>
