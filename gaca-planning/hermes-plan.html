@@ -10,340 +10,242 @@
 <nav class="topnav"><div class="inner">
   <span class="brand">GACA<span>·</span></span>
   <a class="navlink" href="index.html">Overview</a>
-  <a class="navlink" href="landscape.html">Tools &amp; Frameworks</a>
-  <a class="navlink" href="gaca-plan.html">Full GACA Plan</a>
-  <a class="navlink" href="odysseus-experiment.html">Odysseus Experiment</a>
-  <a class="navlink" href="gaca-experiment.html">GACA Experiment</a>
   <a class="navlink active" href="hermes-plan.html">Hermes Plan</a>
   <a class="navlink" href="hermes-setup.html">Hermes Setup</a>
 </div></nav>
 
 <div class="wrap">
 <header class="page">
-  <div class="kicker">07 · The Build Plan</div>
-  <h1>Own the shell, adopt the engine — GACA over Hermes</h1>
-  <p class="lede">The plan we're actually building first. Keep the <strong>GACA API and the native app exactly as designed</strong> in the <a href="gaca-plan.html">Full GACA Plan</a>, but instead of writing our own agent loop now, put <strong>Hermes Agent</strong> behind an <strong>adapter</strong> as the agent-loop backend. The API's routes and service layer never learn the word "Hermes"; a future <code>gaca-agent</code> drops in behind the same port without touching the routes, the services, or the Android app. This page locks the seam, the read path, the transport, and the build order.</p>
+  <div class="kicker">The Committed Plan</div>
+  <h1>Hermes drives. The API layer holds the keys.</h1>
+  <p class="lede">The decision is made: <strong>Hermes is the agent</strong>, running on its own box, stood up by hand and documented step by step in the <a href="hermes-setup.html">Hermes Setup</a> log. It is no longer a placeholder for something we intend to write. The remaining work is deliberately small and singular — <strong>add an approval and event layer to the existing API, and drive it from the Android app</strong>. That one addition is what turns a capable agent into a <em>controlled</em> one, because it moves the permission to act out of the agent and into a layer that answers to a phone tap.</p>
 </header>
 
 <div class="pill-row">
-  <span class="pill">Engine: Hermes Agent (adopted, swappable)</span>
-  <span class="pill">Shell: GACA API + native Android (ours)</span>
-  <span class="pill">Pattern: ports &amp; adapters</span>
-  <span class="pill">Transport: Redis pub/sub (fan-out only)</span>
-  <span class="pill">Record: SQLite</span>
-  <span class="pill">Hermes API: localhost:8642</span>
+  <span class="pill">Agent: Hermes (committed)</span>
+  <span class="pill">New work: approvals + events</span>
+  <span class="pill">Hermes → external: <strong>read only</strong></span>
+  <span class="pill">Writes live in the API layer</span>
+  <span class="pill">Control surface: Android app</span>
 </div>
 
-<div class="callout pick"><span class="label">The decision in one line</span> <strong>GACA owns the <em>shell</em> (the API contract, auth, the audit/event timeline, the Android app); Hermes is the <em>engine</em> (the loop, tools, memory, skills, scheduler, subagents) — adopted now, behind an adapter, so it's reversible.</strong> This deliberately inverts the <a href="gaca-experiment.html">GACA Experiment</a>'s "own the loop" thesis in exchange for getting a capable assistant fast. The adapter is what makes that a <em>loan, not a marriage</em>: when we're ready to own the loop, we write a second adapter and flip a config value.</div>
+<div class="callout pick"><span class="label">The plan in one line</span> <strong>Hermes reads widely and writes almost nothing; it composes drafts and proposals and files them as events. The API layer holds every privileged write credential and executes only what the operator approves from the phone.</strong> Capability is separated from intent — the agent decides <em>what should happen</em>, a human decides <em>whether it happens</em>, and a third component is the only thing that <em>can make it happen</em>.</div>
 
-<h2>Why Hermes fits behind our API</h2>
-<p>The reason this is clean and not a scraping project: Hermes ships a <strong>first-class HTTP API</strong> (its <code>api_server</code> gateway adapter) whose shape is almost a mirror of the async contract we already designed — <code>202</code>-style run handles, an SSE event stream, structured per-tool events, and externally-addressable sessions. We connect to it as an HTTP client; we do <em>not</em> read its database or embed it in-process.</p>
-<div class="table-scroll">
-<table>
-  <thead><tr><th>Hermes surface</th><th>What it gives us</th><th>Maps to our…</th></tr></thead>
-  <tbody>
-    <tr><td><code>POST /v1/runs</code> → <code>{run_id}</code></td><td>Start a turn, get a handle back immediately (non-blocking)</td><td><code>POST /sessions/{id}/messages</code> → <code>202</code></td></tr>
-    <tr><td><code>GET /v1/runs/{id}/events</code> (SSE)</td><td>Structured stream: <code>run.started</code> · <code>assistant.delta</code> · <code>tool.started/completed/failed</code> · <code>tool.progress</code> · <code>assistant.completed</code> · <code>run.completed</code> · <code>done</code></td><td>the events we translate + fan out to the phone</td></tr>
-    <tr><td><code>X-Hermes-Session-Id</code> header</td><td>Routes a message to a session; Hermes keeps the session alive + ordered</td><td>our <code>session_id</code> (mapped, opaque)</td></tr>
-    <tr><td><code>X-Hermes-Session-Key</code></td><td>Scopes long-term memory to a user</td><td>the memory port's scope key</td></tr>
-    <tr><td><code>POST /v1/runs/{id}/approval</code> · <code>/stop</code></td><td>Human-in-the-loop approve/deny; cancel a run</td><td>future <code>/approvals</code>; <code>:cancel</code></td></tr>
-    <tr><td><code>GET /v1/capabilities</code> · <code>/health</code></td><td>What this backend supports; liveness</td><td>our <code>GET /capabilities</code>; health probe</td></tr>
-    <tr><td><code>max_concurrent_runs</code> (config)</td><td>Built-in concurrency control across sessions</td><td>replaces the dispatch/inbox machinery for now</td></tr>
-  </tbody>
-</table>
-</div>
-<p class="muted">Runs as its own daemon on port <strong>8642</strong>, bearer-authed via <code>API_SERVER_KEY</code> (<code>API_SERVER_ENABLED=true … hermes gateway start</code>). State lives under <code>~/.hermes</code> (overridable with <code>HERMES_HOME</code>): <code>state.db</code> (sessions + transcripts), <code>memory_store.db</code>, <code>skills/</code>, <code>cron/jobs.json</code>, <code>plugins/</code>. <strong>Verified against the <code>NousResearch/hermes-agent</code> source</strong> (see <a href="landscape.html">Tools &amp; Frameworks</a>); the exact per-event JSON field shapes are read from the emitter and should be confirmed against a live instance (or <code>/v1/capabilities</code>) before the translator is hard-coded.</p>
-
-<h2>The seam — ports &amp; adapters</h2>
-<p>One principle makes the swap real and is the rule every reviewer should hold us to:</p>
-<div class="callout"><span class="label b">The rule</span> The <strong>adapter produces neutral GACA events</strong>. The <strong>service layer sequences, persists, and fans them out</strong>. Everything Hermes-shaped is <strong>quarantined inside <code>agent/hermes/</code></strong>. The test is mechanical: <code>grep -ri hermes gaca_api/ --exclude-dir=hermes</code> must return <strong>nothing</strong>. If a Hermes type or endpoint name (<code>assistant.delta</code>, <code>/v1/runs</code>, <code>X-Hermes-Session-Id</code>) appears in a router, a service, or the app, the abstraction has leaked.</div>
-<p>Two ports live in the agent layer. The routers and services depend only on these:</p>
-<div class="grid cols-2">
-  <div class="card"><h4>AgentBackend port</h4>
-<pre><code>class AgentBackend(Protocol):
-  async def start_run(session, message) -> RunHandle
-  def     stream_events(run) -> AsyncIterator[GacaEvent]
-  async def stop_run(run) -> None
-  async def submit_approval(run, decision) -> None
-  def     capabilities() -> Capabilities</code></pre>
-    <p class="muted"><code>HermesAdapter</code> implements it: <code>start_run</code> → <code>POST /v1/runs</code>; <code>stream_events</code> → consume Hermes' SSE and <strong>yield translated neutral events</strong>; <code>submit_approval</code> → <code>POST /v1/runs/{id}/approval</code>. A future <code>GacaAgentAdapter</code> implements the same five methods.</p>
-  </div>
-  <div class="card"><h4>MemoryBackend port</h4>
-<pre><code>class MemoryBackend(Protocol):
-  async def search(scope, query) -> list[Memory]
-  async def write(scope, item) -> None
-  async def load_session(sid) -> WorkingSet
-  async def flush_session(sid) -> None</code></pre>
-    <p class="muted">Memory is handled <strong>in the agent layer</strong>, behind this port. Phase 1: the <code>HermesAdapter</code> implements it by <strong>reading Hermes' own memory</strong> — its HTTP API if one exists, otherwise its <code>memory_store.db</code> on disk. Later, a <code>gaca-memory</code> adapter slots in behind the same port with no route or service change.</p>
-  </div>
-</div>
-
-<div class="callout"><span class="label b">What stays in the invariant core (never changes on swap)</span> Event <strong>sequencing</strong> (monotonic per-session id for <code>Last-Event-ID</code> resume), <strong>persistence</strong> to SQLite, <strong>fan-out</strong> to subscribers, the <strong>audit log</strong>, auth, and every HTTP route. The adapter only <em>produces raw neutral events</em>; the core does everything durable and client-facing with them. That split is why a new engine costs one new adapter, not a rewrite.</div>
-
-<h3>Repo layout — the seam in the folders</h3>
-<pre><code>gaca-api/gaca_api/
-  routers/            # HTTP surface — NEVER changes on swap
-  services/           # sequence · persist(SQLite) · fan-out · audit — NEVER changes
-  bus.py              # publish/subscribe over Redis pub/sub (fan-out)
-  agent/
-    base.py           # AgentBackend + MemoryBackend Protocols
-    factory.py        # AGENT_BACKEND=hermes  ->  HermesAdapter
-    hermes/           # the ONLY place the word "hermes" appears
-      adapter.py      #   start_run -> POST /v1/runs ; stream -> consume SSE
-      client.py       #   httpx client to localhost:8642
-      translate.py    #   Hermes events  <->  GacaEvent ; memory read
-    # future:
-    # gaca/adapter.py   <- add this, flip the env var, ship. routers/services untouched.</code></pre>
-<p class="muted">Neutral types (<code>GacaEvent</code>, <code>Capabilities</code>, <code>Approval</code>, …) live in the shared <code>schemas/</code> package — the contract the Android app also codes against, so it too is blind to which engine is running.</p>
-
-<h2>The read path — how replies reach the phone</h2>
-<p>This is the part worth drawing, because it has one non-obvious move. The cause of that move is a plain fact about the transport:</p>
-<div class="callout warn"><span class="label">Why there's a hand-off at all</span> <strong>SSE is one-directional — server → client only.</strong> The phone can <em>receive</em> on its event stream but cannot <em>send</em> on it. So "send a message" and "receive replies" are <strong>always two separate connections</strong>: a long-lived <code>GET …/events</code> (receive) and a short <code>POST …/messages</code> (send). The POST is what triggers a Hermes run, but the run's output must come back down the <em>other</em> connection — a different request handler, a different coroutine. A small in-process router (over Redis) carries events from the run-reader to the open event stream. <strong>This is inherent to the async contract we already chose — not something Hermes adds.</strong></div>
+<h2>The architecture</h2>
 
 <figure>
-<svg viewBox="0 0 980 560" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, sans-serif">
+<svg viewBox="0 0 1020 660" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, sans-serif">
   <defs>
-    <marker id="ab" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#58a6ff"/></marker>
-    <marker id="ag" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#3fb950"/></marker>
-    <marker id="ao" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#ffa657"/></marker>
-    <marker id="ap" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#d2a8ff"/></marker>
+    <marker id="hb" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#58a6ff"/></marker>
+    <marker id="hbs" markerWidth="9" markerHeight="9" refX="0" refY="3" orient="auto"><path d="M7,0 L0,3 L7,6 Z" fill="#58a6ff"/></marker>
+    <marker id="hg" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#3fb950"/></marker>
+    <marker id="hgs" markerWidth="9" markerHeight="9" refX="0" refY="3" orient="auto"><path d="M7,0 L0,3 L7,6 Z" fill="#3fb950"/></marker>
+    <marker id="hr" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#ff7b72"/></marker>
+    <marker id="hrs" markerWidth="9" markerHeight="9" refX="0" refY="3" orient="auto"><path d="M7,0 L0,3 L7,6 Z" fill="#ff7b72"/></marker>
+    <marker id="ha" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#ffa657"/></marker>
+    <marker id="hp" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#d2a8ff"/></marker>
+    <marker id="hps" markerWidth="9" markerHeight="9" refX="0" refY="3" orient="auto"><path d="M7,0 L0,3 L7,6 Z" fill="#d2a8ff"/></marker>
   </defs>
   <style>
-    .box{fill:#1a2029;stroke:#2a323d}
-    .api{fill:#15212f;stroke:#58a6ff;stroke-width:1.5}
-    .agent{fill:#1b1726;stroke:#d2a8ff;stroke-width:1.5}
-    .store{fill:#14211b;stroke:#3fb950;stroke-width:1.5}
-    .redis{fill:#231519;stroke:#ff7b72;stroke-width:1.5}
-    .t{fill:#e6edf3;font-size:13px;font-weight:600}
-    .tb{fill:#e6edf3;font-size:13.5px;font-weight:800}
-    .ts{fill:#9aa7b4;font-size:10px}
-    .lb{stroke:#58a6ff;stroke-width:1.6;fill:none;marker-end:url(#ab)}
-    .lbd{stroke:#58a6ff;stroke-width:1.5;fill:none;stroke-dasharray:5 4;marker-end:url(#ab)}
-    .lg{stroke:#3fb950;stroke-width:1.8;fill:none;marker-end:url(#ag)}
-    .lo{stroke:#ffa657;stroke-width:1.6;fill:none;marker-end:url(#ao)}
-    .lp{stroke:#d2a8ff;stroke-width:1.6;fill:none;stroke-dasharray:4 4;marker-end:url(#ap)}
-    .zone{fill:none;stroke:#2a323d;stroke-dasharray:5 5}
-    .zt{fill:#9aa7b4;font-size:11px;font-weight:700;letter-spacing:1px}
+    .bx{fill:#1a2029;stroke:#2a323d;stroke-width:1.4}
+    .agent{fill:#1b1726;stroke:#d2a8ff;stroke-width:1.6}
+    .api{fill:#15212f;stroke:#58a6ff;stroke-width:2}
+    .phone{fill:#14211b;stroke:#3fb950;stroke-width:1.6}
+    .ext{fill:#231519;stroke:#ff7b72;stroke-width:1.5}
+    .rd{fill:#14211b;stroke:#3fb950;stroke-width:1.4}
+    .t{fill:#e6edf3;font-size:13.5px;font-weight:700}
+    .tb{fill:#e6edf3;font-size:16px;font-weight:800}
+    .ts{fill:#9aa7b4;font-size:10.5px}
+    .lbl{font-size:11px;font-weight:700}
+    .lb{stroke:#58a6ff;stroke-width:2;fill:none;marker-end:url(#hb);marker-start:url(#hbs)}
+    .lb1{stroke:#58a6ff;stroke-width:1.8;fill:none;marker-end:url(#hb)}
+    .lg{stroke:#3fb950;stroke-width:1.8;fill:none;marker-end:url(#hg)}
+    .lg2{stroke:#3fb950;stroke-width:1.8;fill:none;marker-end:url(#hg);marker-start:url(#hgs)}
+    .lr{stroke:#ff7b72;stroke-width:2;fill:none;marker-end:url(#hr)}
+    .lr2{stroke:#ff7b72;stroke-width:2;fill:none;marker-end:url(#hr);marker-start:url(#hrs)}
+    .la{stroke:#ffa657;stroke-width:1.8;fill:none;marker-end:url(#ha)}
+    .lp{stroke:#d2a8ff;stroke-width:1.8;fill:none;marker-end:url(#hp);marker-start:url(#hps)}
   </style>
 
-  <!-- Phone -->
-  <rect class="box" x="24" y="232" width="150" height="92" rx="10"/>
-  <text class="tb" x="99" y="262" text-anchor="middle">gaca-android</text>
-  <text class="ts" x="99" y="280" text-anchor="middle">opens ONE event stream;</text>
-  <text class="ts" x="99" y="294" text-anchor="middle">POSTs each message</text>
+  <!-- model -->
+  <rect class="bx" x="10" y="288" width="68" height="46" rx="8"/>
+  <text class="t" x="44" y="310" text-anchor="middle">model</text>
+  <text class="ts" x="44" y="326" text-anchor="middle">gpt-5.6</text>
 
-  <!-- API zone -->
-  <rect class="zone" x="210" y="28" width="486" height="508" rx="14"/>
-  <text class="zt" x="228" y="50">GACA-API · single process</text>
-
-  <!-- events handler -->
-  <rect class="api" x="234" y="78" width="210" height="74" rx="9"/>
-  <text class="t" x="339" y="102" text-anchor="middle">GET /events handler</text>
-  <text class="ts" x="339" y="120" text-anchor="middle">SSE to phone · long-lived</text>
-  <text class="ts" x="339" y="134" text-anchor="middle">subscribes to bus[session]</text>
-
-  <!-- messages handler -->
-  <rect class="api" x="234" y="232" width="210" height="86" rx="9"/>
-  <text class="t" x="339" y="256" text-anchor="middle">POST /messages handler</text>
-  <text class="ts" x="339" y="274" text-anchor="middle">persist · start run · 202</text>
-  <text class="ts" x="339" y="288" text-anchor="middle">spawns read_run task</text>
-  <text class="ts" x="339" y="304" text-anchor="middle">(then the handler is done)</text>
-
-  <!-- read_run task -->
-  <rect class="agent" x="234" y="400" width="210" height="96" rx="9"/>
-  <text class="t" x="339" y="424" text-anchor="middle" fill="#d2a8ff">read_run task (background)</text>
-  <text class="ts" x="339" y="442" text-anchor="middle">reads Hermes run SSE</text>
-  <text class="ts" x="339" y="456" text-anchor="middle">translate &#8594; GacaEvent</text>
-  <text class="ts" x="339" y="470" text-anchor="middle">persist(SQLite) + publish(Redis)</text>
-  <text class="ts" x="339" y="484" text-anchor="middle">outlives the 202 response</text>
-
-  <!-- Redis -->
-  <rect class="redis" x="500" y="96" width="172" height="58" rx="9"/>
-  <text class="t" x="586" y="120" text-anchor="middle" fill="#ff7b72">Redis pub/sub</text>
-  <text class="ts" x="586" y="137" text-anchor="middle">channel session:{id} · fan-out</text>
-
-  <!-- SQLite -->
-  <rect class="store" x="500" y="410" width="172" height="62" rx="9"/>
-  <text class="t" x="586" y="434" text-anchor="middle" fill="#3fb950">SQLite</text>
-  <text class="ts" x="586" y="451" text-anchor="middle">durable log</text>
-  <text class="ts" x="586" y="464" text-anchor="middle">+ reconnect replay</text>
+  <!-- email (read) -->
+  <rect class="rd" x="126" y="150" width="140" height="48" rx="8"/>
+  <text class="t" x="196" y="171" text-anchor="middle" fill="#3fb950">email</text>
+  <text class="ts" x="196" y="188" text-anchor="middle">READ ONLY</text>
 
   <!-- Hermes -->
-  <rect class="box" x="760" y="226" width="196" height="120" rx="11" style="stroke:#d2a8ff"/>
-  <text class="tb" x="858" y="250" text-anchor="middle" fill="#d2a8ff">Hermes gateway</text>
-  <text class="ts" x="858" y="266" text-anchor="middle">api_server · :8642</text>
-  <text class="ts" x="858" y="286" text-anchor="middle">POST /v1/runs</text>
-  <text class="ts" x="858" y="300" text-anchor="middle">GET /v1/runs/{id}/events</text>
-  <text class="ts" x="858" y="320" text-anchor="middle">state.db · memory · skills</text>
-  <text class="ts" x="858" y="334" text-anchor="middle">cron · subagents</text>
+  <rect class="agent" x="96" y="266" width="200" height="118" rx="11"/>
+  <text class="tb" x="196" y="296" text-anchor="middle" fill="#d2a8ff">Hermes</text>
+  <text class="ts" x="196" y="317" text-anchor="middle">skills · memory · tools</text>
+  <text class="ts" x="196" y="331" text-anchor="middle">subagents · scheduler</text>
+  <text class="ts" x="196" y="354" text-anchor="middle" fill="#e6edf3">drafts &amp; proposes —</text>
+  <text class="ts" x="196" y="369" text-anchor="middle" fill="#e6edf3">almost never writes</text>
+
+  <!-- personal apps -->
+  <rect class="rd" x="86" y="452" width="220" height="64" rx="9"/>
+  <text class="t" x="196" y="474" text-anchor="middle" fill="#3fb950">personal applications</text>
+  <text class="ts" x="196" y="491" text-anchor="middle">calendar, etc. — apps we built</text>
+  <text class="ts" x="196" y="506" text-anchor="middle">READ + WRITE (agent token)</text>
+
+  <!-- write access to email -->
+  <rect class="ext" x="398" y="118" width="208" height="52" rx="8"/>
+  <text class="t" x="502" y="139" text-anchor="middle" fill="#ff7b72">write access to email</text>
+  <text class="ts" x="502" y="157" text-anchor="middle">credential lives HERE, not in Hermes</text>
+
+  <!-- API layer -->
+  <rect class="api" x="404" y="252" width="196" height="148" rx="11"/>
+  <text class="tb" x="502" y="282" text-anchor="middle" fill="#58a6ff">API layer</text>
+  <text class="ts" x="502" y="299" text-anchor="middle">gaca-api</text>
+  <text class="t" x="502" y="324" text-anchor="middle">approvals · events</text>
+  <text class="ts" x="502" y="347" text-anchor="middle">holds every privileged</text>
+  <text class="ts" x="502" y="361" text-anchor="middle">write credential</text>
+  <text class="ts" x="502" y="383" text-anchor="middle">read/write into Hermes</text>
+
+  <!-- external apps + write MCPs -->
+  <rect class="ext" x="380" y="476" width="244" height="66" rx="9"/>
+  <text class="t" x="502" y="499" text-anchor="middle" fill="#ff7b72">external applications</text>
+  <text class="t" x="502" y="516" text-anchor="middle" fill="#ff7b72">and write MCPs</text>
+  <text class="ts" x="502" y="533" text-anchor="middle">executed only after approval</text>
+
+  <!-- phone -->
+  <rect class="phone" x="724" y="266" width="182" height="118" rx="11"/>
+  <text class="tb" x="815" y="298" text-anchor="middle" fill="#3fb950">phone app</text>
+  <text class="ts" x="815" y="319" text-anchor="middle">gaca-android</text>
+  <text class="ts" x="815" y="342" text-anchor="middle">the control surface —</text>
+  <text class="ts" x="815" y="357" text-anchor="middle">where you tap approve</text>
+
+  <!-- right labels -->
+  <text class="t" x="938" y="256" fill="#58a6ff">messages</text>
+  <text class="t" x="938" y="320" fill="#ffa657">approvals</text>
+  <text class="t" x="938" y="384" fill="#58a6ff">events</text>
 
   <!-- edges -->
-  <!-- 1 phone GET -> events handler -->
-  <path class="lb" d="M174,250 L232,110"/>
-  <text class="ts" x="186" y="170" fill="#58a6ff">&#9312; GET /events</text>
-  <!-- events stream back down (green) -->
-  <path class="lg" d="M232,128 L176,262"/>
-  <text class="ts" x="150" y="210" fill="#3fb950">events stream down</text>
-  <!-- 2 phone POST -> messages handler -->
-  <path class="lb" d="M174,290 L232,268"/>
-  <text class="ts" x="188" y="312" fill="#58a6ff">&#9313; POST msg</text>
-  <!-- 202 back -->
-  <path class="lbd" d="M232,300 L176,316"/>
-  <text class="ts" x="196" y="338" fill="#58a6ff">202</text>
-  <!-- messages handler -> sqlite: persist the user message on POST -->
-  <path class="lg" d="M444,300 L520,408"/>
-  <text class="ts" x="452" y="364" fill="#3fb950">persist msg</text>
-  <!-- 3 messages -> hermes runs -->
-  <path class="lo" d="M444,250 L758,256"/>
-  <text class="ts" x="600" y="244" fill="#ffa657">&#9314; POST /v1/runs &#8594; run_id</text>
-  <!-- spawn -->
-  <path class="lp" d="M339,318 L339,398"/>
-  <text class="ts" x="372" y="362" fill="#d2a8ff">spawn</text>
-  <!-- 4 read_run -> hermes events -->
-  <path class="lo" d="M444,438 L758,320"/>
-  <text class="ts" x="600" y="400" fill="#ffa657">&#9315; GET run events (SSE)</text>
-  <!-- read_run -> sqlite -->
-  <path class="lg" d="M444,452 L498,444"/>
-  <!-- read_run -> redis publish -->
-  <path class="lg" d="M420,400 L560,156"/>
-  <text class="ts" x="470" y="300" fill="#3fb950">&#9316; publish</text>
-  <!-- redis -> events handler subscribe -->
-  <path class="lg" d="M500,132 L446,118"/>
-  <text class="ts" x="476" y="100" fill="#3fb950">&#9317; deliver</text>
+  <path class="lp" d="M80,311 L94,311"/>
+  <path class="lg" d="M196,200 L196,264"/>
+  <text class="ts lbl" x="206" y="236" fill="#3fb950">reads</text>
+  <path class="lg2" d="M196,386 L196,450"/>
+  <text class="ts lbl" x="206" y="424" fill="#3fb950">read + write</text>
+
+  <path class="lb" d="M298,312 L402,312"/>
+  <text class="ts lbl" x="350" y="302" text-anchor="middle" fill="#58a6ff">limited</text>
+  <text class="ts lbl" x="350" y="334" text-anchor="middle" fill="#58a6ff">surface</text>
+
+  <path class="lr" d="M502,250 L502,174"/>
+  <text class="ts lbl" x="512" y="214" fill="#ff7b72">writes</text>
+  <path class="lr2" d="M502,402 L502,472"/>
+  <text class="ts lbl" x="512" y="444" fill="#ff7b72">writes</text>
+
+  <path class="lb" d="M602,320 L722,320"/>
+  <text class="ts lbl" x="662" y="310" text-anchor="middle" fill="#58a6ff">SSE + REST</text>
+
+  <path class="lb1" d="M908,298 L932,262"/>
+  <path class="la" d="M908,320 L932,314"/>
+  <path class="lb1" d="M908,346 L932,378"/>
+
+  <!-- zone notes -->
+  <text class="ts" x="196" y="596" text-anchor="middle" fill="#9aa7b4">Hermes side — broad read, narrow write</text>
+  <text class="ts" x="502" y="596" text-anchor="middle" fill="#9aa7b4">API layer — every privileged write</text>
+  <text class="ts" x="815" y="596" text-anchor="middle" fill="#9aa7b4">phone — the approval gate</text>
+  <path d="M40,612 L980,612" stroke="#2a323d" stroke-width="1" fill="none"/>
+  <text class="ts" x="510" y="634" text-anchor="middle" fill="#9aa7b4">green = read paths · red = privileged writes · blue = control plane · purple = inference</text>
 </svg>
-<figcaption><span style="color:#58a6ff">Blue</span> = phone&#8596;API requests (the open <code>GET</code> stream + the short <code>POST</code>) · <span style="color:#3fb950">green</span> = events flowing back toward the phone (read_run &#8594; Redis &#8594; events handler &#8594; phone) and the durable writes to SQLite (the incoming message on POST, then each event) · <span style="color:#ffa657">orange</span> = API&#8596;Hermes. The phone's listening socket (&#9312;) is a <em>different connection</em> than the POST that triggered the run (&#9313;), so the <code>read_run</code> task can't write to it directly — it publishes to Redis and the events handler, already subscribed, relays it down the open stream.</figcaption>
+<figcaption>The agent proposes; the API layer disposes. Hermes can <em>read</em> email, but the credential that can <em>send</em> it sits in the API layer, unreachable from the agent. Personal applications we built ourselves are the deliberate exception — Hermes holds a scoped agent token and writes to them directly.</figcaption>
 </figure>
 
-<h3>The same path in words</h3>
-<ol class="lede-list">
-  <li><strong>The phone opens its receive stream</strong> (<code>GET /sessions/{id}/events</code>) when the chat screen loads and leaves it open. The events handler subscribes to <code>bus[session]</code>. Nothing flows yet.</li>
-  <li><strong>You type → the phone POSTs</strong> (<code>POST /sessions/{id}/messages</code>). The handler saves the message to SQLite, calls Hermes <code>POST /v1/runs</code> (with <code>X-Hermes-Session-Id</code> = the mapped id), gets a <code>run_id</code> back, <strong>spawns a background <code>read_run</code> task</strong>, and returns <code>202</code>. The POST is now finished — fast, non-blocking.</li>
-  <li><strong>The <code>read_run</code> task</strong> opens Hermes' <code>GET /v1/runs/{run_id}/events</code> SSE. For each Hermes event it does three things: <em>translate</em> to a neutral <code>GacaEvent</code>, <em>persist</em> it to SQLite, and <em>publish</em> it to <code>bus[session]</code> (Redis).</li>
-  <li><strong>The events handler</strong>, subscribed the whole time, <strong>drains each published event and writes it down the phone's open SSE socket</strong>. The phone renders it live.</li>
-  <li>When Hermes sends <code>done</code>, the <code>read_run</code> task ends. The receive stream stays open for the next message.</li>
-</ol>
-<p>So your original mental model — "our API opens a connection to Hermes' SSE and pipes it back" — is <strong>right</strong>. The only addition is that the pipe can't go <em>straight</em> to the phone, because the phone's listening socket and the POST that started the run are two different connections. The bus is the ~20-line bridge between them.</p>
-
-<h2>Transport — Redis pub/sub, fan-out only</h2>
-<div class="callout pick"><span class="label">Decision</span> Use <strong>Redis pub/sub now</strong> for the <code>read_run</code> → events-handler hand-off — and <strong>only</strong> that. Do <strong>not</strong> build the Redis Streams dispatch/inbox/consumer-group layer yet.</div>
-<div class="grid cols-2">
-  <div class="card"><h4>Why adopt it now</h4><ul>
-    <li>It's the <strong>same code</strong> as an in-process bus (publish/subscribe), just pointed at Redis — not more to write.</li>
-    <li>It <strong>removes the single-worker constraint permanently</strong>: the <code>read_run</code> task and the events handler can live in different API workers and still connect.</li>
-    <li>It's <strong>exactly the piece the <a href="gaca-plan.html">Full GACA Plan</a> keeps</strong> for fan-out — so this code survives the eventual swap with no rewrite.</li>
-    <li>Cost is one <code>redis.service</code> systemd unit already in the stack.</li>
-  </ul></div>
-  <div class="card"><h4>Why not the Streams layer yet</h4><ul>
-    <li>Dispatch stream + per-session inbox + supervisor lifecycle existed to <strong>route, order, and keep sessions alive</strong>.</li>
-    <li><strong>Hermes already does all of that</strong> (<code>X-Hermes-Session-Id</code> + <code>state.db</code> + <code>max_concurrent_runs</code>).</li>
-    <li>We only rebuild it when <code>gaca-agent</code> owns the run lifecycle itself and needs durable, crash-safe handoff.</li>
-  </ul></div>
-</div>
-<p class="muted"><strong>Redis pub/sub is ephemeral</strong> — if no subscriber is connected at publish time, that event is dropped <em>from the live path</em>. That's why <strong>SQLite stays the durable record</strong>: every event is persisted as it's published, and a reconnecting phone replays from SQLite by <code>Last-Event-ID</code>, then attaches to the live channel. SQLite is embedded and file-based — no separate service or port to run, backups are a single file copy, and objects stay natural via Pydantic (store the model as JSON in a column, load with <code>model_validate_json()</code>); single-writer is fine for a single-user box. One honest gap we accept for now: if the <code>read_run</code> task itself crashes mid-run, the run is orphaned in Hermes — recovery (re-reading Hermes for the result) is manual until the Streams layer lands.</p>
-
-<h2>The client flow</h2>
-<p>Three steps, and the order of the first two matters:</p>
-<pre><code>1.  POST /sessions                     -> { session_id }    (create)
-2.  GET  /sessions/{id}/events  (SSE)  -> stream opens       (subscribe — keep open)
-3.  POST /sessions/{id}/messages       -> 202                (send)
-        … replies arrive on the stream from step 2 …
-4.  POST /sessions/{id}/messages       -> 202                (send again, same open stream)</code></pre>
-<div class="grid cols-3">
-  <div class="card"><h4>Subscribe before you post</h4><p>If you POST first and Hermes replies in the same instant, events can publish <em>before</em> the phone subscribed — and with ephemeral pub/sub they'd be missed until a reconnect-replay. Opening the stream first closes that race in the happy path.</p></div>
-  <div class="card"><h4>One stream, many messages</h4><p>The event stream is opened <strong>once</strong> when the chat screen loads, not per message. Every subsequent <code>POST …/messages</code> streams its replies back down that same already-open connection.</p></div>
-  <div class="card"><h4>Reconnect = replay</h4><p>On a dropped connection the app re-opens with <code>Last-Event-ID</code>; the API replays missed events from SQLite, then resumes live. Backend-agnostic — true for Hermes or <code>gaca-agent</code>.</p></div>
-</div>
-<p class="muted">This whole flow is <strong>identical whichever engine is behind the adapter</strong> — which is the proof the seam is in the right place. The Android app's interaction pattern never changes when we swap Hermes for our own loop.</p>
-
-<h2>What we own vs. adopt (this phase)</h2>
+<h2>The permission model</h2>
+<p>This table is the plan. Everything else is detail.</p>
 <div class="table-scroll">
 <table>
-  <thead><tr><th>Concern</th><th>This phase</th><th>Who</th><th>Note</th></tr></thead>
+  <thead><tr><th>From → to</th><th>Read</th><th>Write</th><th>Note</th></tr></thead>
   <tbody>
-    <tr><td><strong>API contract + routes</strong></td><td><span class="badge pick">OWN</span></td><td>gaca-api</td><td>Unchanged from the Full GACA Plan. The fixed surface.</td></tr>
-    <tr><td><strong>Native app</strong></td><td><span class="badge pick">OWN</span></td><td>gaca-android</td><td>Codes against neutral events; blind to the engine.</td></tr>
-    <tr><td><strong>Event timeline + audit</strong></td><td><span class="badge pick">OWN</span></td><td>gaca-api</td><td>Sequence, persist, fan-out, audit — the invariant core.</td></tr>
-    <tr><td><strong>Agent loop</strong></td><td><span class="badge no">ADOPT</span></td><td>Hermes</td><td>Behind <code>AgentBackend</code>. The thing we'll own later.</td></tr>
-    <tr><td><strong>Tools</strong></td><td><span class="badge no">ADOPT</span></td><td>Hermes</td><td>Hermes' own toolset; we surface its tool events as audit.</td></tr>
-    <tr><td><strong>Memory</strong></td><td><span class="badge maybe">ADAPT</span></td><td>Hermes</td><td>Behind <code>MemoryBackend</code>; adapter reads Hermes' store; <code>gaca-memory</code> later.</td></tr>
-    <tr><td><strong>Skills · scheduler · subagents</strong></td><td><span class="badge no">ADOPT</span></td><td>Hermes</td><td>Free from Hermes (<code>skills/</code>, <code>cron</code>, isolated subagents).</td></tr>
-    <tr><td><strong>Approval gate</strong></td><td><span class="badge maybe">RESERVE</span></td><td>both</td><td>Port method + route reserved now so adding it later isn't a contract change.</td></tr>
+    <tr><td><strong>Hermes → external apps</strong> (email, third-party)</td><td><span class="badge yes">YES</span></td><td><span class="badge no">NO</span></td><td>It can read your mail and draft a reply. It cannot send one — the sending credential is not on that box.</td></tr>
+    <tr><td><strong>Hermes → personal apps</strong> (calendar, ours)</td><td><span class="badge yes">YES</span></td><td><span class="badge yes">YES</span></td><td>Apps we built, exposing a scoped, revocable agent token. Blast radius is our own data.</td></tr>
+    <tr><td><strong>Hermes → API layer</strong></td><td><span class="badge maybe">LIMITED</span></td><td><span class="badge maybe">LIMITED</span></td><td>A deliberately narrow surface: file an event, raise an approval request. Nothing else.</td></tr>
+    <tr><td><strong>API layer → Hermes</strong></td><td><span class="badge yes">YES</span></td><td><span class="badge yes">YES</span></td><td>The API drives Hermes — starts runs, reads transcripts and internals. The relationship is asymmetric on purpose.</td></tr>
+    <tr><td><strong>API layer → external apps &amp; write MCPs</strong></td><td><span class="badge yes">YES</span></td><td><span class="badge yes">YES</span></td><td>Every privileged write lives here, and fires only on an approved action.</td></tr>
+    <tr><td><strong>Phone → API layer</strong></td><td><span class="badge yes">YES</span></td><td><span class="badge yes">YES</span></td><td>Messages, approvals, events. The only human-facing surface.</td></tr>
   </tbody>
 </table>
 </div>
 
-<h2>What runs on the Pi</h2>
+<div class="callout pick"><span class="label">Why this beats an approval <em>policy</em></span>
+Most agent approval systems are <strong>advisory</strong>: the agent holds the credential and is <em>asked</em> to pause before using it. That fails exactly when it matters — a confused agent, a bad plan, or a prompt injection buried in an email it was told to summarise.<br><br>
+This design is <strong>architectural instead</strong>. Hermes does not pause before sending email; <strong>it cannot send email at all</strong>, because the credential is in a different process behind a different trust boundary. The worst outcome from a compromised or mistaken agent is <strong>a bad proposal that a human declines</strong>. That is a categorically smaller failure than a bad action already taken — and it matters most precisely because Hermes reads untrusted content for a living.</div>
+
+<h2>What we're building</h2>
+<p>One layer, two resources, added to the API that already exists.</p>
 <div class="grid cols-2">
-  <div class="card"><h4>Processes (systemd units)</h4><ul>
-    <li><strong>gaca-api</strong> — FastAPI; the adapter is an HTTP client to Hermes. (One worker fine; Redis allows more later.)</li>
-    <li><strong>hermes gateway</strong> — the <code>api_server</code> adapter on <code>:8642</code>, <code>API_SERVER_KEY</code> set, its own <code>~/.hermes</code> (pin a version — it's a fast-moving MIT repo).</li>
-    <li><strong>redis</strong> — pub/sub transport.</li>
-    <li><strong>sqlite</strong> — system of record (sessions, messages, events, audit). Embedded, so it's not a process at all — just a file the API opens; trivial and reproducible under Nix with no MongoDB-on-ARM packaging pain (the deciding factor), and it aligns us with Hermes, which already uses embedded SQLite for its own <code>state.db</code>.</li>
-  </ul></div>
-  <div class="card"><h4>Operational notes</h4><ul>
-    <li>Hermes is a <strong>sibling daemon</strong>, not in-process — "no separate GACA layer" means no translation <em>service</em> of ours, but Hermes itself is still its own service.</li>
-    <li>Cloudflare (Tunnel + Access) stays the outer gate in front of <code>gaca-api</code> only; Hermes is never exposed — it binds to localhost.</li>
-    <li>Deploy stays <strong>Nix + systemd</strong>, no Docker, per the Full GACA Plan.</li>
-  </ul></div>
+  <div class="card"><h4>Events — the timeline</h4>
+    <p>An append-only record of what the agent did, saw, and proposes. Hermes files events through its narrow surface; the API sequences and persists them, then fans them out to the phone over the SSE stream already built.</p>
+    <p class="muted">This is the observability the <a href="index.html">Overview</a> called for from day one — every tool call and decision visible — and it doubles as the feed the app renders.</p>
+  </div>
+  <div class="card"><h4>Approvals — the gate</h4>
+    <p>A proposed action carrying everything needed to judge it: what, against which target, with what payload, and why. It sits <code>pending</code> until the phone answers. On approve, <strong>the API layer executes it</strong> with its own credentials; on deny, it closes unexecuted.</p>
+    <p class="muted">None of the decision is delegated back to the agent. Hermes learns the outcome as an event like any other.</p>
+  </div>
 </div>
 
-<h2>Leak-point checklist — get these right now</h2>
-<p>The things that, if skipped, force a route/service/app change later (defeating the whole point):</p>
-<div class="grid cols-2">
-  <div class="card"><h4>Opaque session mapping</h4><p>Store Hermes' session id as an <strong>opaque <code>agent_ref</code></strong> field on the session doc that only the adapter reads — never a Hermes-named column. A future engine puts whatever it wants there.</p></div>
-  <div class="card"><h4>Neutral event schema is the contract</h4><p>Define <code>GacaEvent</code> in <code>schemas/</code> first. The app and services depend on it, never on Hermes' shapes. The translator is the only thing that knows both.</p></div>
-  <div class="card"><h4>Capabilities, not hardcoded features</h4><p>Drive app features off <code>GET /capabilities</code> (the adapter reports its backend's support). Swapping engines changes the feature surface with no app code change.</p></div>
-  <div class="card"><h4>Approval reserved in the contract</h4><p>Put <code>submit_approval</code> in the port and the <code>/approvals</code> route in now, even if only the Hermes adapter wires it — so enabling it later isn't a contract change.</p></div>
-  <div class="card"><h4>Audit from translated tool events</h4><p>Translate Hermes' <code>tool.started/completed/failed</code> into audit entries. Caveat: Hermes streams tool <em>args</em> but not tool <em>output</em> (output is in <code>state.db</code>) — fetch outputs from <code>/api/sessions/{id}/messages</code> if you want them logged.</p></div>
-  <div class="card"><h4>read_run lifecycle</h4><p>The task must <strong>outlive the 202</strong> (an app-scoped <code>asyncio</code> task, not tied to the request) and be <strong>cleaned up</strong> if the run hangs or the session closes. Nail this before writing tools.</p></div>
-</div>
+<div class="callout"><span class="label b">The one open design question</span>
+Hermes needs a way to <em>reach</em> the API layer to file events and raise approvals — which the sketch notes plainly: <em>"probably needs more than API to fire events."</em> Two candidate mechanisms, and this is the first thing to settle at build time:<br><br>
+<strong>(a) A skill.</strong> Give Hermes a <code>SKILL.md</code> plus an operator-minted token — exactly the agent-ready pattern already working for the calendar app (<a href="hermes-setup.html#step10">Setup, Step 10</a>). Nothing new to invent, and the narrow surface is enforced by the token's scope.<br><br>
+<strong>(b) A write MCP.</strong> More structured tool definitions, but another moving part to run and secure.<br><br>
+<strong>(a) is the recommendation</strong> — it reuses a pattern already proven on this stack, and keeps the agent's view of the API layer as just another agent-ready app.</div>
 
-<h2>Still open / to verify</h2>
-<div class="grid cols-2">
-  <div class="card"><h4>To verify against a live Hermes</h4><ul>
-    <li><strong>SSE event JSON field shapes</strong> — names are read from source; confirm the exact payload of each <code>run.*</code>/<code>assistant.*</code>/<code>tool.*</code> event before hard-coding the translator.</li>
-    <li><strong>Does Hermes expose a memory HTTP API?</strong> If yes, the memory adapter calls it; if no, it reads <code>memory_store.db</code> on disk (accepted coupling, contained in the adapter).</li>
-    <li><strong>Run re-attach / replay</strong> — can we reconnect to a run's SSE after a reader crash, or only read the final result from the session?</li>
-  </ul></div>
-  <div class="card"><h4>To decide at build time</h4><ul>
-    <li>Session-id mapping store: a column on the sessions row vs. a small mapping table.</li>
-    <li>How much of Hermes' <code>tool.progress</code>/<code>commentary</code> we surface vs. drop as noise.</li>
-    <li>Which Hermes model config the runs use; where its <code>API_SERVER_KEY</code> + model keys live (env/secrets).</li>
-    <li>Whether to expose memory endpoints at all in phase 1, or keep memory internal to runs.</li>
-  </ul></div>
+<h2>How replies reach the phone</h2>
+<p>This part is already designed and built, and does not change. Worth restating because one move in it is non-obvious.</p>
+<div class="callout warn"><span class="label">Why there is a hand-off at all</span> <strong>SSE is one-directional — server → client.</strong> The phone can <em>receive</em> on its event stream but cannot <em>send</em> on it. So "send a message" and "receive replies" are <strong>always two connections</strong>: a long-lived <code>GET …/events</code> and a short <code>POST …/messages</code>. The POST triggers a run, but the run's output must return on the <em>other</em> connection — a different handler, a different coroutine. A small bus carries events from the run-reader to the open stream.</div>
+<ol class="lede-list">
+  <li><strong>The phone opens its stream</strong> (<code>GET /sessions/{id}/events</code>) when the chat screen loads, and leaves it open.</li>
+  <li><strong>You type → the phone POSTs.</strong> The handler persists the message, starts a Hermes run, spawns a background reader, and returns <code>202</code>.</li>
+  <li><strong>The reader task</strong> consumes Hermes' SSE, translates each frame to a neutral <code>GacaEvent</code>, persists it to SQLite, and publishes it to the bus.</li>
+  <li><strong>The events handler</strong>, subscribed the whole time, relays each one down the phone's open socket.</li>
+  <li><strong>Approvals ride the same rails</strong> — a pending approval is an event, the phone renders it as a prompt, and the answer returns as an ordinary <code>POST</code>.</li>
+</ol>
+<p class="muted">Redis pub/sub does the fan-out; <strong>SQLite is the durable record</strong>, so a reconnecting phone replays by <code>Last-Event-ID</code> and then attaches live. Approvals in particular must survive a dropped connection — an approval that vanished because the phone slept would be a bad failure — which is exactly why the record is durable and the transport is not trusted.</p>
+
+<h2>What already exists</h2>
+<p>The spine is built and proven end to end. This plan adds to it rather than starting anything.</p>
+<div class="grid cols-3">
+  <div class="card"><h4>The API and its store</h4><p>Sessions, messages, SSE with <code>Last-Event-ID</code> replay, SQLite as the record, and the publish/subscribe bus.</p></div>
+  <div class="card"><h4>The Hermes adapter</h4><p><code>AgentBackend</code> port, the adapter, and the SSE translator — verified against a live gateway. Round trip proven by curl.</p></div>
+  <div class="card"><h4>A working agent</h4><p>A configured Hermes box: model, web, repos, memory, a second host, and a build skill. See the <a href="hermes-setup.html">Setup log</a>.</p></div>
 </div>
+<p class="muted">The adapter seam stays because it is already written and costs nothing to keep — but this plan <strong>commits to Hermes</strong>. The seam is insurance now, not a roadmap.</p>
 
 <h2>Build order</h2>
-<div class="callout pick"><span class="label">The spine first</span>
+<div class="callout pick"><span class="label">Smallest path to a working approval loop</span>
 <ol style="margin-top:6px">
-  <li>Stand up <strong>Hermes</strong> with the api_server adapter on <code>:8642</code>; confirm <code>POST /v1/runs</code> + <code>GET /v1/runs/{id}/events</code> by hand (this also pins the event shapes).</li>
-  <li><strong>gaca-api</strong>: <code>POST /sessions</code>, <code>GET /sessions/{id}/events</code> (SSE over the Redis bus), <code>POST /sessions/{id}/messages</code> → <code>202</code>, SQLite persistence, the <code>bus.py</code> publish/subscribe.</li>
-  <li>The <strong><code>HermesAdapter</code></strong>: <code>start_run</code> + the <code>read_run</code> task that consumes Hermes' SSE, translates to <code>GacaEvent</code>, persists, and publishes.</li>
-  <li>Point <strong><code>gaca-testui</code></strong> (React) at it and watch a message round-trip: type → <code>202</code> → Hermes runs → events stream back, audited.</li>
-  <li>Then layer: audit from tool events, the <code>MemoryBackend</code> read, <code>/capabilities</code>, reconnect-replay, and the native app.</li>
+  <li><strong>Define the two schemas</strong> — <code>Event</code> and <code>Approval</code> — as neutral types alongside the existing <code>GacaEvent</code>. Contract first.</li>
+  <li><strong>Add the routes</strong>: list and file events; list, raise, and answer approvals. Persist to SQLite, publish to the bus.</li>
+  <li><strong>Give Hermes its narrow surface</strong> — a skill plus a scoped token that can do exactly two things: file an event, raise an approval.</li>
+  <li><strong>Add one executor</strong> in the API layer behind the gate. Email send is the obvious first, since it is the case that motivated the split.</li>
+  <li><strong>Render it on the phone</strong>: the event timeline, and a pending approval with approve/deny.</li>
+  <li><strong>Then widen</strong>: more executors, more write MCPs, all behind the same gate.</li>
 </ol>
-That round-trip — text → <code>202</code> → Hermes run → translated events stream back over Redis, persisted to SQLite, while the session stays responsive — is the whole spine. Owning the loop ourselves is then just a second adapter behind the same port.</div>
+Step 4 is the proof. When a draft composed by an agent that <em>cannot send it</em> appears on your phone, is approved with a tap, and is sent by the API layer — the architecture is real.</div>
 
 <h2 id="decisions">Locked decisions</h2>
-<p>The constraints any work on the Hermes layer must honor. These extend the <a href="gaca-plan.html#decisions">Full GACA Plan's locked decisions</a> — where they overlap, these win for this phase.</p>
 <div class="callout"><span class="label b">Honor these</span>
 <ol>
-  <li><strong>Hermes is the agent backend, behind an adapter.</strong> The agent loop is <strong>adopted</strong> (Hermes Agent), reached as an HTTP client at <code>localhost:8642</code> — never embedded in-process, never by reading its DB except inside the memory adapter as a documented fallback.</li>
-  <li><strong>Ports &amp; adapters is the law.</strong> Routes and services depend only on the <code>AgentBackend</code> and <code>MemoryBackend</code> ports. All Hermes-specific code lives in <code>agent/hermes/</code>; <code>grep -ri hermes</code> outside that dir returns nothing.</li>
-  <li><strong>The adapter produces neutral events; the core sequences, persists, fans out, and audits.</strong> The Android app and services know only the <code>GacaEvent</code> schema, never Hermes' event shapes.</li>
-  <li><strong>A future <code>gaca-agent</code> is a second adapter.</strong> Switching engines is a config flip (<code>AGENT_BACKEND</code>) — no change to routers, services, schemas, or the app.</li>
-  <li><strong>Memory is handled in the agent layer behind <code>MemoryBackend</code>.</strong> Phase 1 the Hermes adapter reads Hermes' own memory (its API if present, else <code>memory_store.db</code>); <code>gaca-memory</code> slots in later behind the same port.</li>
-  <li><strong>Redis is pub/sub fan-out only, for now.</strong> The <code>read_run</code> task publishes events to <code>session:{id}</code>; the events handler subscribes and relays to the phone. No Streams/dispatch/inbox layer yet — Hermes owns run routing and lifecycle.</li>
-  <li><strong>SQLite is the durable record.</strong> Every event is persisted as it's published; Redis is ephemeral; reconnect replays from SQLite by <code>Last-Event-ID</code>.</li>
-  <li><strong>The client flow is create → subscribe → post.</strong> The event stream opens before the first message and is reused across messages; <code>POST …/messages</code> returns <code>202</code> and all output arrives on the stream.</li>
-  <li><strong>The <code>read_run</code> task outlives the <code>202</code>.</strong> It is an app-scoped background task, not tied to the request, and is cleaned up on run end, hang, or session close.</li>
-  <li><strong>Session identity is mapped opaquely.</strong> Hermes' session id is stored as an opaque <code>agent_ref</code>; the core never interprets it.</li>
-  <li><strong>Hermes runs as a localhost-only sibling daemon</strong> under Nix + systemd, pinned to a version, never exposed through Cloudflare. Only <code>gaca-api</code> is reachable from the edge.</li>
+  <li><strong>Hermes is the agent.</strong> Committed, not provisional. It runs as a localhost daemon on its own box; the API reaches it as an HTTP client.</li>
+  <li><strong>Hermes gets read access to external applications, never write.</strong> It composes drafts, suggestions, and proposals. It does not act on the outside world.</li>
+  <li><strong>Every privileged write credential lives in the API layer.</strong> If the agent could hold it, it is in the wrong place.</li>
+  <li><strong>Personal applications are the deliberate exception.</strong> Apps we built ourselves may grant Hermes a scoped, revocable agent token for direct writes.</li>
+  <li><strong>Hermes' access to the API layer is a narrow, explicit surface</strong> — file events, raise approvals. It is not a general client of our own API.</li>
+  <li><strong>The API layer has read/write access to Hermes and its internals.</strong> The relationship is asymmetric by design.</li>
+  <li><strong>No privileged write executes without an approval</strong> recorded and answered by the operator.</li>
+  <li><strong>The phone is the control surface.</strong> Messages, events, and approvals; nothing should require a terminal.</li>
+  <li><strong>SQLite is the durable record; the bus is ephemeral.</strong> Approvals and events survive reconnects and replay by <code>Last-Event-ID</code>.</li>
+  <li><strong>The scope is this and no more for now.</strong> The approval/event layer is the whole of the next build.</li>
 </ol>
 </div>
 
 <div class="foot">
-  <p>This is the near-term build plan: it keeps the <a href="gaca-plan.html">Full GACA Plan</a>'s API and app, swaps the self-built loop for <strong>Hermes behind an adapter</strong>, and uses <strong>Redis pub/sub</strong> for event fan-out with <strong>SQLite</strong> as the record. Hermes interface facts verified against the <code>NousResearch/hermes-agent</code> source (port 8642, <code>/v1/runs</code> + SSE, <code>X-Hermes-Session-Id</code>, <code>~/.hermes</code> layout); per-event field shapes and a memory HTTP endpoint to confirm against a live instance before coding the translator. Once reviewed, next is building the <code>HermesAdapter</code> and wiring it to the API.</p>
+  <p>The committed plan: Hermes as the agent, an approval and event layer added to the existing API, and the Android app as the control surface. The permission split — broad read for the agent, every privileged write behind a gate in the API layer — is the load-bearing idea, and it is enforced by where credentials live rather than by asking the agent to behave. Setup of the Hermes box is documented step by step in the <a href="hermes-setup.html">Hermes Setup</a> log; the <a href="index.html">Overview</a> holds the original build-vs-buy study this grew out of.</p>
 </div>
 </div>
 </body>

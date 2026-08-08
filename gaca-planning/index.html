@@ -10,10 +10,6 @@
 <nav class="topnav"><div class="inner">
   <span class="brand">GACA<span>·</span></span>
   <a class="navlink active" href="index.html">Overview</a>
-  <a class="navlink" href="landscape.html">Tools &amp; Frameworks</a>
-  <a class="navlink" href="gaca-plan.html">Full GACA Plan</a>
-  <a class="navlink" href="odysseus-experiment.html">Odysseus Experiment</a>
-  <a class="navlink" href="gaca-experiment.html">GACA Experiment</a>
   <a class="navlink" href="hermes-plan.html">Hermes Plan</a>
   <a class="navlink" href="hermes-setup.html">Hermes Setup</a>
 </div></nav>
@@ -26,7 +22,7 @@
 </header>
 
 <h2>Your draft, decoded</h2>
-<p>Here's the rough draft you handed me, and the same idea cleaned up. The architecture you sketched is sound — it's the standard "agent gateway" shape that several 2026 projects converge on. What's missing is mostly the <strong>plumbing that makes it safe and swappable</strong>: a model gateway, an auth layer, a sandbox boundary, an approval gate for write actions, and a scheduler. The <a href="gaca-plan.html">Full GACA Plan</a> works those into the build.</p>
+<p>Here's the rough draft you handed me, and the same idea cleaned up. The architecture you sketched is sound — it's the standard "agent gateway" shape that several 2026 projects converge on. What's missing is mostly the <strong>plumbing that makes it safe and swappable</strong>: a model gateway, an auth layer, a sandbox boundary, an approval gate for write actions, and a scheduler. The <a href="hermes-plan.html">Hermes Plan</a> works those into the build — the approval gate in particular became its load-bearing idea.</p>
 
 <figure>
 <svg viewBox="0 0 880 300" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, sans-serif">
@@ -60,13 +56,13 @@
   <path class="ln" d="M450,224 L468,248"/>
   <path class="ln" d="M510,218 L600,250"/>
 </svg>
-<figcaption>Your sketch, transcribed. The bones are right. See the <a href="gaca-plan.html">Full GACA Plan</a> for the version with the missing safety/swap plumbing.</figcaption>
+<figcaption>Your sketch, transcribed. The bones are right. See the <a href="hermes-plan.html">Hermes Plan</a> for the version with the missing safety plumbing worked in.</figcaption>
 </figure>
 
 <h2>The one-paragraph answer</h2>
 <div class="callout pick">
   <span class="label">Recommendation</span>
-  <strong>Don't build the agent loop from scratch, and don't adopt a single heavyweight framework either.</strong> Build a <em>thin</em> orchestration core you fully understand (a few hundred lines over <strong>Pydantic AI</strong> or <strong>LangGraph</strong>), and <em>wrap</em> mature, boring components for everything underneath it: <strong>LiteLLM</strong> for local↔provider swapping, <strong>MCP servers</strong> for Google/GitHub, an existing <strong>coding CLI</strong> (Aider / opencode / Pi) as the coding subagent, <strong>Mem0 + sqlite-vec</strong> for memory, the open <strong>SKILL.md</strong> format for skills, and a <strong>native Android app</strong> (Kotlin + Compose) reaching the API through <strong>Cloudflare</strong> (Tunnel + Access) as the front-end. The Pi runs the components under <strong>Nix + systemd</strong> (no Docker); inference points at a provider now and a local GPU box later — a one-line config change. <em>See the <a href="gaca-plan.html">Full GACA Plan</a> for the current shape (four components, agent calls tools directly, dedicated memory) — it supersedes specifics on this study page.</em>
+  <strong>Don't build the agent loop from scratch, and don't adopt a single heavyweight framework either.</strong> Build a <em>thin</em> orchestration core you fully understand (a few hundred lines over <strong>Pydantic AI</strong> or <strong>LangGraph</strong>), and <em>wrap</em> mature, boring components for everything underneath it: <strong>LiteLLM</strong> for local↔provider swapping, <strong>MCP servers</strong> for Google/GitHub, an existing <strong>coding CLI</strong> (Aider / opencode / Pi) as the coding subagent, <strong>Mem0 + sqlite-vec</strong> for memory, the open <strong>SKILL.md</strong> format for skills, and a <strong>native Android app</strong> (Kotlin + Compose) reaching the API through <strong>Cloudflare</strong> (Tunnel + Access) as the front-end. The Pi runs the components under <strong>Nix + systemd</strong> (no Docker); inference points at a provider now and a local GPU box later — a one-line config change. <em>Superseded in part: we <strong>adopted</strong> the agent loop rather than building one — see the <a href="hermes-plan.html">Hermes Plan</a> for the committed shape, and the <a href="hermes-setup.html">Setup log</a> for what actually got stood up.</em>
 </div>
 
 <h2>The five build-vs-buy calls</h2>
@@ -79,21 +75,21 @@
     <tr><td><strong>Coding subagent</strong></td><td><span class="badge no">BUY</span></td><td>Aider / opencode / Pi (shell out, headless)</td><td>Git-aware coding agents are a solved, deep problem. Don't rebuild; orchestrate one.</td></tr>
     <tr><td><strong>Tools / integrations</strong></td><td><span class="badge no">BUY</span></td><td>Official GitHub MCP + Google Workspace MCP</td><td>Read-only Gmail, calendar writes, Drive, GitHub — all exist as MCP servers with scope controls.</td></tr>
     <tr><td><strong>Memory</strong></td><td><span class="badge no">BUY</span></td><td>Mem0 + sqlite-vec (or Letta)</td><td>Pi-friendly, self-hosted. Letta if you'd rather get the loop+memory together.</td></tr>
-    <tr><td><strong>Android UI</strong></td><td><span class="badge pick">BUILD native</span></td><td>Kotlin + Jetpack Compose (<code>gaca-android</code>)</td><td>Decision updated: a native app, not a PWA — first-class mic, share-sheet, and notifications. See the <a href="gaca-plan.html">Full GACA Plan</a>.</td></tr>
+    <tr><td><strong>Android UI</strong></td><td><span class="badge pick">BUILD native</span></td><td>Kotlin + Jetpack Compose (<code>gaca-android</code>)</td><td>Decision updated: a native app, not a PWA — first-class mic, share-sheet, and notifications. It is now the <strong>control surface</strong> for approvals — see the <a href="hermes-plan.html">Hermes Plan</a>.</td></tr>
   </tbody>
 </table>
 </div>
-<p class="muted">Full reasoning, comparison tables, and the projects you named (Odysseus, Hermes, OpenClaw, Pi) are on the <a href="landscape.html">Tools &amp; Frameworks</a> page.</p>
+<p class="muted">This table is the original study. Of the projects surveyed at the time — Odysseus, Hermes, OpenClaw, Pi — <strong>Hermes is the one we committed to</strong>; the comparison pages that fed that choice have been retired now the decision is made.</p>
 
 <h2>Browse the pages</h2>
 <div class="grid cols-2">
-  <a class="tile" href="landscape.html">
-    <span class="num">01</span><h3>Tools &amp; Frameworks →</h3>
-    <p>Odysseus, Hermes, OpenClaw, Pi — what they actually are — plus the wider field of agent frameworks and coding agents, with build-vs-buy tables.</p>
+  <a class="tile" href="hermes-plan.html">
+    <span class="num">01</span><h3>Hermes Plan →</h3>
+    <p>The committed plan. Hermes is the agent; the API layer holds every privileged write credential and executes only what you approve from the phone. Includes the architecture diagram, the permission model, and the build order for the approval/event layer.</p>
   </a>
-  <a class="tile" href="gaca-plan.html">
-    <span class="num">02</span><h3>Full GACA Plan →</h3>
-    <p>The full build if we built everything: one repo, four components (api · agent · memory · native android) + a React test UI, Nix + systemd (no Docker), async comms (no held request), the agent calls tools directly and spawns subagents, a dedicated memory system, SQLite as the system of record with Redis Streams + pub/sub as the transport, and a small Phase 1.</p>
+  <a class="tile" href="hermes-setup.html">
+    <span class="num">02</span><h3>Hermes Setup →</h3>
+    <p>The log of standing up a working Hermes box by hand — host prep, model auth, web search, GitHub, memory, a second machine, the container edge, Telegram, Google, and the build skill — one deliberate step at a time, with what each one revealed.</p>
   </a>
 </div>
 
