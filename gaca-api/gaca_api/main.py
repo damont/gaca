@@ -8,6 +8,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .agent import runtime as agent_runtime
@@ -36,6 +37,19 @@ app = FastAPI(
     docs_url="/api/agent",  # Swagger UI, under /api so nginx proxies it
     openapi_url="/api/openapi.json",  # machine-readable schema for agents
     redoc_url=None,  # one docs UI is enough
+)
+
+
+# Matches calendarapp and toolshed. In practice both dev and production serve
+# the frontend and API from one origin — Vite proxies /api locally, nginx does
+# it in production — so browsers never make a cross-origin request. This is
+# here for direct API callers and to keep the app shape consistent.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
