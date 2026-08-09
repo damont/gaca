@@ -277,7 +277,7 @@ re-render rather than showing an error.
 | **Hermes** | Noticing things. Writing well-formed alerts — good `dedupe_key`, honest `severity`, useful `suggested_actions`. Doing delegated work |
 | **gaca-api** | System of record. Auth. State machine and its guards. Effective-status computation. Fan-out |
 | **Android** | Triage UX. Rendering unknown `kind`s gracefully. Local read/unread. Reconnect and refetch |
-| **gaca-web** | Signup, login, minting the agent token. **Not** triage |
+| **frontend** | Signup, login, minting the agent token. **Not** triage |
 
 **The app does not compute state.** Don't locally derive whether a snooze has
 expired or whether a transition is legal — send the request and honour the

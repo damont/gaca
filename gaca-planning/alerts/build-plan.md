@@ -1,7 +1,15 @@
 # GACA Alerts — build plan
 
-**Status:** Agreed, not started · **Date:** 2026-08-07 · **Branch:** `feature/hermes-alerts`
-**Area:** gaca-api ↔ Hermes ↔ Android
+**Status:** Slices 0–4 shipped · **Date:** 2026-08-07, reordered 2026-08-09
+**Branch:** `feature/hermes-alerts` · **Area:** gaca-api ↔ Hermes ↔ Android
+
+**Ordering (revised 2026-08-09):** finish the app — frontend, live stream,
+Docker — then deploy it to the Pi behind Cloudflare, *then* point Hermes at it,
+*then* build the Android app. The Hermes work (originally slices 5–6) moved to
+9–10. The reason is that everything before slice 8 can be built and verified on
+the dev box with nothing else running, whereas every Hermes slice needs a second
+machine, a network path and a live token. Front-loading the parts with no
+external dependencies means a deployable app exists before any of that.
 
 The alerting capability: Hermes notices something, posts an **Alert** to gaca-api,
 and the Android app shows it so David can triage it into one of four dispositions —
@@ -213,7 +221,7 @@ Where this build follows the `build` skill and where it deliberately doesn't.
 
 | | Skill says | This build | Why |
 |---|---|---|---|
-| Layout | `api/` + `frontend/` | keep `gaca-api/gaca_api/` (routers·services·db·models·schemas); add `gaca-web/` | the layering was built deliberately; see [[gaca-api-layering]] |
+| Layout | `api/` + `frontend/` | **`frontend/`** as the skill says; `gaca-api/gaca_api/` stays (routers·services·db·models·schemas) | the backend layering was built deliberately; the frontend has no such history, so it follows the skill exactly |
 | Database | MongoDB + Beanie | **SQLite + aiosqlite** | right answer on a Pi; one file, backups are a file copy |
 | Route prefix | `/api/…` | **adopt** — move `/sessions` too | phase-08 nginx proxying depends on it |
 | Auth | JWT + Argon2, email+password | **adopt as-is** | |
@@ -331,7 +339,91 @@ here is pure state.
 
 ---
 
-### Slice 5 — The Hermes skill · ⭐ first end-to-end
+### Slice 5 — React frontend
+
+**Goal:** sign up, log in, mint a key.
+
+`frontend/` — Vite + React 19 + TS + Tailwind v4, dev port 41800 proxying
+`/api` → 41700. Directory name, layout and launch model copied from toolshed,
+which is the closest of the two repos to the build skill.
+
+**The load-bearing principle: the frontend calls relative `/api` in every
+environment.** Vite's dev proxy handles it locally, nginx handles it in
+production. No `VITE_API_BASE_URL`, no environment-specific base — toolshed's
+hosting-migration doc calls this out explicitly as what keeps local and prod
+identical, and it's why the `/api` prefix work in slice 0 mattered.
+
+**This is 5 teaching sub-slices, not one.** David is a backend dev new to React.
+
+| | | Concept |
+|---|---|---|
+| 5a | scaffold — Vite, TS, Tailwind, one component | what the build tool does, JSX, the dev proxy |
+| 5b | `api/client.ts` + `types/` | typed fetch wrapper, why relative `/api` |
+| 5c | `useRouter` + `AuthContext` | hooks, state, context, URL-driven views |
+| 5d | Login / Register / LandingPage | forms, controlled inputs, async submit |
+| 5e | Profile — agent token + Download skill | `agentSkill.ts`, client-side file generation |
+
+Scope is deliberately small: **signup, login, and the agent-token screen.** Alert
+triage lives in the Android app. The web UI exists to get a key.
+
+Includes phase 10's `lib/agentSkill.ts` + `agentSkill.test.ts` — the "Download
+skill" button generates the markdown you hand Hermes alongside the token.
+
+**Done when:** sign up in a browser, mint a token, download the skill file.
+
+---
+
+### Slice 6 — SSE alert stream
+
+**Goal:** live inbox for Android.
+
+- `services/alerts.py`: publish to `bus.py` on every create and transition
+- `routers/alerts.py`: `GET /api/alerts/stream`
+
+`bus.py` is already shaped like Redis pub/sub and already carries serialized
+JSON strings, so this is mostly reuse. **Channel key is `user_id`**, not
+`session_id` — a different channel namespace from the run stream.
+
+**Done when:** an alert posted by Hermes appears on an open stream without a poll.
+
+---
+
+### Slice 7 — Docker
+
+**Goal:** `docker compose up --build`.
+
+Multi-stage `Dockerfile` (backend / frontend-build / nginx), `docker-compose.yml`,
+`frontend/nginx.conf` with the SPA fallback and the `/api/` proxy.
+
+**SQLite needs a volume** — the skill's compose assumes MongoDB on the host and
+has no volume for app data. Mount `/var/lib/gaca` and set
+`GACA_DB_PATH=/var/lib/gaca/gaca.db`, or the database dies with the container.
+
+**Done when:** the full stack runs from compose on the dev box.
+
+---
+
+### Slice 8 — gaca-pi provisioning
+
+**Goal:** the topology in §2, live.
+
+- Docker + compose on the Pi
+- `cloudflared` → `gaca.<yourdomain>` → `nginx:80`
+- `ufw default deny incoming`; allow only your own SSH
+- Restricted SSH key from gaca-pi → Hermes box (`gaca-reader` user or `command=`)
+- Hermes' `~/.hermes/.env` gets the agent JWT; the skill's base URL flips from
+  localhost to the public hostname
+
+**Prerequisite:** confirm gaca-pi and the Hermes box share a private network. If
+Hermes lives on a machine that moves, this needs Tailscale or WireGuard instead
+of plain LAN — same design, different plumbing.
+
+**Done when:** Hermes posts through Cloudflare, and gaca-pi's ports are closed
+from the LAN.
+
+---
+
+### Slice 9 — The Hermes skill · ⭐ first end-to-end
 
 **Goal:** Hermes actually posts an alert you can see.
 
@@ -400,7 +492,7 @@ at this stage; only the base URL changes at slice 10.
 
 ---
 
-### Slice 6 — Delegation
+### Slice 10 — Delegation
 
 **Goal:** hand an alert back to Hermes.
 
@@ -413,78 +505,6 @@ at this stage; only the base URL changes at slice 10.
 
 **Done when:** delegating an alert starts a real Hermes run, streaming Events
 arrive on the linked session, and the alert settles to `acted`.
-
----
-
-### Slice 7 — React frontend
-
-**Goal:** sign up, log in, mint a key.
-
-`gaca-web/` — Vite + React 19 + TS + Tailwind v4, dev port 41800 proxying
-`/api` → 41700.
-
-**This is 4–5 teaching sub-slices, not one.** David is a backend dev new to
-React; the frontend track started with `gaca-test-ui/index.html` (a plain HTML
-page with one DOM write) on purpose. Sub-slices get broken out when we reach
-this point — front-loading them now would be guessing at the right pace.
-
-Scope is deliberately small: **signup, login, and the agent-token screen.** Alert
-triage lives in the Android app. The web UI exists to get a key.
-
-Includes phase 10's `lib/agentSkill.ts` + `agentSkill.test.ts` — the "Download
-skill" button generates the markdown you hand Hermes alongside the token.
-
-**Done when:** sign up in a browser, mint a token, download the skill file.
-
----
-
-### Slice 8 — SSE alert stream
-
-**Goal:** live inbox for Android.
-
-- `services/alerts.py`: publish to `bus.py` on every create and transition
-- `routers/alerts.py`: `GET /api/alerts/stream`
-
-`bus.py` is already shaped like Redis pub/sub and already carries serialized
-JSON strings, so this is mostly reuse. **Channel key is `user_id`**, not
-`session_id` — a different channel namespace from the run stream.
-
-**Done when:** an alert posted by Hermes appears on an open stream without a poll.
-
----
-
-### Slice 9 — Docker
-
-**Goal:** `docker compose up --build`.
-
-Multi-stage `Dockerfile` (backend / frontend-build / nginx), `docker-compose.yml`,
-`gaca-web/nginx.conf` with the SPA fallback and the `/api/` proxy.
-
-**SQLite needs a volume** — the skill's compose assumes MongoDB on the host and
-has no volume for app data. Mount `/var/lib/gaca` and set
-`GACA_DB_PATH=/var/lib/gaca/gaca.db`, or the database dies with the container.
-
-**Done when:** the full stack runs from compose on the dev box.
-
----
-
-### Slice 10 — gaca-pi provisioning
-
-**Goal:** the topology in §2, live.
-
-- Docker + compose on the Pi
-- `cloudflared` → `gaca.<yourdomain>` → `nginx:80`
-- `ufw default deny incoming`; allow only your own SSH
-- Restricted SSH key from gaca-pi → Hermes box (`gaca-reader` user or `command=`)
-- Hermes' `~/.hermes/.env` gets the agent JWT; the skill's base URL flips from
-  localhost to the public hostname
-
-**Prerequisite:** confirm gaca-pi and the Hermes box share a private network. If
-Hermes lives on a machine that moves, this needs Tailscale or WireGuard instead
-of plain LAN — same design, different plumbing.
-
-**Done when:** Hermes posts through Cloudflare, and gaca-pi's ports are closed
-from the LAN.
 
 ---
 
@@ -502,6 +522,21 @@ alert me above 85%"* and Hermes schedules itself.
 the 0.18 store path.
 
 **Done when:** a recurring check posts an alert with no human in the loop.
+
+---
+
+### Slice 12 — Android app
+
+**Goal:** the triage surface.
+
+Built against [`api-contract.md`](api-contract.md), which is written to stand
+alone for exactly this. Kotlin + Compose. Deliberately last: by this point the
+API is deployed, reachable over Cloudflare, and Hermes is already filling the
+inbox with real alerts — so the app is built against live data rather than
+fixtures.
+
+Out of scope for this plan: FCM push. SSE only works while the app is
+foregrounded; `severity` is the seam when we want real notifications.
 
 ---
 
