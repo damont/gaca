@@ -262,8 +262,10 @@ anything points at it.
 - `config.py`: `jwt_secret`, `jwt_algorithm` (`HS256`), `jwt_expire_minutes` (10080)
 - `db/client.py`: `users` table
 - `models/user.py` — `UserDoc(id, email, display_name, hashed_password, is_active, created_at)`
-- `schemas/auth.py` — `RegisterRequest`, `LoginRequest`, `TokenResponse`, `UserResponse`
-- `db/users.py`, `services/auth.py`, `utils/auth.py` (hash/verify, `create_access_token`, `get_current_user`)
+- `schemas/auth.py` — `RegisterRequest`, `UserLogin`, `TokenResponse`, `UserResponse`
+  (names match calendarapp/toolshed `schemas/dto/auth.py`)
+- `db/users.py`, `services/auth.py`, `utils/auth.py` (hash/verify, `create_access_token`,
+  `decode_token`, `get_current_user` — same file as the other repos)
 - `routers/auth.py` — `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/auth/me`
 - Tests: `tests/services/test_auth.py`
 

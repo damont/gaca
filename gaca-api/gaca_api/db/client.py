@@ -22,6 +22,12 @@ from ..config import settings
 _conn: aiosqlite.Connection | None = None
 
 _SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+    id         TEXT PRIMARY KEY,
+    email      TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    doc        TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS sessions (
     id         TEXT PRIMARY KEY,
     created_at TEXT NOT NULL,

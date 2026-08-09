@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 from .agent import runtime as agent_runtime
 from .bus import event_bus
 from .db import client
-from .routers import sessions
+from .routers import auth, sessions
 from .services.exceptions import NotFound
 
 
@@ -48,7 +48,10 @@ def health() -> dict:
     return {"status": "ok", "service": app.title, "version": app.version}
 
 
-app.include_router(sessions.router)
+# Routers carry their resource prefix ("/auth", "/sessions"); the "/api" mount
+# point is applied here, matching how calendarapp and toolshed mount theirs.
+app.include_router(auth.router, prefix="/api")
+app.include_router(sessions.router, prefix="/api")
 
 
 def run() -> None:

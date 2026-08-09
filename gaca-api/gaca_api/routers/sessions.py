@@ -14,7 +14,7 @@ from ..services import events as events_service
 from ..services import runs as run_service
 from ..services import sessions as session_service
 
-router = APIRouter(prefix="/api/sessions", tags=["sessions"])
+router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 
 @router.post("", status_code=201)
