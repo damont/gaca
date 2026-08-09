@@ -5,7 +5,7 @@ with the wrong secret, signed with an unexpected algorithm, or edited in transit
 must all be rejected, and rejected identically — the caller never learns which.
 """
 import asyncio
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import jwt
 import pytest
@@ -92,6 +92,25 @@ def test_tampered_token_rejected(monkeypatch):
     # Re-sign nothing, just corrupt one character of the signature.
     tampered = f"{header}.{payload}.{signature[:-1]}{'A' if signature[-1] != 'A' else 'B'}"
     assert decode_token(tampered) is None
+
+
+def test_long_lived_agent_token_decodes_like_a_session_token(monkeypatch):
+    """An agent token is not a different kind of credential.
+
+    Same format, same signature, same verification path — only the expiry
+    differs. That is what lets get_current_user accept it with no special case.
+    """
+    monkeypatch.setattr(settings, "jwt_secret", SECRET)
+    token = create_access_token("user-123", expires_delta=timedelta(days=365))
+    assert decode_token(token) == "user-123"
+
+
+def test_expires_delta_overrides_the_session_default(monkeypatch):
+    monkeypatch.setattr(settings, "jwt_secret", SECRET)
+    monkeypatch.setattr(settings, "jwt_expire_minutes", 1)  # session default: 1 min
+    token = create_access_token("user-123", expires_delta=timedelta(days=90))
+    exp = jwt.decode(token, SECRET, algorithms=[settings.jwt_algorithm])["exp"]
+    assert exp - datetime.now(timezone.utc).timestamp() > 89 * 86400
 
 
 def test_garbage_token_rejected(monkeypatch):

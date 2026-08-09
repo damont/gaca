@@ -28,7 +28,15 @@ async def lifespan(app: FastAPI):
     await client.close()
 
 
-app = FastAPI(title="gaca-api", version="0.1.0", lifespan=lifespan)
+app = FastAPI(
+    title="gaca-api",
+    description="GACA API — used by the Android app, the web UI, and AI agents",
+    version="0.1.0",
+    lifespan=lifespan,
+    docs_url="/api/agent",  # Swagger UI, under /api so nginx proxies it
+    openapi_url="/api/openapi.json",  # machine-readable schema for agents
+    redoc_url=None,  # one docs UI is enough
+)
 
 
 @app.exception_handler(NotFound)
@@ -46,6 +54,17 @@ def health() -> dict:
     outside /api would be unreachable through the front door.
     """
     return {"status": "ok", "service": app.title, "version": app.version}
+
+
+@app.get("/api/schema")
+async def get_schema():
+    """Convenience endpoint returning the OpenAPI schema.
+
+    Same document as /api/openapi.json, reachable with a plain GET — the agent
+    setup guide points here so a runtime without a docs browser can still
+    discover the API.
+    """
+    return app.openapi()
 
 
 # Routers carry their resource prefix ("/auth", "/sessions"); the "/api" mount
