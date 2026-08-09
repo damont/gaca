@@ -125,7 +125,12 @@ Legal transitions:
 | `delegated` | `acted` | automatic — Hermes finished |
 | `delegated` | `new` | automatic — Hermes failed; see `resolution_note` |
 
-`acted` and `dismissed` are terminal. Anything else returns **409**.
+`acted` and `dismissed` are terminal. **`delegated` is also not manually
+triageable** — it's settled by the run working on it. Anything else returns
+**409**.
+
+A `409` means the alert moved underneath you: a run settled it, or you triaged
+it on another device. Refetch and re-render rather than retrying.
 
 ---
 
@@ -252,12 +257,11 @@ seam for it later.
 | Code | Meaning | What the app should do |
 |---|---|---|
 | `200` / `201` | Success | — |
-| `400` | Malformed (e.g. `snooze until` in the past) | Fix and don't retry |
+| `422` | Body doesn't match the schema — including `snooze until` in the past | Fix and don't retry |
 | `401` | Token missing, malformed, or expired | Send to login. **Do not retry** |
 | `403` | Authenticated but forbidden | Show the body. Don't retry |
 | `404` | Doesn't exist or isn't yours | Drop it from the list; the id is stale |
 | `409` | Illegal state transition | Refetch the alert — someone else moved it |
-| `422` | Body doesn't match the schema | Bug. Re-read the schema |
 | `5xx` | Server error | Backoff with jitter |
 
 `409` is the one worth handling well: it means the alert moved underneath you —

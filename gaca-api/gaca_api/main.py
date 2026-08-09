@@ -14,7 +14,7 @@ from .agent import runtime as agent_runtime
 from .bus import event_bus
 from .db import client
 from .routers import alerts, auth, sessions
-from .services.exceptions import NotFound
+from .services.exceptions import InvalidTransition, NotFound
 
 
 @asynccontextmanager
@@ -43,6 +43,14 @@ app = FastAPI(
 async def handle_not_found(request: Request, exc: NotFound) -> JSONResponse:
     """Map the service layer's NotFound to HTTP 404, in one place."""
     return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+
+@app.exception_handler(InvalidTransition)
+async def handle_invalid_transition(
+    request: Request, exc: InvalidTransition
+) -> JSONResponse:
+    """Map an illegal state change to HTTP 409, in one place."""
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
 
 
 @app.get("/api/health")

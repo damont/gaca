@@ -7,10 +7,10 @@ stored data stays permissive so an old row never fails to load.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ..models.alert import SuggestedAction
 
@@ -60,3 +60,30 @@ class AlertOut(BaseModel):
 
 class AlertList(BaseModel):
     alerts: list[AlertOut] = []
+
+
+class AlertResolve(BaseModel):
+    """Body for act / dismiss — an optional note about how it ended."""
+
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class AlertSnooze(BaseModel):
+    """Body for snooze."""
+
+    until: datetime
+
+    @field_validator("until")
+    @classmethod
+    def _must_be_in_the_future(cls, value: datetime) -> datetime:
+        """A snooze into the past is almost certainly a client bug.
+
+        It would also be a no-op that looks like it worked: the alert would
+        reappear as `new` on the very next read, because effective status
+        derives from this field.
+        """
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        if value <= datetime.now(timezone.utc):
+            raise ValueError("snooze `until` must be in the future")
+        return value

@@ -25,6 +25,9 @@ def test_schema_lists_the_auth_and_session_paths():
         "/api/auth/agent-token",
         "/api/alerts",
         "/api/alerts/{alert_id}",
+        "/api/alerts/{alert_id}/act",
+        "/api/alerts/{alert_id}/dismiss",
+        "/api/alerts/{alert_id}/snooze",
         "/api/sessions",
         "/api/health",
     ):

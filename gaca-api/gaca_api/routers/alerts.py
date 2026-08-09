@@ -11,7 +11,13 @@ from fastapi import APIRouter, Depends, Query, Response
 
 from ..models.alert import AlertDoc
 from ..models.user import UserDoc
-from ..schemas.alert import AlertCreate, AlertList, AlertOut
+from ..schemas.alert import (
+    AlertCreate,
+    AlertList,
+    AlertOut,
+    AlertResolve,
+    AlertSnooze,
+)
 from ..services import alerts as alert_service
 from ..utils.auth import get_current_user
 
@@ -61,3 +67,35 @@ async def list_alerts(
 @router.get("/{alert_id}", response_model=AlertOut)
 async def get_alert(alert_id: str, user: UserDoc = Depends(get_current_user)):
     return _out(await alert_service.get(user.id, alert_id))
+
+
+@router.post("/{alert_id}/act", response_model=AlertOut)
+async def act_on_alert(
+    alert_id: str,
+    body: AlertResolve | None = None,
+    user: UserDoc = Depends(get_current_user),
+):
+    """"I handled it myself." Terminal."""
+    return _out(await alert_service.act(user.id, alert_id, body.note if body else None))
+
+
+@router.post("/{alert_id}/dismiss", response_model=AlertOut)
+async def dismiss_alert(
+    alert_id: str,
+    body: AlertResolve | None = None,
+    user: UserDoc = Depends(get_current_user),
+):
+    """"Ignore this." Terminal — though a re-fired dedupe_key resurfaces it."""
+    return _out(
+        await alert_service.dismiss(user.id, alert_id, body.note if body else None)
+    )
+
+
+@router.post("/{alert_id}/snooze", response_model=AlertOut)
+async def snooze_alert(
+    alert_id: str,
+    body: AlertSnooze,
+    user: UserDoc = Depends(get_current_user),
+):
+    """"Not now." Reads as `new` again once `until` passes."""
+    return _out(await alert_service.snooze(user.id, alert_id, body.until))

@@ -15,7 +15,7 @@ from gaca_api.db import client
 from gaca_api.models.alert import AlertDoc
 from gaca_api.schemas.alert import AlertCreate
 from gaca_api.services import alerts as alert_service
-from gaca_api.services.exceptions import NotFound
+from gaca_api.services.exceptions import InvalidTransition, NotFound
 
 NOW = datetime(2026, 8, 9, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -89,6 +89,41 @@ def test_dedupe_updates_in_place_instead_of_creating(tmp_path):
     assert second.title == "Disk is 96% full"
     assert second.created_at == first.created_at  # identity preserved
     assert len(all_alerts) == 1
+
+
+def test_dedupe_replaces_content_rather_than_merging_it(tmp_path):
+    """Omitted fields revert to defaults. Intentional — see services.alerts.create.
+
+    Pinned because it reads like a bug: without this test someone "fixes" it to
+    a merge, and stale suggested_actions start surviving re-posts. Their prompts
+    get handed to an agent, so wrong ones are worse than missing ones.
+    """
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        await alert_service.create(
+            "u1",
+            _payload(
+                dedupe_key="disk.low:/",
+                source="hermes",
+                body="detail from the first post",
+                data={"used_pct": 91},
+                suggested_actions=[{"label": "Clean logs", "prompt": "Free space…"}],
+            ),
+        )
+        # A terse re-post: only the required fields plus the key.
+        terse, _ = await alert_service.create(
+            "u1", AlertCreate(kind="disk.low", title="Disk is 96% full",
+                              dedupe_key="disk.low:/")
+        )
+        return terse
+
+    terse = _run(go)
+    assert terse.suggested_actions == []
+    assert terse.body is None
+    assert terse.data == {}
+    assert terse.source == "unknown"
+    assert terse.severity == "info"
 
 
 def test_dedupe_resurfaces_an_alert_the_user_already_dismissed(tmp_path):
@@ -263,6 +298,126 @@ def test_list_filters_by_severity(tmp_path):
         return await alert_service.list_for_user("u1", severities=["urgent"])
 
     assert [a.title for a in _run(go)] == ["loud"]
+
+
+# ── triage transitions ──────────────────────────────────────────────
+
+def _with_status(status: str, **fields) -> AlertDoc:
+    return AlertDoc(user_id="u1", kind="k", title="t", status=status, **fields)
+
+
+def test_act_settles_the_alert_and_records_the_note(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        alert, _ = await alert_service.create("u1", _payload())
+        before = alert.status_changed_at
+        acted = await alert_service.act("u1", alert.id, note="did it by hand")
+        return acted, before, await alert_service.get("u1", alert.id)
+
+    acted, before, reloaded = _run(go)
+    assert acted.status == "acted"
+    assert acted.resolution_note == "did it by hand"
+    assert acted.status_changed_at >= before
+    assert reloaded.status == "acted"  # persisted, not just returned
+
+
+def test_dismiss_settles_the_alert(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        alert, _ = await alert_service.create("u1", _payload())
+        return await alert_service.dismiss("u1", alert.id, note="not interesting")
+
+    dismissed = _run(go)
+    assert dismissed.status == "dismissed"
+    assert dismissed.resolution_note == "not interesting"
+
+
+def test_snooze_defers_and_then_returns_on_its_own(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+    until = NOW + timedelta(hours=2)
+
+    async def go():
+        alert, _ = await alert_service.create("u1", _payload())
+        snoozed = await alert_service.snooze("u1", alert.id, until)
+        return snoozed
+
+    snoozed = _run(go)
+    assert snoozed.status == "snoozed"
+    assert snoozed.snooze_until == until
+    # Still deferred an hour before it's due...
+    assert alert_service.effective_status(snoozed, until - timedelta(hours=1)) == "snoozed"
+    # ...and back in the inbox a second after, with nothing scheduled to do it.
+    assert alert_service.effective_status(snoozed, until + timedelta(seconds=1)) == "new"
+
+
+def test_act_clears_a_pending_snooze(tmp_path):
+    """No stale deferral left hanging on a settled alert."""
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        alert, _ = await alert_service.create("u1", _payload())
+        await alert_service.snooze("u1", alert.id, NOW + timedelta(days=1))
+        return await alert_service.act("u1", alert.id)
+
+    acted = _run(go)
+    assert acted.status == "acted"
+    assert acted.snooze_until is None
+
+
+def test_a_snoozed_alert_can_still_be_triaged(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        alert, _ = await alert_service.create("u1", _payload())
+        await alert_service.snooze("u1", alert.id, NOW + timedelta(days=1))
+        # re-snooze, then settle it
+        await alert_service.snooze("u1", alert.id, NOW + timedelta(days=2))
+        return await alert_service.dismiss("u1", alert.id)
+
+    assert _run(go).status == "dismissed"
+
+
+@pytest.mark.parametrize("settled", ["acted", "dismissed"])
+def test_terminal_states_reject_further_triage(tmp_path, settled):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        await alerts_db.insert(_with_status(settled))
+        alert = (await alerts_db.find_by_user("u1"))[0]
+        for move in (alert_service.act, alert_service.dismiss):
+            with pytest.raises(InvalidTransition):
+                await move("u1", alert.id)
+        with pytest.raises(InvalidTransition):
+            await alert_service.snooze("u1", alert.id, NOW + timedelta(days=1))
+
+    _run(go)
+
+
+def test_delegated_alerts_are_settled_by_the_run_not_by_hand(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        await alerts_db.insert(_with_status("delegated"))
+        alert = (await alerts_db.find_by_user("u1"))[0]
+        with pytest.raises(InvalidTransition):
+            await alert_service.act("u1", alert.id)
+
+    _run(go)
+
+
+def test_transitions_are_scoped_to_the_owner(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        theirs, _ = await alert_service.create("u2", _payload())
+        with pytest.raises(NotFound):
+            await alert_service.act("u1", theirs.id)
+        # and it really is untouched
+        return await alert_service.get("u2", theirs.id)
+
+    assert _run(go).status == "new"
 
 
 def test_list_is_newest_first_and_respects_limit(tmp_path):

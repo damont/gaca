@@ -4,10 +4,12 @@
 open because agents invent new ones. Locking that pair down the wrong way round
 is the easy mistake, so both directions are pinned here.
 """
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from pydantic import ValidationError
 
-from gaca_api.schemas.alert import AlertCreate
+from gaca_api.schemas.alert import AlertCreate, AlertResolve, AlertSnooze
 
 
 def _payload(**overrides) -> dict:
@@ -61,3 +63,31 @@ def test_suggested_actions_need_both_label_and_prompt():
 def test_data_accepts_arbitrary_json():
     payload = AlertCreate(**_payload(data={"mount": "/", "used_pct": 91, "ok": False}))
     assert payload.data["used_pct"] == 91
+
+
+# ── snooze ──────────────────────────────────────────────────────────
+
+def test_snooze_accepts_a_future_time():
+    until = datetime.now(timezone.utc) + timedelta(hours=1)
+    assert AlertSnooze(until=until).until == until
+
+
+def test_snooze_normalizes_a_naive_time_to_utc():
+    naive = (datetime.now(timezone.utc) + timedelta(hours=1)).replace(tzinfo=None)
+    assert AlertSnooze(until=naive).until.tzinfo is not None
+
+
+@pytest.mark.parametrize("delta", [timedelta(seconds=-1), timedelta(days=-1)])
+def test_snooze_into_the_past_rejected(delta):
+    """It would be a no-op that looks like it worked.
+
+    Effective status derives from this field, so a past `until` means the alert
+    reappears as `new` on the very next read.
+    """
+    with pytest.raises(ValidationError):
+        AlertSnooze(until=datetime.now(timezone.utc) + delta)
+
+
+def test_resolve_note_is_optional():
+    assert AlertResolve().note is None
+    assert AlertResolve(note="handled").note == "handled"
