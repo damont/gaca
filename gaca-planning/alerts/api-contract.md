@@ -52,7 +52,10 @@ Tokens do not auto-refresh. On `401`, send the user back to the login screen.
   "user_id": "01JX8K2M4P7QRSTVWXY0",
   "created_at": "2026-08-07T14:22:05.123456Z",
 
-  "source": "hermes-prod",          // label of the agent key that posted it
+  "source": "hermes-prod",          // who posted it. ADVISORY ONLY — supplied in
+                                    // the request body, not authenticated. Do not
+                                    // use it for trust decisions; `user_id` is the
+                                    // real ownership boundary
   "kind": "disk.low",               // free-form dotted string — do NOT switch on
                                     // an exhaustive list; new kinds appear without
                                     // an API release
@@ -136,15 +139,17 @@ Legal transitions:
 | `severity` | string | *(all)* | repeatable |
 | `since` | ISO-8601 | — | `created_at >` |
 | `limit` | int | `50` | max 200 |
-| `cursor` | string | — | opaque; from the previous page |
 
 ```jsonc
-// GET /api/alerts?status=new&limit=50
+// GET /api/alerts?status=new&status=snoozed&limit=50
 {
-  "alerts": [ { /* Alert */ }, … ],
-  "next_cursor": "…"   // null when there are no more
+  "alerts": [ { /* Alert */ }, … ]
 }
 ```
+
+`status` and `severity` are repeatable — pass them more than once to widen the
+filter. **Cursor pagination is not implemented yet**; `limit` alone is the whole
+story until an inbox gets big enough to need paging.
 
 Newest first. Always scoped to the authenticated user — there is no cross-user read.
 
@@ -203,10 +208,16 @@ to call it.
 }
 ```
 
-`201` on create, `200` on dedupe-update. **Re-posting an existing
-`(user_id, dedupe_key)` updates the row and resets `status` to `new`** — a
-re-fired condition resurfaces even if it was dismissed. `source` and `user_id`
-come from the token, not the body.
+`201` on create, `200` on dedupe-update — so a poster can tell whether it
+actually told the user something new. **Re-posting an existing
+`(user_id, dedupe_key)` updates the row and resets `status` to `new`**, clearing
+`snooze_until`, `session_id` and `resolution_note`, so a re-fired condition
+resurfaces even if it was dismissed. `id` and `created_at` are preserved — it's
+the same alert, updated.
+
+`user_id` comes from the token and cannot be set by the caller. `source` is
+ordinary body data and is **not** authenticated — our tokens carry only a
+subject and an expiry, so there is no key label to read.
 
 ---
 

@@ -1,0 +1,63 @@
+"""HTTP layer for alerts.
+
+Routes are thin: validate the request schema, call a service, map the returned
+DB model to a response schema. No business logic, no DB access here.
+"""
+from __future__ import annotations
+
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Query, Response
+
+from ..models.alert import AlertDoc
+from ..models.user import UserDoc
+from ..schemas.alert import AlertCreate, AlertList, AlertOut
+from ..services import alerts as alert_service
+from ..utils.auth import get_current_user
+
+router = APIRouter(prefix="/alerts", tags=["alerts"])
+
+
+def _out(alert: AlertDoc) -> AlertOut:
+    """Map a stored alert to the client shape, deriving effective_status."""
+    return AlertOut(
+        **alert.model_dump(),
+        effective_status=alert_service.effective_status(alert),
+    )
+
+
+@router.post("", response_model=AlertOut)
+async def create_alert(
+    body: AlertCreate,
+    response: Response,
+    user: UserDoc = Depends(get_current_user),
+):
+    """Post an alert. This is what an agent calls.
+
+    201 when a new alert was created, 200 when it deduped onto an existing one —
+    so a caller can tell whether it actually told the user something new.
+    """
+    alert, created = await alert_service.create(user.id, body)
+    response.status_code = 201 if created else 200
+    return _out(alert)
+
+
+@router.get("", response_model=AlertList)
+async def list_alerts(
+    user: UserDoc = Depends(get_current_user),
+    # Repeatable: ?status=new&status=snoozed. Filtered on EFFECTIVE status, so
+    # an elapsed snooze shows up under `new`.
+    status: Annotated[list[str] | None, Query()] = None,
+    severity: Annotated[list[str] | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+):
+    """The inbox: this user's alerts, newest first."""
+    alerts = await alert_service.list_for_user(
+        user.id, statuses=status, severities=severity, limit=limit
+    )
+    return AlertList(alerts=[_out(a) for a in alerts])
+
+
+@router.get("/{alert_id}", response_model=AlertOut)
+async def get_alert(alert_id: str, user: UserDoc = Depends(get_current_user)):
+    return _out(await alert_service.get(user.id, alert_id))

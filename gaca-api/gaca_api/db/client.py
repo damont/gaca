@@ -51,6 +51,24 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS ix_events_session
     ON events (session_id, seq);
+CREATE TABLE IF NOT EXISTS alerts (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    status      TEXT NOT NULL,
+    kind        TEXT NOT NULL,
+    severity    TEXT NOT NULL,
+    dedupe_key  TEXT,
+    doc         TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_alerts_inbox
+    ON alerts (user_id, status, created_at);
+-- Partial unique index: dedupe applies per user, and only to alerts that
+-- actually carry a key. Without the WHERE clause every keyless alert would
+-- collide on NULL in some engines; with it, the database — not the route's
+-- check-then-insert — is what makes a duplicate impossible.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_alerts_dedupe
+    ON alerts (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL;
 """
 
 
