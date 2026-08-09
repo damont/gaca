@@ -37,9 +37,14 @@ async def handle_not_found(request: Request, exc: NotFound) -> JSONResponse:
     return JSONResponse(status_code=404, content={"detail": str(exc)})
 
 
-@app.get("/health")
+@app.get("/api/health")
 def health() -> dict:
-    """Liveness probe. Does no I/O so it can't fail for downstream reasons."""
+    """Liveness probe. Does no I/O so it can't fail for downstream reasons.
+
+    Lives under /api like every other route: in production nginx proxies
+    `location /api/` to this service without stripping the prefix, so a route
+    outside /api would be unreachable through the front door.
+    """
     return {"status": "ok", "service": app.title, "version": app.version}
 
 
