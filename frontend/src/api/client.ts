@@ -77,6 +77,17 @@ class ApiClient {
     return this.post<TokenResponse>("/auth/login", { email, password });
   }
 
+  /**
+   * Exchange a Google ID token for one of ours.
+   *
+   * The ID token is a JWT signed by Google, not by us — the API verifies its
+   * signature and audience before trusting a word of it, then issues a normal
+   * GACA token. Everything downstream sees an ordinary session.
+   */
+  googleLogin(idToken: string) {
+    return this.post<TokenResponse>("/auth/google", { id_token: idToken });
+  }
+
   me() {
     return this.get<User>("/auth/me");
   }

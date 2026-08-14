@@ -19,6 +19,12 @@ class UserLogin(BaseModel):
     password: str
 
 
+class GoogleLoginRequest(BaseModel):
+    """The ID token the Google button hands back, verified server-side."""
+
+    id_token: str
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"

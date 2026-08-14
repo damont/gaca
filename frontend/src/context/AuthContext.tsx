@@ -30,6 +30,7 @@ interface AuthState {
 interface AuthContextValue extends AuthState {
   login: (email: string, password: string) => Promise<void>;
   register: (name: string, email: string, password: string) => Promise<void>;
+  googleLogin: (credential: string) => Promise<void>;
   logout: () => void;
 }
 
@@ -108,6 +109,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  // One path for both signing up and signing in with Google — the API creates
+  // the account, links it to an existing email, or just signs you in, and the
+  // client can't tell which happened. There is nothing for it to decide.
+  const googleLogin = async (credential: string) => {
+    setState((s) => ({ ...s, error: null }));
+    try {
+      const { access_token } = await api.googleLogin(credential);
+      await setTokenAndFetch(access_token);
+    } catch (err) {
+      const message =
+        err instanceof ApiError ? err.message : "Google sign-in failed";
+      setState((s) => ({ ...s, error: message }));
+      throw err;
+    }
+  };
+
   const logout = () => {
     // Purely client-side: the token stays valid until it expires. There is no
     // server-side revocation — rotating GACA_JWT_SECRET is the only one, and it
@@ -118,7 +135,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ ...state, login, register, logout }}>
+    <AuthContext.Provider
+      value={{ ...state, login, register, googleLogin, logout }}
+    >
       {children}
     </AuthContext.Provider>
   );

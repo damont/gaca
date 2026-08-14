@@ -9,11 +9,15 @@ from __future__ import annotations
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token as google_id_token
 
+from ..config import settings
 from ..models.user import UserDoc
 from ..schemas.auth import (
     AgentTokenRequest,
     AgentTokenResponse,
+    GoogleLoginRequest,
     RegisterRequest,
     TokenResponse,
     UserLogin,
@@ -62,6 +66,60 @@ async def login(data: UserLogin):
 
     token = create_access_token(subject=user.id)
     return TokenResponse(access_token=token)
+
+
+@router.post("/google", response_model=TokenResponse)
+async def google_login(data: GoogleLoginRequest):
+    """Sign in with a Google ID token.
+
+    The token arrives from the browser, so it is verified here and never
+    trusted as-is: `verify_oauth2_token` checks Google's signature, that the
+    audience is *our* client id, and that it hasn't expired. Without the
+    audience check, a token minted for any other Google app would be accepted.
+    """
+    if not settings.google_client_id:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Google login not configured",
+        )
+
+    try:
+        idinfo = google_id_token.verify_oauth2_token(
+            data.id_token, google_requests.Request(), settings.google_client_id
+        )
+    except ValueError:
+        # Bad signature, wrong audience, or expired — all indistinguishable to
+        # the caller on purpose. Caught narrowly so a genuine bug still raises.
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Google token",
+        )
+
+    sub = idinfo.get("sub")
+    email = idinfo.get("email")
+    email_verified = idinfo.get("email_verified", False)
+    name = idinfo.get("name") or (email.split("@")[0] if email else None)
+
+    # An unverified Google email is refused: without this, someone could sign up
+    # to Google with an address they don't own and use it to claim the matching
+    # account here through the linking path below.
+    if not sub or not email or not email_verified:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Google token missing required claims",
+        )
+
+    user = await auth_service.upsert_google_user(
+        google_sub=sub, email=email, name=name
+    )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User account is disabled",
+        )
+
+    return TokenResponse(access_token=create_access_token(subject=user.id))
 
 
 @router.get("/me", response_model=UserResponse)

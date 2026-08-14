@@ -15,6 +15,8 @@ dependencies = [
     "pyjwt>=2.8",
     "argon2-cffi>=23.1",
     "email-validator>=2.1",
+    # Verifies the signature and audience of Google ID tokens server-side.
+    "google-auth[requests]>=2.29.0",
 ]
 
 # Console entry point. `gaca-api` on PATH starts the server via main:run().

@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     # per request rather than reading this.
     jwt_expire_minutes: int = 10080  # 7 days
 
+    # Google OAuth. One Client ID serves both sides: the API verifies the `aud`
+    # claim on incoming ID tokens with it, and the frontend renders its button
+    # with the same value (as VITE_GOOGLE_CLIENT_ID). Not a secret — it's public
+    # by design — but leaving it unset disables Google sign-in entirely.
+    google_client_id: str | None = None
+
     # Interface this service binds to. Loopback by default (safe for local dev);
     # set GACA_API_HOST=0.0.0.0 on the Pi so other machines can reach it.
     api_host: str = "127.0.0.1"

@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { useRouter } from "../../hooks/useRouter";
 import Field from "../common/Field";
+import GoogleSignIn from "./GoogleSignIn";
 
 export default function Login() {
   const { login, error } = useAuth();
@@ -33,6 +34,8 @@ export default function Login() {
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col justify-center gap-6 p-6">
       <h1 className="text-2xl font-semibold">Sign in</h1>
+
+      <GoogleSignIn />
 
       <form onSubmit={onSubmit} className="flex flex-col gap-4">
         <Field
