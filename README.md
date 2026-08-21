@@ -64,3 +64,34 @@ GACA_AGENT_API_KEY=<Hermes' API_SERVER_KEY from its ~/.hermes/.env>
 
 The `hermes-run` / `hermes-health` helpers probe that gateway directly; point
 them with `HERMES_BASE=http://<hermes-box>:8642`.
+
+## 4. Or: run everything with Docker
+
+```bash
+docker compose up --build
+```
+
+Builds and starts both containers: the API on `:41700`, and the built React
+SPA behind nginx on `:41800` (nginx proxies its `/api/` to the API container
+by Compose service name — see `frontend/nginx.conf`). SQLite persists on a
+host directory bind-mounted to `/var/lib/gaca` in the container — not a named
+Docker volume, and not the container's writable layer — so data survives a
+rebuild and stays a plain file you can `cp` to back up.
+
+**Set `GACA_DATA_DIR` before your first `up`** to a directory you already own,
+e.g. `GACA_DATA_DIR=/home/you/gaca-data` (create it first — no `sudo` needed
+as long as it's under your home dir). Falls back to a project-relative
+`./data` if unset. Don't point it at `/var/lib/gaca` on the host — that path
+is root-owned on Debian/Ubuntu/Raspberry Pi OS, so Docker would auto-create it
+as root and you'd need `sudo` for every `cp`, defeating the point.
+
+Config comes from `${VAR}` substitution in `docker-compose.yml`, read from a
+`.env` file in this directory (or the shell environment) — the repo root
+already has one for the Nix/Hermes flake; add the `GACA_`-prefixed vars there
+too. Anything left unset falls back to a `:-default` that's fine for a
+throwaway local run but not for anything left up — `GACA_JWT_SECRET`
+especially.
+
+`docker compose down` stops it; the data directory isn't touched either way
+since it's a host bind mount, not something Compose manages — delete it
+yourself if you actually want to drop the data.

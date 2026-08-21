@@ -68,6 +68,18 @@ class AlertResolve(BaseModel):
     note: str | None = Field(default=None, max_length=2000)
 
 
+class AlertDelegate(BaseModel):
+    """Body for POST /{id}/delegate — both fields optional.
+
+    `suggested_action_index` is a convenience: it points at one of the alert's
+    own `suggested_actions` rather than making the caller retype its prompt.
+    `instruction` layers free text on top (or stands alone with no index).
+    """
+
+    instruction: str | None = Field(default=None, max_length=2000)
+    suggested_action_index: int | None = Field(default=None, ge=0)
+
+
 class AlertSnooze(BaseModel):
     """Body for snooze."""
 

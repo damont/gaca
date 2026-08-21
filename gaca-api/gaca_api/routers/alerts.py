@@ -13,6 +13,7 @@ from ..models.alert import AlertDoc
 from ..models.user import UserDoc
 from ..schemas.alert import (
     AlertCreate,
+    AlertDelegate,
     AlertList,
     AlertOut,
     AlertResolve,
@@ -99,3 +100,21 @@ async def snooze_alert(
 ):
     """"Not now." Reads as `new` again once `until` passes."""
     return _out(await alert_service.snooze(user.id, alert_id, body.until))
+
+
+@router.post("/{alert_id}/delegate", response_model=AlertOut)
+async def delegate_alert(
+    alert_id: str,
+    body: AlertDelegate | None = None,
+    user: UserDoc = Depends(get_current_user),
+):
+    """"Hand it to Hermes." Starts a real run; the alert settles once it ends."""
+    b = body or AlertDelegate()
+    return _out(
+        await alert_service.delegate(
+            user.id,
+            alert_id,
+            instruction=b.instruction,
+            suggested_action_index=b.suggested_action_index,
+        )
+    )

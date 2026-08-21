@@ -1,11 +1,7 @@
 import { useAuth } from "../context/AuthContext";
+import AgentTokenSection from "./profile/AgentTokenSection";
 
-/**
- * The only signed-in screen. Everything this app does after sign-in lives here.
- *
- * 5e adds the "Agent tokens" section — the duration picker, the one-time token
- * display, and the downloadable agent setup guide.
- */
+/** The only signed-in screen. Everything this app does after sign-in lives here. */
 export default function Profile() {
   const { user, logout } = useAuth();
 
@@ -24,10 +20,7 @@ export default function Profile() {
         </button>
       </header>
 
-      <section className="rounded-lg border border-border bg-surface-raised p-4">
-        <h2 className="mb-1 text-sm font-medium">Agent tokens</h2>
-        <p className="text-sm text-text-muted">Coming in the next step.</p>
-      </section>
+      <AgentTokenSection />
     </main>
   );
 }

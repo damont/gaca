@@ -1,10 +1,12 @@
 # GACA Alerts — HTTP contract
 
-**Status:** Design, not yet implemented · **Date:** 2026-08-07
+**Status:** Create, read, triage (act/dismiss/snooze) and delegate are
+implemented and tested server-side · **Date:** 2026-08-07, updated 2026-08-21
 **Audience:** the Android app (and anything else reading the inbox)
 
 Standalone by design — you can build the app against this without reading
-[`build-plan.md`](build-plan.md). Endpoints land across slices 1–8 of that plan.
+[`build-plan.md`](build-plan.md). Endpoints land across slices 1–4 and 10 of
+that plan.
 
 > **The API is the source of truth, not this file.** Once slice 2 ships, the
 > live schema is at `<base>/api/openapi.json` and a browsable UI at
@@ -174,13 +176,27 @@ Hand it to Hermes.
 }
 ```
 
-Sets `status=delegated` and populates `session_id`. Returns the updated Alert.
+Sets `status=delegated` and populates `session_id`. Returns the updated Alert
+immediately — the run itself keeps going in the background.
 
-> `session_id` links to an existing chat session, so the app can stream the run's
-> progress on `GET /api/sessions/{session_id}/events` — the pre-existing SSE
-> endpoint carrying `assistant.delta` / `tool.started` / `run.completed`.
-> **That is a different stream from `/api/alerts/stream`** — see §1 of the build
-> plan for why the two "event" concepts are distinct.
+**How the two combine, if both are given:** `suggested_action_index` seeds the
+prompt with that action's own text; `instruction` is appended after it as extra
+guidance. With `instruction` alone, that's the whole prompt. With neither,
+the prompt falls back to the alert's own `title` + `body`.
+
+**Settlement is automatic, not a client action.** When the run ends, the API
+watches its outcome and moves the alert on its own: `run.completed` → `acted`;
+`run.failed` → back to `new`, with the error in `resolution_note` (same "never
+silently vanish" rule §4 applies to every other terminal outcome). Poll
+`GET /api/alerts/{id}` — or the run's own stream, next paragraph — to see it
+land.
+
+> `session_id` links to an existing chat session, so the app can stream the
+> run's progress on `GET /api/sessions/{session_id}/events` — the pre-existing
+> SSE endpoint carrying `assistant.delta` / `tool.started` / `run.completed`.
+> That's the only live stream in this API — see §1 of the build plan for why
+> it's a different concept from an Alert, and §5 below for why the *alert list*
+> itself is plain polling, not a stream.
 
 ### `POST /api/alerts/{id}/act` · `/dismiss`
 
@@ -226,29 +242,28 @@ subject and an expiry, so there is no key label to read.
 
 ---
 
-## 5. `GET /api/alerts/stream` — live inbox
+## 5. Reading the inbox — plain polling, no stream
 
-Server-Sent Events, one event per create or transition. Keeps the inbox live
-while the app is foregrounded.
+There is no `/api/alerts/stream`. An earlier draft of this doc specced one
+(SSE, keyed by `user_id`) for a "live while the app is open" inbox; cut on
+2026-08-21 because the value was thin and the cost wasn't. Two reasons:
 
-```
-event: alert.created
-data: { …Alert… }
+1. **It wasn't push.** It only helped if the inbox screen happened to be open
+   at the exact instant Hermes posted something — everything else (the app
+   backgrounded, the phone locked) still needed FCM, which is out of scope for
+   this build. That's a narrow window to build a whole channel for.
+2. **It duplicated a real stream with a fake one.** The interactive
+   back-and-forth that actually benefits from being live — watching Hermes
+   work once you've delegated — already has one: `GET
+   /api/sessions/{session_id}/events` (§3, `POST /{id}/delegate`). The alert
+   list itself doesn't need the same treatment; you look at it, act on it, and
+   move on.
 
-event: alert.updated
-data: { …Alert… }
-```
-
-- Standard SSE — `text/event-stream`, `Authorization` header as usual.
-- Channel is keyed by **`user_id`**.
-- **No `Last-Event-ID` replay on this stream.** Unlike the run-event stream,
-  alerts aren't sequenced. On reconnect, re-fetch `GET /api/alerts` and treat the
-  stream as live-only.
-- Expect idle periods. Handle keep-alive comments and reconnect with backoff.
-
-**This is not push.** It only works while the app is open. Real background
-notifications need FCM, which is out of scope for this build; `severity` is the
-seam for it later.
+**So: `GET /api/alerts` on app-foreground, plus pull-to-refresh.** Simpler
+client, no reconnect-with-backoff logic, no `bus.py` channel to maintain
+server-side. If real "notify me the instant this happens" is ever wanted, that
+is still an FCM project — `severity` is the seam for it — not a reason to bring
+this stream back.
 
 ---
 

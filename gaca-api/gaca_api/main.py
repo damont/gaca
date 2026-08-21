@@ -15,7 +15,7 @@ from .agent import runtime as agent_runtime
 from .bus import event_bus
 from .db import client
 from .routers import alerts, auth, sessions
-from .services.exceptions import InvalidTransition, NotFound
+from .services.exceptions import InvalidRequest, InvalidTransition, NotFound
 
 
 @asynccontextmanager
@@ -65,6 +65,14 @@ async def handle_invalid_transition(
 ) -> JSONResponse:
     """Map an illegal state change to HTTP 409, in one place."""
     return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+@app.exception_handler(InvalidRequest)
+async def handle_invalid_request(
+    request: Request, exc: InvalidRequest
+) -> JSONResponse:
+    """Map a semantically-invalid request body to HTTP 422, in one place."""
+    return JSONResponse(status_code=422, content={"detail": str(exc)})
 
 
 @app.get("/api/health")

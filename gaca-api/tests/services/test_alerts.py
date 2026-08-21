@@ -9,13 +9,16 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+import gaca_api.agent.runtime as agent_runtime
+import gaca_api.services.runs as runs
 from gaca_api.config import settings
 from gaca_api.db import alerts as alerts_db
 from gaca_api.db import client
 from gaca_api.models.alert import AlertDoc
 from gaca_api.schemas.alert import AlertCreate
+from gaca_api.schemas.event import RunCompleted, RunFailed
 from gaca_api.services import alerts as alert_service
-from gaca_api.services.exceptions import InvalidTransition, NotFound
+from gaca_api.services.exceptions import InvalidRequest, InvalidTransition, NotFound
 
 NOW = datetime(2026, 8, 9, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -438,3 +441,166 @@ def test_list_is_newest_first_and_respects_limit(tmp_path):
         return await alert_service.list_for_user("u1", limit=2)
 
     assert [a.title for a in _run(go)] == ["alert-3", "alert-2"]
+
+
+# ── delegation ──────────────────────────────────────────────────────
+
+class _StubBackend:
+    """Agent backend stand-in: yields one canned terminal event per run.
+
+    No Hermes contact — mirrors the StubBackend in tests/services/test_runs.py,
+    just parameterized for the two outcomes delegation cares about.
+    """
+
+    def __init__(self, *, output: str | None = None, error: str | None = None):
+        assert (output is None) != (error is None), "give exactly one outcome"
+        self._output = output
+        self._error = error
+        self.user_message: str | None = None
+
+    async def start_run(self, *, session_id, history, user_message):
+        self.user_message = user_message
+        return "run_stub"
+
+    async def stream_events(self, run_id, *, session_id):
+        if self._output is not None:
+            yield RunCompleted(session_id=session_id, run_id=run_id, output=self._output)
+        else:
+            yield RunFailed(session_id=session_id, run_id=run_id, error=self._error)
+
+
+def _install_backend(monkeypatch, **outcome) -> _StubBackend:
+    stub = _StubBackend(**outcome)
+    monkeypatch.setattr(agent_runtime, "_backend", stub)
+    return stub
+
+
+async def _drain_background() -> None:
+    """Let the reader task start_turn spawned finish before asserting settlement."""
+    await asyncio.gather(*list(runs._background))
+
+
+def test_delegate_starts_a_session_and_marks_the_alert_delegated(tmp_path, monkeypatch):
+    settings.db_path = str(tmp_path / "t.db")
+    _install_backend(monkeypatch, output="done")
+
+    async def go():
+        alert, _ = await alert_service.create("u1", _payload())
+        return await alert_service.delegate("u1", alert.id)
+
+    # Asserted on the return value, before the run has had a chance to settle
+    # anything — delegate() is non-blocking, same as start_turn underneath it.
+    delegated = _run(go)
+    assert delegated.status == "delegated"
+    assert delegated.session_id is not None
+    assert delegated.snooze_until is None
+
+
+def test_a_completed_run_settles_the_alert_to_acted(tmp_path, monkeypatch):
+    settings.db_path = str(tmp_path / "t.db")
+    _install_backend(monkeypatch, output="cleaned up 4GB")
+
+    async def go():
+        alert, _ = await alert_service.create("u1", _payload())
+        await alert_service.delegate("u1", alert.id)
+        await _drain_background()
+        return await alert_service.get("u1", alert.id)
+
+    assert _run(go).status == "acted"
+
+
+def test_a_failed_run_bounces_the_alert_back_to_new_with_the_error(tmp_path, monkeypatch):
+    """A failed delegation can never silently vanish — same rule as slice 4,
+    just triggered by the agent instead of a hand."""
+    settings.db_path = str(tmp_path / "t.db")
+    _install_backend(monkeypatch, error="hermes gateway timed out")
+
+    async def go():
+        alert, _ = await alert_service.create("u1", _payload())
+        await alert_service.delegate("u1", alert.id)
+        await _drain_background()
+        return await alert_service.get("u1", alert.id)
+
+    bounced = _run(go)
+    assert bounced.status == "new"
+    assert bounced.resolution_note == "hermes gateway timed out"
+
+
+@pytest.mark.parametrize("settled", ["acted", "dismissed"])
+def test_delegating_a_terminal_alert_is_rejected(tmp_path, settled):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        await alerts_db.insert(_with_status(settled))
+        alert = (await alerts_db.find_by_user("u1"))[0]
+        with pytest.raises(InvalidTransition):
+            await alert_service.delegate("u1", alert.id)
+
+    _run(go)
+
+
+def test_delegate_prefers_the_chosen_suggested_action_prompt(tmp_path, monkeypatch):
+    settings.db_path = str(tmp_path / "t.db")
+    stub = _install_backend(monkeypatch, output="ok")
+
+    async def go():
+        alert, _ = await alert_service.create(
+            "u1",
+            _payload(
+                suggested_actions=[
+                    {"label": "Clean logs", "prompt": "Free space by deleting old logs"},
+                    {"label": "Compress", "prompt": "Compress the largest files"},
+                ]
+            ),
+        )
+        await alert_service.delegate("u1", alert.id, suggested_action_index=1)
+        await _drain_background()
+
+    _run(go)
+    assert stub.user_message == "Compress the largest files"
+
+
+def test_delegate_combines_action_and_free_text_instruction(tmp_path, monkeypatch):
+    settings.db_path = str(tmp_path / "t.db")
+    stub = _install_backend(monkeypatch, output="ok")
+
+    async def go():
+        alert, _ = await alert_service.create(
+            "u1", _payload(suggested_actions=[{"label": "Clean logs", "prompt": "Free space"}])
+        )
+        await alert_service.delegate(
+            "u1",
+            alert.id,
+            instruction="but don't touch anything under /var/lib/gaca",
+            suggested_action_index=0,
+        )
+        await _drain_background()
+
+    _run(go)
+    assert stub.user_message == "Free space\n\nbut don't touch anything under /var/lib/gaca"
+
+
+def test_delegate_falls_back_to_title_and_body_with_no_action_or_instruction(tmp_path, monkeypatch):
+    settings.db_path = str(tmp_path / "t.db")
+    stub = _install_backend(monkeypatch, output="ok")
+
+    async def go():
+        alert, _ = await alert_service.create(
+            "u1", _payload(title="Disk is 91% full", body="mount /")
+        )
+        await alert_service.delegate("u1", alert.id)
+        await _drain_background()
+
+    _run(go)
+    assert stub.user_message == "Disk is 91% full\n\nmount /"
+
+
+def test_delegate_rejects_an_out_of_range_suggested_action_index(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        alert, _ = await alert_service.create("u1", _payload())  # no suggested_actions
+        with pytest.raises(InvalidRequest):
+            await alert_service.delegate("u1", alert.id, suggested_action_index=0)
+
+    _run(go)

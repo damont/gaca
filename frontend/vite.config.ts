@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
@@ -17,5 +17,12 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
+  },
+  // Vitest reads this same config, so test files get the identical TS/JSX
+  // transform as the app — no separate build step to keep in sync.
+  test: {
+    environment: "jsdom",
+    globals: true,
+    setupFiles: "./src/test/setup.ts",
   },
 });

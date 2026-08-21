@@ -9,6 +9,7 @@ ever sees neutral GacaEvents.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 
 from ..agent.runtime import backend
 from ..bus import event_bus
@@ -16,20 +17,32 @@ from ..db import events as events_db
 from ..db import messages as messages_db
 from ..db import sessions as sessions_db
 from ..models.message import MessageDoc
-from ..schemas.event import RunCompleted
+from ..schemas.event import GacaEvent, RunCompleted, RunFailed
 from ..schemas.message import MessageOut
 from .exceptions import NotFound
 
 # Strong refs to in-flight reader tasks so they aren't garbage-collected mid-run.
 _background: set[asyncio.Task] = set()
 
+OnSettled = Callable[[GacaEvent], Awaitable[None]]
 
-async def start_turn(session_id: str, content: str) -> MessageDoc:
+
+async def start_turn(
+    session_id: str,
+    content: str,
+    *,
+    on_settled: OnSettled | None = None,
+) -> MessageDoc:
     """Persist the user message, start a run, spawn its reader. Non-blocking.
 
     History (Option A) is the turns *before* this one, loaded from our SQLite;
     the new message is sent as the user turn. The reader task carries the run's
     events back to the client asynchronously.
+
+    `on_settled`, if given, is awaited once with the terminal event
+    (`RunCompleted` or `RunFailed`) when the run ends. It exists so a caller
+    outside the chat feature — alert delegation, so far — can react to a run's
+    outcome without this invariant core knowing what an alert is.
     """
     if not await sessions_db.exists(session_id):
         raise NotFound("session", session_id)
@@ -43,13 +56,18 @@ async def start_turn(session_id: str, content: str) -> MessageDoc:
         session_id=session_id, history=history, user_message=content
     )
 
-    task = asyncio.create_task(read_run(session_id, run_id))
+    task = asyncio.create_task(read_run(session_id, run_id, on_settled=on_settled))
     _background.add(task)
     task.add_done_callback(_background.discard)
     return user_message
 
 
-async def read_run(session_id: str, run_id: str) -> None:
+async def read_run(
+    session_id: str,
+    run_id: str,
+    *,
+    on_settled: OnSettled | None = None,
+) -> None:
     """Drain a run's events: persist (stamps seq), publish live, finalize on end."""
     async for event in backend().stream_events(run_id, session_id=session_id):
         # Persist FIRST — the insert assigns seq (Last-Event-ID) atomically.
@@ -64,3 +82,6 @@ async def read_run(session_id: str, run_id: str) -> None:
                 session_id=session_id, role="assistant", content=event.output
             )
             await messages_db.insert(assistant)
+
+        if on_settled is not None and isinstance(event, (RunCompleted, RunFailed)):
+            await on_settled(event)

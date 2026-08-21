@@ -1,10 +1,16 @@
 # GACA Alerts — build plan
 
-**Status:** Slices 0–4 shipped · **Date:** 2026-08-07, reordered 2026-08-09
+**Status:** Slices 0–4 and 7 shipped; slice 5 (React frontend) shipped, Google
+sign-in added on top; slice 6 (SSE alert stream) **cut**; slice 10 (Delegation)
+shipped early, out of numeric order — see its heading below for why; slice 8
+(gaca-api provisioning) **in progress** — box has Docker + ufw + the gateway
+stack's config, blocked on picking a hostname and creating the Cloudflare
+Tunnel. Remaining: finish 8, then 9 (Hermes skill), 11 (cron), 12 (Android) ·
+**Date:** 2026-08-07, reordered 2026-08-09, updated 2026-08-21
 **Branch:** `feature/hermes-alerts` · **Area:** gaca-api ↔ Hermes ↔ Android
 
-**Ordering (revised 2026-08-09):** finish the app — frontend, live stream,
-Docker — then deploy it to the Pi behind Cloudflare, *then* point Hermes at it,
+**Ordering (revised 2026-08-09):** finish the app — frontend, Docker — then
+deploy it to the Pi behind Cloudflare, *then* point Hermes at it,
 *then* build the Android app. The Hermes work (originally slices 5–6) moved to
 9–10. The reason is that everything before slice 8 can be built and verified on
 the dev box with nothing else running, whereas every Hermes slice needs a second
@@ -33,7 +39,7 @@ different animal. Getting these confused will cost hours, so:
 | **Who emits** | The agent engine, via `agent/hermes/translate.py` | Hermes, deliberately, via HTTP |
 | **Variants** | `assistant.delta`, `assistant.reasoning`, `tool.started`, `tool.completed`, `run.completed`, `run.failed` | One shape, many `kind` values |
 | **Storage** | `events` table, `seq INTEGER PRIMARY KEY AUTOINCREMENT` | `alerts` table, `id TEXT PRIMARY KEY` |
-| **Transport** | SSE, resumable by `Last-Event-ID` | REST + a separate SSE stream |
+| **Transport** | SSE, resumable by `Last-Event-ID` | REST only — no stream of its own (§6 is cut; the app polls) |
 | **Purpose** | Make a chat reply render progressively | Be the inbox |
 
 We considered renaming the streaming one to `RunEvent` and decided against it.
@@ -332,8 +338,8 @@ in the list.
 - `services/exceptions.py`: add `InvalidTransition` → 409 handler in `main.py`
 - Tests: every legal transition, plus rejection of illegal ones
 
-`delegate` lands in slice 6 — it needs the agent runtime, and everything else
-here is pure state.
+`delegate` lands in slice 10 — everything else here is pure state, and
+delegate is the one transition that actually starts a run.
 
 **Done when:** all four dispositions work by curl and illegal transitions 409.
 
@@ -373,22 +379,31 @@ skill" button generates the markdown you hand Hermes alongside the token.
 
 ---
 
-### Slice 6 — SSE alert stream
+### Slice 6 — ~~SSE alert stream~~ · cut 2026-08-21
 
-**Goal:** live inbox for Android.
+**Cut.** The original goal was a live inbox: publish to `bus.py` on every
+create/transition, add `GET /api/alerts/stream` keyed by `user_id`.
 
-- `services/alerts.py`: publish to `bus.py` on every create and transition
-- `routers/alerts.py`: `GET /api/alerts/stream`
+Two things made it not worth building:
 
-`bus.py` is already shaped like Redis pub/sub and already carries serialized
-JSON strings, so this is mostly reuse. **Channel key is `user_id`**, not
-`session_id` — a different channel namespace from the run stream.
+1. **It was never push.** It only helped if the inbox screen happened to be
+   open at the exact instant Hermes posted — everything else (backgrounded,
+   phone locked) still needed FCM, which stays out of scope (§9). Thin payoff
+   for a whole channel: a `bus.py` topic, a stream endpoint, and
+   reconnect-with-backoff on the Android client.
+2. **It duplicated a stream that already exists for the thing that matters.**
+   The interactive back-and-forth worth being live is watching Hermes work
+   *after* you delegate — and that's `GET /api/sessions/{id}/events`
+   (slice 10 below), unchanged by this cut.
 
-**Done when:** an alert posted by Hermes appears on an open stream without a poll.
+**Replaced by:** the Android app does a plain `GET /api/alerts` on
+app-foreground, plus pull-to-refresh (slice 12). No server-side work at all —
+nothing to build, nothing to cut later if FCM shows up and makes it moot
+anyway. `api-contract.md` §5 has the client-facing version of this reasoning.
 
 ---
 
-### Slice 7 — Docker
+### Slice 7 — Docker · shipped 2026-08-21
 
 **Goal:** `docker compose up --build`.
 
@@ -396,30 +411,124 @@ Multi-stage `Dockerfile` (backend / frontend-build / nginx), `docker-compose.yml
 `frontend/nginx.conf` with the SPA fallback and the `/api/` proxy.
 
 **SQLite needs a volume** — the skill's compose assumes MongoDB on the host and
-has no volume for app data. Mount `/var/lib/gaca` and set
+has no volume for app data. Mount the container's `/var/lib/gaca` and set
 `GACA_DB_PATH=/var/lib/gaca/gaca.db`, or the database dies with the container.
 
-**Done when:** the full stack runs from compose on the dev box.
+**A host bind mount, not a named Docker volume — updated 2026-08-21.** Shipped
+first as a named volume (`gaca-db:`); switched after realizing it fights the
+app's own stated philosophy (§5: "SQLite + aiosqlite — one file, backups are a
+file copy"). A named volume buries that file under
+`/var/lib/docker/volumes/.../_data`, root-owned, not something you can `cp`
+without `sudo` — exactly the friction the file-based design was meant to
+avoid. `docker-compose.yml` now mounts `${GACA_DATA_DIR:-./data}` from the
+host. **`GACA_DATA_DIR` has to be somewhere you already own** — `/var/lib/gaca`
+itself is root-owned on Debian/Ubuntu/Raspberry Pi OS (can't `mkdir` there
+without `sudo`, and if Docker auto-creates it, it's root-owned and the "plain
+file copy" backup story breaks again). David's dev box uses `~/gaca-data`; the
+Pi will need its own `GACA_DATA_DIR` set the same way — a user-owned directory,
+not the FHS path literally.
+
+**Two deviations from the skill's template, both deliberate:**
+
+- **Two-step `uv sync`.** The skill's Dockerfile does `COPY pyproject.toml
+  uv.lock ./` then `RUN uv sync --frozen --no-dev` then `COPY api/ api/` — but
+  `gaca_api/` doesn't exist yet at that `uv sync`, and this project *is*
+  installed into its own venv (`pyproject.toml` declares hatchling as the
+  build backend), not just its dependencies. Split it: `uv sync --frozen
+  --no-install-project --no-dev` first (deps only, cacheable independent of
+  source changes), then `COPY gaca_api/ gaca_api/`, then a second `uv sync
+  --frozen --no-dev` to install the project itself. This is uv's own
+  documented pattern for exactly this case.
+- **CMD is `uv run gaca-api`, not a bare `uvicorn ... --host --port`.** The
+  console entry point (`gaca_api.main:run`) already reads
+  `GACA_API_HOST`/`GACA_API_PORT` from settings — the same env vars that
+  matter for the loopback-vs-`0.0.0.0` distinction between bare-metal dev and
+  a container. Invoking uvicorn directly would mean setting the bind address
+  twice, once as a CLI flag and once as the env var docker-compose.yml sets.
+
+`frontend/nginx.conf`'s `/api/` location sets `proxy_buffering off` — the
+session-events endpoint is SSE (a long-lived response), and nginx buffers by
+default, which would hold the whole stream until it closed instead of
+forwarding each event as it arrived.
+
+**Done when:** the full stack runs from compose on the dev box. Verified:
+`docker compose build` (both images), then `docker compose up -d` — API
+reachable on `:41700`, frontend's nginx serves the SPA on `:41800` and its
+`/api/` location correctly reaches the `api` container by Compose service
+name. Torn down after (`docker compose down -v`) — this was a build
+verification, not a service left running.
 
 ---
 
-### Slice 8 — gaca-pi provisioning
+### Slice 8 — gaca-api provisioning · in progress, started 2026-08-21
 
-**Goal:** the topology in §2, live.
+**Goal:** the topology in §2, live. (Box is actually named `gaca-api`, not
+`gaca-pi` — arm64, reachable at that hostname on the LAN. Naming carried over
+from §2's diagram; not worth renaming everywhere.)
 
-- Docker + compose on the Pi
-- `cloudflared` → `gaca.<yourdomain>` → `nginx:80`
-- `ufw default deny incoming`; allow only your own SSH
-- Restricted SSH key from gaca-pi → Hermes box (`gaca-reader` user or `command=`)
-- Hermes' `~/.hermes/.env` gets the agent JWT; the skill's base URL flips from
-  localhost to the public hostname
+**Architecture updated from what this section originally sketched.** The
+original plan was one nginx doing both edge duty and the SPA/API proxy.
+Mirrored `piservices` instead (David's other box, running calendarapp the same
+way) once it turned out to already have a proven, hardened two-tier pattern:
 
-**Prerequisite:** confirm gaca-pi and the Hermes box share a private network. If
-Hermes lives on a machine that moves, this needs Tailscale or WireGuard instead
-of plain LAN — same design, different plumbing.
+- A standalone **`gateway` stack** (nginx + cloudflared) — not part of this
+  repo, lives at `~/gateway/` on the box, same as `piservices`. nginx bound to
+  `127.0.0.1:8080` only, never on a public interface; Cloudflare Tunnel is the
+  *only* inbound path. Pinned image digests, `read_only` root + `tmpfs`,
+  `no-new-privileges`, cloudflared as non-root (`1000:1000`), capped JSON
+  logging, a `/healthz` endpoint, and a catch-all `default_server` that 404s
+  anything not explicitly routed.
+- gaca's own stack (`compose.production.yml`, in this repo) joins an
+  **external network** (`gaca-proxy`) the gateway also sits on, the same way
+  `calendarapp-frontend` does on `piservices` — reachable by container name,
+  nothing published to a host port at all. `api` uses `expose` only; `frontend`
+  has no `ports:` section — it's `gaca-frontend`'s own nginx (SPA + `/api`
+  proxy, same as local dev) that the gateway's nginx proxies to.
 
-**Done when:** Hermes posts through Cloudflare, and gaca-pi's ports are closed
-from the LAN.
+**Done so far:**
+- Docker installed via Ubuntu's own repo (`docker.io` + `docker-compose-v2`) —
+  not Docker's official third-party apt repo, since that needs a GPG-key/apt-source
+  write that wasn't in the NOPASSWD sudoers scope granted for this. Functionally
+  equivalent for our purposes; the pinned image digests are what actually matter
+  for reproducibility, not the host engine version.
+- `gaca-proxy` external Docker network created.
+- `ufw default deny incoming` + `allow OpenSSH`, enabled — **verified from a
+  fresh connection afterward that SSH still worked** before moving on, given
+  there's no console access to recover from a lockout.
+- `~/gateway/compose.yml`, `~/gateway/nginx.conf`, `~/gateway/cloudflared.yml`
+  written on the box, mirroring `piservices/gateway/` exactly (same pinned
+  digests — both arm64 boxes). **Hostname decided and filled in:**
+  `goodandcheapagent.com` — a dedicated domain for GACA, not a shared one like
+  `rabidflamingos.com`, so it's the bare apex, not a subdomain.
+- `compose.production.yml` added to this repo, mirroring calendarapp's
+  `compose.production.yml`: required secrets use `${VAR:?message}` (fail loudly,
+  no silent throwaway default), `init: true`, `no-new-privileges`, capped
+  logging, healthchecks on both services.
+
+**Still open, in order:**
+1. Create the tunnel + `goodandcheapagent.com`'s DNS record in the Cloudflare
+   dashboard (Zero Trust → Networks → Tunnels) — dashboard action, David's to
+   do; drop the resulting token at `~/gateway/cloudflared.token` on `gaca-api`
+   (never commit it, same as `piservices`' token file isn't in `calendarapp`'s
+   repo).
+2. `git clone`/pull this repo onto `gaca-api` (mirrors how `calendarapp` lives
+   at `/home/david/piservices/calendarapp/` — a plain checkout, not something
+   copied by hand) and set `GACA_DATA_DIR`, `GACA_JWT_SECRET`,
+   `GACA_AGENT_API_KEY`, `GACA_AGENT_BASE_URL` in its `.env`.
+3. `docker compose -f compose.production.yml up -d --build`, then
+   `docker compose -f ~/gateway/compose.yml up -d` once the token's in place.
+4. Restricted SSH key from `gaca-api` → the Hermes box (`gaca-reader` user or
+   `command=`) — not started.
+5. Hermes' `~/.hermes/.env` gets the agent JWT once §9's `GACA_AGENT_API_KEY`
+   mystery (see this slice's chat history — the key wasn't where
+   `scripts/dev.sh` assumed) is resolved; base URL flips from localhost to the
+   public hostname.
+
+**Prerequisite (unchanged):** confirm `gaca-api` and the Hermes box share a
+private network, or this needs Tailscale/WireGuard instead of plain LAN.
+
+**Done when:** Hermes posts through Cloudflare, and `gaca-api`'s ports are
+closed from the LAN.
 
 ---
 
@@ -492,19 +601,51 @@ at this stage; only the base URL changes at slice 10.
 
 ---
 
-### Slice 10 — Delegation
+### Slice 10 — Delegation · shipped 2026-08-21, out of order
 
 **Goal:** hand an alert back to Hermes.
 
-- `services/alerts.py`: `delegate(alert_id, instruction)` — creates a session,
-  builds the prompt from the alert (+ chosen `suggested_action`), calls
-  `services/runs.py:start_turn`, stores `session_id`, sets `status=delegated`
-- Watch `run.completed` / `run.failed` to settle the alert to `acted` or bounce
-  it to `new` with the error
-- `routers/alerts.py`: `POST /api/alerts/{id}/delegate`
+**Why it shipped before 7–9, not after.** The ordering note at the top of this
+doc defers "the Hermes slices" because they need a second machine, a network
+path, and a live token. That's true for slice 9 (teaching Hermes the skill) and
+slice 11 (cron) — both require Hermes actually saying something. It was never
+true for this slice's *code*: `delegate()` only calls
+`services/runs.py:start_turn`, which is the session/chat machinery that
+predates this alerting build entirely and already runs against the local dev
+box (`GACA_AGENT_ENGINE=hermes`, `GACA_AGENT_BASE_URL=http://127.0.0.1:8642`).
+Nothing here needed gaca-pi or a Cloudflare Tunnel to build or test. Completing
+the alert API surface (create/read/triage/delegate, all of it) was worth doing
+now rather than leaving one endpoint dangling until slice 8.
 
-**Done when:** delegating an alert starts a real Hermes run, streaming Events
-arrive on the linked session, and the alert settles to `acted`.
+- `services/alerts.py`: `delegate(user_id, alert_id, instruction=, suggested_action_index=)`
+  — creates a session, builds the prompt from the alert (chosen
+  `suggested_action`'s prompt, then `instruction` layered on top, then a
+  title+body fallback), calls `services/runs.py:start_turn`, stores
+  `session_id`, sets `status=delegated`
+- `services/runs.py`: `start_turn`/`read_run` grew an optional `on_settled`
+  hook — awaited once with the terminal `RunCompleted`/`RunFailed` event. Kept
+  generic on purpose: the invariant core still doesn't know what an Alert is,
+  it just offers a callback any caller can hang logic off of
+- On `run.completed` the alert settles to `acted`; on `run.failed` it bounces
+  to `new` with the error in `resolution_note` — same "never silently vanish"
+  rule as every other terminal outcome (§4), just triggered by the agent
+  instead of a hand
+- `routers/alerts.py`: `POST /api/alerts/{id}/delegate`
+- A bad `suggested_action_index` (out of range for that alert) is a new
+  `InvalidRequest` domain error → 422 — same shape as `NotFound`/`InvalidTransition`,
+  just for "well-formed JSON, semantically wrong given this resource's state"
+- Tests: `tests/services/test_alerts.py` — delegate marks `delegated` and
+  returns immediately (non-blocking); a stubbed completed run settles to
+  `acted`; a stubbed failed run bounces to `new` with the error recorded;
+  terminal alerts reject delegation; prompt-building precedence (action vs.
+  instruction vs. fallback); the out-of-range index rejection
+
+**Done when:** delegating an alert starts a real run (or, in tests, a stubbed
+one), the alert flips to `delegated` immediately, and it settles to `acted` or
+bounces to `new` once the run ends. Met against the stub; a live check against
+the real local Hermes gateway is David's to run, same working agreement as
+everywhere else Hermes is involved — but the API-side mechanics are done and
+tested independent of that.
 
 ---
 
@@ -535,8 +676,9 @@ API is deployed, reachable over Cloudflare, and Hermes is already filling the
 inbox with real alerts — so the app is built against live data rather than
 fixtures.
 
-Out of scope for this plan: FCM push. SSE only works while the app is
-foregrounded; `severity` is the seam when we want real notifications.
+Reads the inbox with a plain `GET /api/alerts` on app-foreground plus
+pull-to-refresh — no stream to manage (§6 is cut). Out of scope for this plan:
+FCM push; `severity` is the seam when we want real background notifications.
 
 ---
 
@@ -567,8 +709,7 @@ same shape. Per slice, the tests that would actually catch a regression:
 | 2 | agent token accepted by `get_current_user`; `expires_in_days` bounds enforced |
 | 3 | **dedupe upsert**; effective-status computation for a passed snooze; user scoping |
 | 4 | every legal transition; illegal transitions 409 |
-| 6 | `run.failed` bounces the alert to `new` with the error recorded |
-| 8 | an alert published mid-stream reaches an attached subscriber |
+| 10 | delegate marks `delegated` and returns without waiting; `run.completed` settles to `acted`; `run.failed` bounces to `new` with the error recorded; terminal alerts reject delegation; out-of-range `suggested_action_index` → 422 |
 
 The dedupe and effective-status tests are the two worth writing carefully —
 they're the logic that isn't obvious from reading the code.
@@ -588,10 +729,12 @@ triage, and your answer is a `delegate` on the child carrying the reply. The
 clarification is durable instead of trapped in a run that might time out.
 
 `parent_alert_id` is already in the model (§3) so the field is there when we
-decide. **Not built until slice 6 proves it's needed.**
+decide. **Not built speculatively — revisit once Hermes has been running for
+real (post slice 9) and a genuine mid-run question shows up.**
 
-**Android push.** SSE only works while the app is open. Real push needs FCM.
-`severity` is the seam. Out of scope for this build.
+**Android push.** The inbox is plain polling now (§6 is cut), so there's no
+"live while open" story to begin with, let alone a background one. Real push
+needs FCM. `severity` is the seam. Out of scope for this build.
 
 **Password reset.** Deferred from slice 1 — needs an SMTP decision, and single-user
 doesn't need it yet.
@@ -600,6 +743,7 @@ doesn't need it yet.
 
 ## 10. What isn't in this build
 
+- A live SSE alert stream (slice 6, cut 2026-08-21 — see its heading)
 - Renaming the streaming `Event` concept (decided against)
 - A Hermes pull/work queue (unnecessary — the API can reach Hermes)
 - A Hermes plugin or MCP server (skill first; MCP is the escalation)
