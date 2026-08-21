@@ -21,6 +21,11 @@ data/
 *.sqlite
 *.sqlite3
 
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/tsconfig.tsbuildinfo
+
 # Nix build outputs (the `result` symlink from `nix build`)
 result
 result-*

@@ -14,9 +14,25 @@ class Settings(BaseSettings):
         env_file=".env", env_prefix="GACA_", extra="ignore"
     )
 
-    # Single-user API key clients will send. Not enforced yet — wired in when we
-    # add auth to the session endpoints.
-    api_key: str = "dev-change-me"
+    # --- Auth ---------------------------------------------------------
+    # Signing key for every token we mint (browser sessions now, agent tokens
+    # next). MUST be overridden in production: anyone holding this value can
+    # forge a token for any user. Rotating it is also the only revocation we
+    # have — it invalidates every outstanding token at once.
+    # Keep any real value at 32+ bytes: PyJWT raises InsecureKeyLengthWarning
+    # below that for HS256 (RFC 7518 §3.2). See .env.example for a generator.
+    jwt_secret: str = "change-me-this-default-is-not-secret-and-too-short"
+    jwt_algorithm: str = "HS256"
+
+    # Browser session lifetime. Agent tokens pass their own, much longer expiry
+    # per request rather than reading this.
+    jwt_expire_minutes: int = 10080  # 7 days
+
+    # Google OAuth. One Client ID serves both sides: the API verifies the `aud`
+    # claim on incoming ID tokens with it, and the frontend renders its button
+    # with the same value (as VITE_GOOGLE_CLIENT_ID). Not a secret — it's public
+    # by design — but leaving it unset disables Google sign-in entirely.
+    google_client_id: str | None = None
 
     # Interface this service binds to. Loopback by default (safe for local dev);
     # set GACA_API_HOST=0.0.0.0 on the Pi so other machines can reach it.

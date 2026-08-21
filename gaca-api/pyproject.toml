@@ -10,6 +10,13 @@ dependencies = [
     "aiosqlite>=0.20",
     "sse-starlette>=2.1",
     "httpx>=0.27",
+    # Auth. PyJWT mints/validates the bearer tokens; argon2-cffi hashes
+    # passwords; email-validator is what pydantic's EmailStr needs at runtime.
+    "pyjwt>=2.8",
+    "argon2-cffi>=23.1",
+    "email-validator>=2.1",
+    # Verifies the signature and audience of Google ID tokens server-side.
+    "google-auth[requests]>=2.29.0",
 ]
 
 # Console entry point. `gaca-api` on PATH starts the server via main:run().

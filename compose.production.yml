@@ -1,0 +1,89 @@
+# Production compose — deployed on gaca-api, run alongside the standalone
+# `gateway` stack (nginx + cloudflared) that lives outside this repo at
+# ~/gateway/ on the box, same split piservices uses for calendarapp.
+#
+# Differs from docker-compose.yml (local dev) in the ways that matter for
+# a box actually reachable from the internet:
+#   - nothing published to a host port — api is internal-only (`expose`),
+#     frontend has no ports section at all; the gateway's nginx is the only
+#     thing that reaches either of them, over the shared gaca-proxy network
+#   - required secrets use ${VAR:?message} — fail loudly at `up` instead of
+#     silently booting with a throwaway default
+#   - init: true, no-new-privileges, capped JSON logging, healthchecks on
+#     both services (calendarapp's compose.production.yml has the same four)
+name: gaca
+
+services:
+  api:
+    build:
+      context: .
+      target: backend
+    environment:
+      GACA_JWT_SECRET: ${GACA_JWT_SECRET:?GACA_JWT_SECRET must be set}
+      GACA_JWT_ALGORITHM: ${GACA_JWT_ALGORITHM:-HS256}
+      GACA_JWT_EXPIRE_MINUTES: ${GACA_JWT_EXPIRE_MINUTES:-10080}
+      GACA_GOOGLE_CLIENT_ID: ${GACA_GOOGLE_CLIENT_ID:-}
+      GACA_API_HOST: 0.0.0.0
+      GACA_API_PORT: "41700"
+      GACA_DB_PATH: /var/lib/gaca/gaca.db
+      GACA_AGENT_ENGINE: ${GACA_AGENT_ENGINE:-hermes}
+      GACA_AGENT_BASE_URL: ${GACA_AGENT_BASE_URL:?GACA_AGENT_BASE_URL must be set — the Hermes gateway is on a different box}
+      GACA_AGENT_API_KEY: ${GACA_AGENT_API_KEY:?GACA_AGENT_API_KEY must be set}
+      GACA_AGENT_STREAM_IDLE_TIMEOUT: ${GACA_AGENT_STREAM_IDLE_TIMEOUT:-30}
+    volumes:
+      - ${GACA_DATA_DIR:?GACA_DATA_DIR must be set to a directory you own — see README}:/var/lib/gaca
+    expose:
+      - "41700"
+    restart: unless-stopped
+    init: true
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:41700/api/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - gaca
+
+  frontend:
+    build:
+      context: .
+      target: frontend
+      args:
+        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    init: true
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      gaca:
+      gaca-proxy:
+        aliases:
+          - gaca-frontend
+
+networks:
+  gaca:
+    name: gaca
+  gaca-proxy:
+    external: true

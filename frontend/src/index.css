@@ -1,0 +1,39 @@
+@import "tailwindcss";
+
+/* Tailwind v4 takes its design tokens from CSS variables in @theme rather than
+   a tailwind.config.js. Naming one here generates the matching utilities, so
+   --color-surface-raised gives you bg-surface-raised, text-surface-raised, etc.
+   Same approach toolshed uses. */
+@theme {
+  --color-primary-50: #eff6ff;
+  --color-primary-100: #dbeafe;
+  --color-primary-500: #3b82f6;
+  --color-primary-600: #2563eb;
+  --color-primary-700: #1d4ed8;
+
+  --color-surface: #ffffff;
+  --color-surface-raised: #f8fafc;
+  --color-surface-sunken: #f1f5f9;
+
+  --color-border: #e2e8f0;
+  --color-border-light: #f1f5f9;
+
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #475569;
+  --color-text-muted: #94a3b8;
+
+  /* Deliberately the same three names the API uses for alert severity, so the
+     UI can map severity straight onto a colour with no translation table. */
+  --color-info: #3b82f6;
+  --color-warn: #f59e0b;
+  --color-urgent: #ef4444;
+
+  --color-success: #22c55e;
+  --color-danger: #ef4444;
+}
+
+body {
+  background-color: var(--color-surface);
+  color: var(--color-text-primary);
+  -webkit-font-smoothing: antialiased;
+}

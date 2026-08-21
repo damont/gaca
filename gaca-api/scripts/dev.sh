@@ -24,9 +24,13 @@
 GACA_BASE="${GACA_BASE:-http://localhost:41700}"
 GACA_SID_FILE="${GACA_SID_FILE:-/tmp/gaca_sid}"
 
+# Every app route lives under /api. Derived from GACA_BASE rather than folded
+# into it, so overriding the host stays a plain host:port with no path.
+GACA_API="$GACA_BASE/api"
+
 # Create a new session and remember its id (also prints it).
 gaca-new() {
-  curl -s -X POST "$GACA_BASE/sessions" \
+  curl -s -X POST "$GACA_API/sessions" \
     -H 'content-type: application/json' -d '{"title":"dev"}' \
     | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])" \
     | tee "$GACA_SID_FILE"
@@ -40,9 +44,9 @@ gaca-sid() { cat "$GACA_SID_FILE"; }
 gaca-listen() {
   local sid; sid=$(cat "$GACA_SID_FILE")
   if [ -n "$1" ]; then
-    curl -N -H "Last-Event-ID: $1" "$GACA_BASE/sessions/$sid/events"
+    curl -N -H "Last-Event-ID: $1" "$GACA_API/sessions/$sid/events"
   else
-    curl -N "$GACA_BASE/sessions/$sid/events"
+    curl -N "$GACA_API/sessions/$sid/events"
   fi
 }
 
@@ -51,14 +55,14 @@ gaca-listen() {
 gaca-say() {
   local sid; sid=$(cat "$GACA_SID_FILE")
   local body; body=$(python3 -c "import json,sys;print(json.dumps({'content':' '.join(sys.argv[1:])}))" "$@")
-  curl -s -X POST "$GACA_BASE/sessions/$sid/messages" \
+  curl -s -X POST "$GACA_API/sessions/$sid/messages" \
     -H 'content-type: application/json' -d "$body"; echo
 }
 
 # Show the session + its stored messages (the durable transcript, not events).
 gaca-show() {
   local sid; sid=$(cat "$GACA_SID_FILE")
-  curl -s "$GACA_BASE/sessions/$sid" | python3 -m json.tool
+  curl -s "$GACA_API/sessions/$sid" | python3 -m json.tool
 }
 
 # --- Engine (Hermes gateway) probes --------------------------------------
