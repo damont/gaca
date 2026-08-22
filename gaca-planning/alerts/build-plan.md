@@ -95,7 +95,7 @@ and nginx both stay on loopback.
 | Direction | Transport | Auth | Used for |
 |---|---|---|---|
 | Hermes → API | Cloudflare, HTTPS | agent JWT | `POST /api/alerts` — Hermes' main write |
-| API → Hermes | private link, HTTP `:8642` | `GACA_AGENT_API_KEY` | delegations + chat (existing `HermesAdapter`) |
+| API → Hermes | private link, HTTP `:8642` | per-user `agent_api_key` (§10) | delegations + chat (existing `HermesAdapter`) |
 | API → Hermes box | private link, SSH | key | reading Hermes files, diagnostics |
 
 **Because the API can reach Hermes directly, delegation is just the existing
@@ -696,6 +696,13 @@ All `GACA_`-prefixed, in `config.py` and `.env.example`:
 **Remove `GACA_API_KEY`** — the unused single-user placeholder. Real auth
 replaces it in slice 1.
 
+**Not here, on purpose: `GACA_AGENT_BASE_URL` / `GACA_AGENT_API_KEY`.** Shipped
+as env vars in slices 2/10, removed 2026-08-22 — see §10. They're per-user
+now (`UserDoc.agent_base_url` / `agent_api_key`, submitted via
+`PUT /api/auth/agent-config`), not app config. `GACA_AGENT_ENGINE` (which
+*kind* of engine — still only `hermes`) stays an env var; it's the one part
+of "which agent" that's genuinely app-wide.
+
 ---
 
 ## 8. Test strategy
@@ -741,7 +748,55 @@ doesn't need it yet.
 
 ---
 
-## 10. What isn't in this build
+## 10. Multi-tenant agent credentials — retrofit, shipped 2026-08-22
+
+**Why this happened outside the slice plan.** Deploying to a public hostname
+(slice 8) surfaced a real security gap that predated the whole alerting
+build: `POST /api/sessions` and everything under it had **no auth at all** —
+not "shared across accounts," genuinely unauthenticated. Registration was
+also wide open. Anyone who found the URL could `curl` a session into
+existence and drive David's actual Hermes box — local terminal, SSH reach
+into `piservices`, a GitHub PAT — with no account and no credential of their
+own. Closing that took two decisions:
+
+1. **Require auth on every session route**, scoped to the caller — not
+   optional regardless of what else changed. `SessionDoc` gained `user_id`;
+   `ensure_exists` became `ensure_owned` (same 404-not-403 shape as alerts).
+2. **Real per-user agent credentials, not a locked-down single account.**
+   The minimal fix would have been gating registration to just David. Went
+   with the bigger change instead: each user submits their own
+   `agent_base_url` + `agent_api_key` via `PUT /api/auth/agent-config`
+   (`GET` to check status — never echoes the key back, same rule as a
+   password). There is no shared, app-wide agent target anymore.
+
+**What that meant for the agent runtime.** `HermesAdapter` already took
+`base_url`/`api_key` per instance, so the actual rework was
+`agent/runtime.py`: the old single `_backend` singleton became
+`backend_for(base_url, api_key)`, a small cache keyed by credentials. Raises
+`AgentNotConfigured` (400) if either is missing — a normal state for a new
+user, not a wiring bug. `services/runs.py` now takes the resolved `AgentBackend`
+as a plain argument instead of importing the runtime itself, which if
+anything made it *more* decoupled — it still knows nothing about users or
+credentials, just "a backend, handed to me."
+
+**`GACA_AGENT_BASE_URL` / `GACA_AGENT_API_KEY` are gone** from `config.py`,
+`.env.example`, and both compose files. `GACA_AGENT_ENGINE` (the engine
+*type* — still only `hermes`) is the one agent setting that's still app-wide.
+
+**Frontend:** a new "Your agent" section on the profile page, above the
+existing agent-token section — base URL + key, a configured/not-configured
+indicator. Ordered first on purpose: minting a GACA agent token is pointless
+until there's an agent to delegate to.
+
+**Not done as part of this:** registration is still open to anyone (closing
+the auth gap made that less urgent, not moot — an unlimited number of accounts
+can still each configure *their own* agent and use this app for free, which
+is a cost/abuse question, not a security one). Revisit if that matters before
+this ever gets shared beyond one person.
+
+---
+
+## 11. What isn't in this build
 
 - A live SSE alert stream (slice 6, cut 2026-08-21 — see its heading)
 - Renaming the streaming `Event` concept (decided against)
@@ -749,4 +804,7 @@ doesn't need it yet.
 - A Hermes plugin or MCP server (skill first; MCP is the escalation)
 - Revocable DB-backed agent keys (phase-10 JWTs chosen instead)
 - Alert triage in the web UI (Android owns triage)
-- FCM push, password reset, multi-tenant anything beyond `user_id` scoping
+- FCM push, password reset
+- Gating registration — anyone can still create an account (§10) and use it
+  for free with their own agent; that's a cost/abuse question left open, not
+  a security one — the actual security gap (unauthenticated sessions) is closed

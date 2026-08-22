@@ -25,6 +25,7 @@ data/
 frontend/node_modules/
 frontend/dist/
 frontend/tsconfig.tsbuildinfo
+frontend/.vite/
 
 # Nix build outputs (the `result` symlink from `nix build`)
 result

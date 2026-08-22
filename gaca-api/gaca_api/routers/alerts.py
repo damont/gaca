@@ -112,7 +112,7 @@ async def delegate_alert(
     b = body or AlertDelegate()
     return _out(
         await alert_service.delegate(
-            user.id,
+            user,
             alert_id,
             instruction=b.instruction,
             suggested_action_index=b.suggested_action_index,

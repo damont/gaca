@@ -15,6 +15,8 @@ from google.oauth2 import id_token as google_id_token
 from ..config import settings
 from ..models.user import UserDoc
 from ..schemas.auth import (
+    AgentConfigOut,
+    AgentConfigUpdate,
     AgentTokenRequest,
     AgentTokenResponse,
     GoogleLoginRequest,
@@ -148,3 +150,37 @@ async def agent_token(
         access_token=token,
         expires_in_days=data.expires_in_days,
     )
+
+
+def _agent_config_out(user: UserDoc) -> AgentConfigOut:
+    return AgentConfigOut(
+        agent_base_url=user.agent_base_url,
+        agent_configured=bool(user.agent_base_url and user.agent_api_key),
+    )
+
+
+@router.get("/agent-config", response_model=AgentConfigOut)
+async def get_agent_config(user: UserDoc = Depends(get_current_user)):
+    """Whether this user has pointed GACA at their own agent yet.
+
+    Never returns the key itself — same rule as a password. The base URL
+    isn't secret, so a settings screen can show it back.
+    """
+    return _agent_config_out(user)
+
+
+@router.put("/agent-config", response_model=AgentConfigOut)
+async def set_agent_config(
+    data: AgentConfigUpdate,
+    user: UserDoc = Depends(get_current_user),
+):
+    """Point this user's sessions and alert delegations at their own agent.
+
+    There is no shared, app-wide agent — every session/delegate call for this
+    user resolves to exactly this base URL and key from here on, and any call
+    made before this has ever been set raises AgentNotConfigured (400).
+    """
+    updated = await auth_service.set_agent_config(
+        user, data.agent_base_url, data.agent_api_key
+    )
+    return _agent_config_out(updated)

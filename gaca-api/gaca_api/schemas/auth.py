@@ -48,3 +48,19 @@ class AgentTokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     expires_in_days: int
+
+
+class AgentConfigUpdate(BaseModel):
+    """Body for PUT /auth/agent-config — where the user points GACA at their
+    own agent. Both required together; there's no partial update."""
+
+    agent_base_url: str = Field(..., min_length=1, max_length=500)
+    agent_api_key: str = Field(..., min_length=1, max_length=500)
+
+
+class AgentConfigOut(BaseModel):
+    """Never echoes the key back — same rule as a password. The base URL isn't
+    secret, so it's fine to read back and show in a settings screen."""
+
+    agent_base_url: str | None = None
+    agent_configured: bool

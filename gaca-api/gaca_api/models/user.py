@@ -38,3 +38,13 @@ class UserDoc(BaseModel):
     email_verified: bool = True
     is_active: bool = True
     created_at: datetime = Field(default_factory=utcnow)
+
+    # Each operator brings their own Hermes (or future engine) instance —
+    # there is no shared, app-wide agent target. Both unset until the user
+    # submits them via PUT /api/auth/agent-config; every delegate/chat call
+    # until then raises AgentNotConfigured rather than reaching someone else's
+    # box. Stored plaintext in `doc` like the rest of this model's non-password
+    # fields — no weaker than the single shared GACA_AGENT_API_KEY this
+    # replaces, which also lived in plaintext in an env file.
+    agent_base_url: str | None = None
+    agent_api_key: str | None = None

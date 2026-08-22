@@ -44,3 +44,18 @@ class InvalidRequest(Exception):
 
     def __init__(self, message: str) -> None:
         super().__init__(message)
+
+
+class AgentNotConfigured(Exception):
+    """The caller hasn't submitted their own agent_base_url/agent_api_key yet.
+
+    Mapped to HTTP 400. A normal, expected state for a new user — not a
+    startup or wiring bug — since every operator brings their own agent
+    rather than sharing one configured for the whole app.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "agent not configured — submit agent_base_url and agent_api_key "
+            "via PUT /api/auth/agent-config first"
+        )

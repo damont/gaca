@@ -12,6 +12,10 @@ from ..models.user import UserDoc
 from ..utils.auth import hash_password
 
 
+async def find_by_id(user_id: str) -> UserDoc | None:
+    return await users_db.find(user_id)
+
+
 async def find_by_email(email: str) -> UserDoc | None:
     return await users_db.find_by_email(email)
 
@@ -69,3 +73,16 @@ async def create_user(name: str, email: str, password: str) -> UserDoc:
     )
     await users_db.insert(user)
     return user
+
+
+async def set_agent_config(user: UserDoc, base_url: str, api_key: str) -> UserDoc:
+    """Point this user's session/delegate calls at their own agent.
+
+    Both are required together — a base URL with no key or vice versa isn't a
+    usable configuration, so there's no partial-update path here.
+    """
+    updated = user.model_copy(
+        update={"agent_base_url": base_url, "agent_api_key": api_key}
+    )
+    await users_db.replace(updated)
+    return updated

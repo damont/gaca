@@ -17,11 +17,12 @@ services:
     container_name: gaca-api
     ports:
       - "41700:41700"
-    # So the container can reach Hermes running on the dev box's host, the
-    # same way scripts/dev.sh's HERMES_BASE does outside Docker. On the Pi
-    # this default gets overridden to the Hermes box's real address on the
-    # private link (gaca-planning/alerts/build-plan.md §2) — host.docker.internal
-    # means nothing there.
+    # Lets a user's agent_base_url say host.docker.internal:8642 to reach
+    # Hermes running on the dev box's own host — same trick
+    # scripts/dev.sh's HERMES_BASE relies on outside Docker. Each user submits
+    # their own agent URL via PUT /api/auth/agent-config (see
+    # gaca-planning/alerts/build-plan.md), not an env var, so this is just
+    # making that hostname resolvable, not configuring anything itself.
     extra_hosts:
       - "host.docker.internal:host-gateway"
     # SQLite lives on a host directory, not the container's writable layer —
@@ -46,8 +47,6 @@ services:
       - GACA_API_PORT=41700
       - GACA_DB_PATH=/var/lib/gaca/gaca.db
       - GACA_AGENT_ENGINE=${GACA_AGENT_ENGINE:-hermes}
-      - GACA_AGENT_BASE_URL=${GACA_AGENT_BASE_URL:-http://host.docker.internal:8642}
-      - GACA_AGENT_API_KEY=${GACA_AGENT_API_KEY:-}
       - GACA_AGENT_STREAM_IDLE_TIMEOUT=${GACA_AGENT_STREAM_IDLE_TIMEOUT:-30}
     restart: unless-stopped
 

@@ -3,9 +3,11 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from ..agent import runtime as agent_runtime
 from ..db import alerts as alerts_db
 from ..models.alert import AlertDoc
 from ..models.base import utcnow
+from ..models.user import UserDoc
 from ..schemas.alert import AlertCreate
 from ..schemas.event import GacaEvent, RunCompleted, RunFailed
 from . import runs as run_service
@@ -176,24 +178,33 @@ def _delegate_prompt(
 
 
 async def delegate(
-    user_id: str,
+    user: UserDoc,
     alert_id: str,
     *,
     instruction: str | None = None,
     suggested_action_index: int | None = None,
 ) -> AlertDoc:
-    """Hand an alert to Hermes: open a session, start a run, mark it delegated.
+    """Hand an alert to the caller's own agent: open a session, start a run,
+    mark it delegated.
+
+    Takes the full UserDoc, not just an id — delegating needs the user's own
+    agent_base_url/agent_api_key (agent_runtime.backend_for raises
+    AgentNotConfigured if either is missing, same as the chat routes).
 
     Same guard as manual triage — only `new` or `snoozed` can be delegated. The
     run settles the alert asynchronously via `_on_run_settled`, wired in as
     `on_settled` below; this call only starts the run, it doesn't wait for it.
     """
-    alert = await get(user_id, alert_id)
+    alert = await get(user.id, alert_id)
     if alert.status not in TRIAGEABLE:
         raise InvalidTransition("alert", alert_id, alert.status, "delegated")
 
+    # Validate the request against the alert's own data before touching the
+    # agent at all — a bad suggested_action_index is a 422 regardless of
+    # whether this user has even configured an agent yet.
     prompt = _delegate_prompt(alert, instruction, suggested_action_index)
-    session = await session_service.create(alert.title)
+    backend = agent_runtime.backend_for(user.agent_base_url, user.agent_api_key)
+    session = await session_service.create(user.id, alert.title)
 
     updated = alert.model_copy(
         update={
@@ -208,7 +219,7 @@ async def delegate(
     async def _on_settled(event: GacaEvent) -> None:
         await _settle_delegation(alert_id, event)
 
-    await run_service.start_turn(session.id, prompt, on_settled=_on_settled)
+    await run_service.start_turn(backend, session.id, prompt, on_settled=_on_settled)
     return updated
 
 

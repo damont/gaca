@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 
-from ..agent.runtime import backend
+from ..agent.base import AgentBackend
 from ..bus import event_bus
 from ..db import events as events_db
 from ..db import messages as messages_db
@@ -28,12 +28,18 @@ OnSettled = Callable[[GacaEvent], Awaitable[None]]
 
 
 async def start_turn(
+    backend: AgentBackend,
     session_id: str,
     content: str,
     *,
     on_settled: OnSettled | None = None,
 ) -> MessageDoc:
     """Persist the user message, start a run, spawn its reader. Non-blocking.
+
+    `backend` is resolved by the caller (agent/runtime.py:backend_for, keyed
+    on the calling user's own credentials) and handed in rather than looked
+    up here — this module stays ignorant of users and credentials entirely,
+    same as it was engine-ignorant before per-user agents existed.
 
     History (Option A) is the turns *before* this one, loaded from our SQLite;
     the new message is sent as the user turn. The reader task carries the run's
@@ -52,24 +58,27 @@ async def start_turn(
     await messages_db.insert(user_message)
 
     history = [MessageOut.model_validate(m) for m in prior]
-    run_id = await backend().start_run(
+    run_id = await backend.start_run(
         session_id=session_id, history=history, user_message=content
     )
 
-    task = asyncio.create_task(read_run(session_id, run_id, on_settled=on_settled))
+    task = asyncio.create_task(
+        read_run(backend, session_id, run_id, on_settled=on_settled)
+    )
     _background.add(task)
     task.add_done_callback(_background.discard)
     return user_message
 
 
 async def read_run(
+    backend: AgentBackend,
     session_id: str,
     run_id: str,
     *,
     on_settled: OnSettled | None = None,
 ) -> None:
     """Drain a run's events: persist (stamps seq), publish live, finalize on end."""
-    async for event in backend().stream_events(run_id, session_id=session_id):
+    async for event in backend.stream_events(run_id, session_id=session_id):
         # Persist FIRST — the insert assigns seq (Last-Event-ID) atomically.
         event.seq = await events_db.insert(event)
         # Then publish the seq-stamped event to any open stream (ephemeral).

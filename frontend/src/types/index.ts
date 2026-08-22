@@ -23,3 +23,13 @@ export interface TokenResponse {
 export interface AgentTokenResponse extends TokenResponse {
   expires_in_days: number;
 }
+
+/**
+ * GET/PUT /api/auth/agent-config — this user's own agent (never a shared,
+ * app-wide one). `agent_api_key` never round-trips back from the API, same
+ * rule as a password — `agent_configured` is how the UI knows one is set.
+ */
+export interface AgentConfig {
+  agent_base_url: string | null;
+  agent_configured: boolean;
+}

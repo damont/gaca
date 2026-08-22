@@ -47,15 +47,6 @@ class HermesAdapter:
         # stream sets its own IDLE (per-event) timeout per call in stream_events.
         self._client = client or httpx.AsyncClient(timeout=None)
 
-    @classmethod
-    def from_settings(cls) -> "HermesAdapter":
-        """Build from gaca-api settings (agent_base_url / api_key / idle timeout)."""
-        return cls(
-            settings.agent_base_url,
-            settings.agent_api_key,
-            stream_idle_timeout=settings.agent_stream_idle_timeout,
-        )
-
     async def aclose(self) -> None:
         await self._client.aclose()
 
@@ -149,7 +140,15 @@ class HermesAdapter:
         raise NotImplementedError("model info lands in a later slice (ADR 0001)")
 
 
-def create() -> HermesAdapter:
+def create(base_url: str, api_key: str) -> HermesAdapter:
     """Composition entrypoint the agent runtime loads by name from
-    GACA_AGENT_ENGINE — keeps the core from importing a specific engine."""
-    return HermesAdapter.from_settings()
+    GACA_AGENT_ENGINE — keeps the core from importing a specific engine.
+
+    base_url/api_key come from the calling user's own UserDoc, not app-wide
+    settings — see agent/runtime.py:backend_for. Only the idle timeout is
+    still a process-wide setting; it's an operational tuning knob, not a
+    per-user credential.
+    """
+    return HermesAdapter(
+        base_url, api_key, stream_idle_timeout=settings.agent_stream_idle_timeout
+    )
