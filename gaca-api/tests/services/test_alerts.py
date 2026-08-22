@@ -15,10 +15,16 @@ from gaca_api.config import settings
 from gaca_api.db import alerts as alerts_db
 from gaca_api.db import client
 from gaca_api.models.alert import AlertDoc
+from gaca_api.models.user import UserDoc
 from gaca_api.schemas.alert import AlertCreate
 from gaca_api.schemas.event import RunCompleted, RunFailed
 from gaca_api.services import alerts as alert_service
-from gaca_api.services.exceptions import InvalidRequest, InvalidTransition, NotFound
+from gaca_api.services.exceptions import (
+    AgentNotConfigured,
+    InvalidRequest,
+    InvalidTransition,
+    NotFound,
+)
 
 NOW = datetime(2026, 8, 9, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -445,6 +451,21 @@ def test_list_is_newest_first_and_respects_limit(tmp_path):
 
 # ── delegation ──────────────────────────────────────────────────────
 
+def _user(user_id: str = "u1", *, agent_configured: bool = True, **overrides) -> UserDoc:
+    """A UserDoc for delegate() tests. Agent-configured by default — the
+    handful of tests that care about the unconfigured case pass
+    agent_configured=False explicitly."""
+    creds = (
+        {"agent_base_url": "http://agent.example.com", "agent_api_key": "test-key"}
+        if agent_configured
+        else {}
+    )
+    return UserDoc(
+        id=user_id, email=f"{user_id}@example.com", display_name=user_id,
+        **creds, **overrides,
+    )
+
+
 class _StubBackend:
     """Agent backend stand-in: yields one canned terminal event per run.
 
@@ -470,8 +491,11 @@ class _StubBackend:
 
 
 def _install_backend(monkeypatch, **outcome) -> _StubBackend:
+    """Stand in for agent_runtime.backend_for — returns the stub regardless of
+    which credentials it's asked to resolve, since these tests exercise
+    alerts.delegate's orchestration, not runtime's adapter-caching logic."""
     stub = _StubBackend(**outcome)
-    monkeypatch.setattr(agent_runtime, "_backend", stub)
+    monkeypatch.setattr(agent_runtime, "backend_for", lambda base_url, api_key: stub)
     return stub
 
 
@@ -486,7 +510,7 @@ def test_delegate_starts_a_session_and_marks_the_alert_delegated(tmp_path, monke
 
     async def go():
         alert, _ = await alert_service.create("u1", _payload())
-        return await alert_service.delegate("u1", alert.id)
+        return await alert_service.delegate(_user(), alert.id)
 
     # Asserted on the return value, before the run has had a chance to settle
     # anything — delegate() is non-blocking, same as start_turn underneath it.
@@ -502,7 +526,7 @@ def test_a_completed_run_settles_the_alert_to_acted(tmp_path, monkeypatch):
 
     async def go():
         alert, _ = await alert_service.create("u1", _payload())
-        await alert_service.delegate("u1", alert.id)
+        await alert_service.delegate(_user(), alert.id)
         await _drain_background()
         return await alert_service.get("u1", alert.id)
 
@@ -517,13 +541,33 @@ def test_a_failed_run_bounces_the_alert_back_to_new_with_the_error(tmp_path, mon
 
     async def go():
         alert, _ = await alert_service.create("u1", _payload())
-        await alert_service.delegate("u1", alert.id)
+        await alert_service.delegate(_user(), alert.id)
         await _drain_background()
         return await alert_service.get("u1", alert.id)
 
     bounced = _run(go)
     assert bounced.status == "new"
     assert bounced.resolution_note == "hermes gateway timed out"
+
+
+def test_delegate_raises_agent_not_configured_before_touching_anything(tmp_path):
+    """No agent submitted yet — the run never starts, and the alert stays put."""
+    settings.db_path = str(tmp_path / "t.db")
+    # Real connect(), not a monkeypatch: this test exercises the actual
+    # "runtime initialized, but THIS user has no credentials" state, as
+    # opposed to the "lifespan never ran" state every other test sidesteps.
+    settings.agent_engine = "hermes"
+    agent_runtime.connect()
+
+    async def go():
+        alert, _ = await alert_service.create("u1", _payload())
+        with pytest.raises(AgentNotConfigured):
+            await alert_service.delegate(_user(agent_configured=False), alert.id)
+        return await alert_service.get("u1", alert.id)
+
+    unchanged = _run(go)
+    assert unchanged.status == "new"
+    assert unchanged.session_id is None
 
 
 @pytest.mark.parametrize("settled", ["acted", "dismissed"])
@@ -534,7 +578,7 @@ def test_delegating_a_terminal_alert_is_rejected(tmp_path, settled):
         await alerts_db.insert(_with_status(settled))
         alert = (await alerts_db.find_by_user("u1"))[0]
         with pytest.raises(InvalidTransition):
-            await alert_service.delegate("u1", alert.id)
+            await alert_service.delegate(_user(), alert.id)
 
     _run(go)
 
@@ -553,7 +597,7 @@ def test_delegate_prefers_the_chosen_suggested_action_prompt(tmp_path, monkeypat
                 ]
             ),
         )
-        await alert_service.delegate("u1", alert.id, suggested_action_index=1)
+        await alert_service.delegate(_user(), alert.id, suggested_action_index=1)
         await _drain_background()
 
     _run(go)
@@ -569,7 +613,7 @@ def test_delegate_combines_action_and_free_text_instruction(tmp_path, monkeypatc
             "u1", _payload(suggested_actions=[{"label": "Clean logs", "prompt": "Free space"}])
         )
         await alert_service.delegate(
-            "u1",
+            _user(),
             alert.id,
             instruction="but don't touch anything under /var/lib/gaca",
             suggested_action_index=0,
@@ -588,7 +632,7 @@ def test_delegate_falls_back_to_title_and_body_with_no_action_or_instruction(tmp
         alert, _ = await alert_service.create(
             "u1", _payload(title="Disk is 91% full", body="mount /")
         )
-        await alert_service.delegate("u1", alert.id)
+        await alert_service.delegate(_user(), alert.id)
         await _drain_background()
 
     _run(go)
@@ -596,11 +640,15 @@ def test_delegate_falls_back_to_title_and_body_with_no_action_or_instruction(tmp
 
 
 def test_delegate_rejects_an_out_of_range_suggested_action_index(tmp_path):
+    """Raised before the agent is ever touched — works even with no agent
+    configured, since it's pure validation against the alert's own data."""
     settings.db_path = str(tmp_path / "t.db")
 
     async def go():
         alert, _ = await alert_service.create("u1", _payload())  # no suggested_actions
         with pytest.raises(InvalidRequest):
-            await alert_service.delegate("u1", alert.id, suggested_action_index=0)
+            await alert_service.delegate(
+                _user(agent_configured=False), alert.id, suggested_action_index=0
+            )
 
     _run(go)

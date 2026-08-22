@@ -26,9 +26,10 @@ services:
       GACA_API_HOST: 0.0.0.0
       GACA_API_PORT: "41700"
       GACA_DB_PATH: /var/lib/gaca/gaca.db
+      # No GACA_AGENT_BASE_URL / GACA_AGENT_API_KEY here — those are per-user
+      # now (UserDoc.agent_base_url / agent_api_key), submitted via
+      # PUT /api/auth/agent-config after signing in, not app-wide config.
       GACA_AGENT_ENGINE: ${GACA_AGENT_ENGINE:-hermes}
-      GACA_AGENT_BASE_URL: ${GACA_AGENT_BASE_URL:?GACA_AGENT_BASE_URL must be set — the Hermes gateway is on a different box}
-      GACA_AGENT_API_KEY: ${GACA_AGENT_API_KEY:?GACA_AGENT_API_KEY must be set}
       GACA_AGENT_STREAM_IDLE_TIMEOUT: ${GACA_AGENT_STREAM_IDLE_TIMEOUT:-30}
     volumes:
       - ${GACA_DATA_DIR:?GACA_DATA_DIR must be set to a directory you own — see README}:/var/lib/gaca

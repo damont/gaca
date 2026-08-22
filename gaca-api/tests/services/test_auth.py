@@ -254,3 +254,56 @@ def test_duplicate_email_rejected_by_the_database(tmp_path):
             await client.close()
 
     asyncio.run(main())
+
+
+# ── per-user agent config ───────────────────────────────────────────
+
+def test_set_agent_config_persists_both_fields(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def main():
+        await client.connect()
+        try:
+            user = await auth_service.create_user(
+                name="David", email="david@example.com", password="hunter2"
+            )
+            assert user.agent_base_url is None and user.agent_api_key is None
+
+            updated = await auth_service.set_agent_config(
+                user, "http://david-claw.lan:8642", "the-real-key"
+            )
+            reloaded = await auth_service.find_by_id(user.id)
+            return updated, reloaded
+        finally:
+            await client.close()
+
+    updated, reloaded = asyncio.run(main())
+    assert updated.agent_base_url == "http://david-claw.lan:8642"
+    assert updated.agent_api_key == "the-real-key"
+    # persisted, not just returned
+    assert reloaded.agent_base_url == "http://david-claw.lan:8642"
+    assert reloaded.agent_api_key == "the-real-key"
+
+
+def test_set_agent_config_overwrites_a_previous_value(tmp_path):
+    """Re-submitting replaces the old credentials outright — no merge, same
+    as every other replace() in this app."""
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def main():
+        await client.connect()
+        try:
+            user = await auth_service.create_user(
+                name="David", email="david@example.com", password="hunter2"
+            )
+            await auth_service.set_agent_config(user, "http://old:8642", "old-key")
+            latest = await auth_service.find_by_id(user.id)
+            return await auth_service.set_agent_config(
+                latest, "http://new.lan:8642", "new-key"
+            )
+        finally:
+            await client.close()
+
+    result = asyncio.run(main())
+    assert result.agent_base_url == "http://new.lan:8642"
+    assert result.agent_api_key == "new-key"

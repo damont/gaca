@@ -24,6 +24,7 @@ def test_schema_lists_the_auth_and_session_paths():
         "/api/auth/me",
         "/api/auth/google",
         "/api/auth/agent-token",
+        "/api/auth/agent-config",
         "/api/alerts",
         "/api/alerts/{alert_id}",
         "/api/alerts/{alert_id}/act",

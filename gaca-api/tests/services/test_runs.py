@@ -2,6 +2,8 @@
 
 No Hermes contact: we inject a StubBackend that yields canned GacaEvents, so this
 exercises the invariant-core wiring (persist, seq-stamp, publish, finalize).
+`runs.py` takes the backend as a plain argument now — no agent_runtime
+monkeypatching needed, it's just a value passed in like any other.
 """
 import asyncio
 import json
@@ -9,7 +11,6 @@ from datetime import datetime, timezone
 
 import pytest
 
-import gaca_api.agent.runtime as agent_runtime
 import gaca_api.services.runs as runs
 from gaca_api.config import settings
 from gaca_api.db import client
@@ -55,15 +56,15 @@ class RecorderBus:
 
 def test_read_run_persists_publishes_and_finalizes(tmp_path, monkeypatch):
     settings.db_path = str(tmp_path / "t.db")
-    monkeypatch.setattr(agent_runtime, "_backend", StubBackend())
+    stub = StubBackend()
     recorder = RecorderBus()
     monkeypatch.setattr(runs, "event_bus", recorder)
 
     async def main():
         await client.connect()
         try:
-            await sessions_db.insert(SessionDoc(id="s1"))
-            await runs.read_run("s1", "run_stub")
+            await sessions_db.insert(SessionDoc(id="s1", user_id="u1"))
+            await runs.read_run(stub, "s1", "run_stub")
             stored = await events_db.find_by_session("s1")
             msgs = await messages_db.find_by_session("s1")
             return stored, msgs
@@ -85,15 +86,14 @@ def test_read_run_persists_publishes_and_finalizes(tmp_path, monkeypatch):
     assert msgs[0].content == "Hi there"
 
 
-def test_start_turn_sends_prior_history_and_finalizes(tmp_path, monkeypatch):
+def test_start_turn_sends_prior_history_and_finalizes(tmp_path):
     settings.db_path = str(tmp_path / "t.db")
     stub = StubBackend()
-    monkeypatch.setattr(agent_runtime, "_backend", stub)
 
     async def main():
         await client.connect()
         try:
-            await sessions_db.insert(SessionDoc(id="s1"))
+            await sessions_db.insert(SessionDoc(id="s1", user_id="u1"))
             # seed two prior turns with fixed early timestamps for stable ordering
             await messages_db.insert(MessageDoc(
                 session_id="s1", role="user", content="earlier",
@@ -102,7 +102,7 @@ def test_start_turn_sends_prior_history_and_finalizes(tmp_path, monkeypatch):
                 session_id="s1", role="assistant", content="prior-reply",
                 created_at=datetime(2026, 1, 1, 0, 0, 1, tzinfo=timezone.utc)))
 
-            user_msg = await runs.start_turn("s1", "new question")
+            user_msg = await runs.start_turn(stub, "s1", "new question")
             await asyncio.gather(*list(runs._background))  # let the reader finish
 
             msgs = await messages_db.find_by_session("s1")
@@ -119,15 +119,14 @@ def test_start_turn_sends_prior_history_and_finalizes(tmp_path, monkeypatch):
     assert [m.content for m in msgs] == ["earlier", "prior-reply", "new question", "Hi there"]
 
 
-def test_start_turn_unknown_session_raises(tmp_path, monkeypatch):
+def test_start_turn_unknown_session_raises(tmp_path):
     settings.db_path = str(tmp_path / "t.db")
-    monkeypatch.setattr(agent_runtime, "_backend", StubBackend())
 
     async def main():
         await client.connect()
         try:
             with pytest.raises(NotFound):
-                await runs.start_turn("nope", "hi")
+                await runs.start_turn(StubBackend(), "nope", "hi")
         finally:
             await client.close()
 

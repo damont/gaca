@@ -1,4 +1,4 @@
-import type { AgentTokenResponse, TokenResponse, User } from "../types";
+import type { AgentConfig, AgentTokenResponse, TokenResponse, User } from "../types";
 
 /**
  * The one place the app talks to the API.
@@ -102,6 +102,22 @@ class ApiClient {
   agentToken(expiresInDays: number) {
     return this.post<AgentTokenResponse>("/auth/agent-token", {
       expires_in_days: expiresInDays,
+    });
+  }
+
+  /**
+   * This user's own agent config — there is no shared, app-wide agent.
+   * `agent_api_key` never comes back in the response, same rule as a
+   * password; `agent_configured` is how the caller knows one's set.
+   */
+  agentConfig() {
+    return this.get<AgentConfig>("/auth/agent-config");
+  }
+
+  setAgentConfig(agentBaseUrl: string, agentApiKey: string) {
+    return this.put<AgentConfig>("/auth/agent-config", {
+      agent_base_url: agentBaseUrl,
+      agent_api_key: agentApiKey,
     });
   }
 }

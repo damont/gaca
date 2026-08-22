@@ -15,14 +15,19 @@ from .agent import runtime as agent_runtime
 from .bus import event_bus
 from .db import client
 from .routers import alerts, auth, sessions
-from .services.exceptions import InvalidRequest, InvalidTransition, NotFound
+from .services.exceptions import (
+    AgentNotConfigured,
+    InvalidRequest,
+    InvalidTransition,
+    NotFound,
+)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await client.connect()  # startup: open SQLite + ensure the schema
     await event_bus.connect()  # bus for read_run -> open SSE streams
-    agent_runtime.connect()  # build the configured agent backend
+    agent_runtime.connect()  # resolve the configured engine module
     yield
     await agent_runtime.close()  # shutdown, reverse order
     await event_bus.aclose()
@@ -73,6 +78,14 @@ async def handle_invalid_request(
 ) -> JSONResponse:
     """Map a semantically-invalid request body to HTTP 422, in one place."""
     return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+
+@app.exception_handler(AgentNotConfigured)
+async def handle_agent_not_configured(
+    request: Request, exc: AgentNotConfigured
+) -> JSONResponse:
+    """Map a missing per-user agent config to HTTP 400, in one place."""
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
 @app.get("/api/health")

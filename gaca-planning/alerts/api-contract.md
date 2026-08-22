@@ -272,6 +272,7 @@ this stream back.
 | Code | Meaning | What the app should do |
 |---|---|---|
 | `200` / `201` | Success | — |
+| `400` | On `/{id}/delegate`: this user hasn't submitted `agent_base_url`/`agent_api_key` yet | Tell them to set it up in the web app's profile page. Don't retry |
 | `422` | Body doesn't match the schema — including `snooze until` in the past | Fix and don't retry |
 | `401` | Token missing, malformed, or expired | Send to login. **Do not retry** |
 | `403` | Authenticated but forbidden | Show the body. Don't retry |
@@ -282,6 +283,12 @@ this stream back.
 `409` is the one worth handling well: it means the alert moved underneath you —
 Hermes settled a delegation, or you triaged it on another device. Refetch and
 re-render rather than showing an error.
+
+**There is no shared, app-wide agent** — every account brings its own via the
+web app's profile page (`PUT /api/auth/agent-config`, base URL + key). A
+brand-new account can create and triage alerts (act/dismiss/snooze) with
+nothing configured; `/delegate` is the one endpoint that needs it, and 400s
+clearly if it's missing rather than failing some other way.
 
 ---
 
