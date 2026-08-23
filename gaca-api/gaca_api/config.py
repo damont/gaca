@@ -60,5 +60,16 @@ class Settings(BaseSettings):
     # a long but active run won't trip it.
     agent_stream_idle_timeout: float = 30.0
 
+    # --- Push notifications --------------------------------------------
+    # Path to a Firebase service-account JSON key (Firebase console → Project
+    # settings → Service accounts → Generate new private key). Unlike
+    # google_client_id, this IS a secret — a real credential the server signs
+    # requests with — so it's a file path, not an inline value, matching how
+    # the Cloudflare Tunnel token is handled: never committed, mounted in at
+    # deploy time. Push is best-effort everywhere it's used: leaving this
+    # unset disables sending (services/push.py no-ops) rather than failing
+    # alert creation or delegation, which must never depend on it.
+    fcm_credentials_path: str | None = None
+
 
 settings = Settings()
