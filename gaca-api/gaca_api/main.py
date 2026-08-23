@@ -14,7 +14,8 @@ from fastapi.responses import JSONResponse
 from .agent import runtime as agent_runtime
 from .bus import event_bus
 from .db import client
-from .routers import alerts, auth, sessions
+from .routers import alerts, auth, push, sessions
+from .services import push as push_service
 from .services.exceptions import (
     AgentNotConfigured,
     InvalidRequest,
@@ -28,8 +29,10 @@ async def lifespan(app: FastAPI):
     await client.connect()  # startup: open SQLite + ensure the schema
     await event_bus.connect()  # bus for read_run -> open SSE streams
     agent_runtime.connect()  # resolve the configured engine module
+    push_service.connect()  # Firebase Admin SDK, if GACA_FCM_CREDENTIALS_PATH is set
     yield
-    await agent_runtime.close()  # shutdown, reverse order
+    push_service.close()  # shutdown, reverse order
+    await agent_runtime.close()
     await event_bus.aclose()
     await client.close()
 
@@ -114,6 +117,7 @@ async def get_schema():
 # point is applied here, matching how calendarapp and toolshed mount theirs.
 app.include_router(auth.router, prefix="/api")
 app.include_router(alerts.router, prefix="/api")
+app.include_router(push.router, prefix="/api")
 app.include_router(sessions.router, prefix="/api")
 
 

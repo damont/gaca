@@ -1,12 +1,16 @@
 # GACA Alerts — build plan
 
-**Status:** Slices 0–4 and 7 shipped; slice 5 (React frontend) shipped, Google
-sign-in added on top; slice 6 (SSE alert stream) **cut**; slice 10 (Delegation)
-shipped early, out of numeric order — see its heading below for why; slice 8
-(gaca-api provisioning) **in progress** — box has Docker + ufw + the gateway
-stack's config, blocked on picking a hostname and creating the Cloudflare
-Tunnel. Remaining: finish 8, then 9 (Hermes skill), 11 (cron), 12 (Android) ·
-**Date:** 2026-08-07, reordered 2026-08-09, updated 2026-08-21
+**Status:** Slices 0–4, 7, and 8 shipped and *live* at `goodandcheapagent.com`;
+slice 5 (React frontend) shipped, Google sign-in added on top; slice 6 (SSE
+alert stream) **cut**; slice 10 (Delegation) shipped early, out of numeric
+order — see its heading below for why. §10 (new, not in the original slice
+list) retrofit per-user agent credentials + closed a real auth gap in
+sessions, also shipped and deployed. Remaining: 9 (Hermes skill — nothing has
+actually posted an alert yet), 11 (cron, depends on 9), 12 (Android). FCM push
+notification scaffolding (models/push_token.py, schemas/push.py,
+db/client.py's push_tokens table) is in progress, started 2026-08-23 — ahead
+of slice 12, since Android needs somewhere to register a token against. ·
+**Date:** 2026-08-07, reordered 2026-08-09, updated 2026-08-23
 **Branch:** `feature/hermes-alerts` · **Area:** gaca-api ↔ Hermes ↔ Android
 
 **Ordering (revised 2026-08-09):** finish the app — frontend, Docker — then
@@ -505,30 +509,34 @@ way) once it turned out to already have a proven, hardened two-tier pattern:
   no silent throwaway default), `init: true`, `no-new-privileges`, capped
   logging, healthchecks on both services.
 
-**Still open, in order:**
-1. Create the tunnel + `goodandcheapagent.com`'s DNS record in the Cloudflare
-   dashboard (Zero Trust → Networks → Tunnels) — dashboard action, David's to
-   do; drop the resulting token at `~/gateway/cloudflared.token` on `gaca-api`
-   (never commit it, same as `piservices`' token file isn't in `calendarapp`'s
-   repo).
-2. `git clone`/pull this repo onto `gaca-api` (mirrors how `calendarapp` lives
-   at `/home/david/piservices/calendarapp/` — a plain checkout, not something
-   copied by hand) and set `GACA_DATA_DIR`, `GACA_JWT_SECRET`,
-   `GACA_AGENT_API_KEY`, `GACA_AGENT_BASE_URL` in its `.env`.
-3. `docker compose -f compose.production.yml up -d --build`, then
-   `docker compose -f ~/gateway/compose.yml up -d` once the token's in place.
-4. Restricted SSH key from `gaca-api` → the Hermes box (`gaca-reader` user or
-   `command=`) — not started.
-5. Hermes' `~/.hermes/.env` gets the agent JWT once §9's `GACA_AGENT_API_KEY`
-   mystery (see this slice's chat history — the key wasn't where
-   `scripts/dev.sh` assumed) is resolved; base URL flips from localhost to the
-   public hostname.
+**Done, 2026-08-22:** tunnel created, DNS live at `goodandcheapagent.com`,
+repo cloned to `~/gaca` on the box, `compose.production.yml` and the gateway
+stack both up and verified end-to-end against the public URL (including the
+sessions-auth fix from §10 — `POST /api/sessions` with no token correctly
+401s through the real Cloudflare path, not just locally).
+
+**GACA_AGENT_API_KEY/GACA_AGENT_BASE_URL never went in `gaca-api`'s `.env` in
+the end** — §10 replaced that whole approach mid-slice with per-user agent
+config. What's left here isn't an env var, it's confirming David's own
+account on the live site actually has `agent_base_url`/`agent_api_key`
+submitted via the profile page (the field was empty before that UI existed).
+
+**Still open:**
+1. Restricted SSH key from `gaca-api` → the Hermes box (`gaca-reader` user or
+   `command=`) — not started. Nothing built so far actually uses this channel
+   yet (no code path SSHes from gaca-api to Hermes), so it's not blocking —
+   needed before "reading Hermes files, diagnostics" (§2's third channel)
+   becomes real.
+2. Confirm the agent-config submission above actually happened on the live
+   account — the one thing standing between "the box is up" and "delegating
+   an alert actually reaches Hermes."
 
 **Prerequisite (unchanged):** confirm `gaca-api` and the Hermes box share a
 private network, or this needs Tailscale/WireGuard instead of plain LAN.
 
 **Done when:** Hermes posts through Cloudflare, and `gaca-api`'s ports are
-closed from the LAN.
+closed from the LAN. Ports are closed and verified (ufw, §above); **Hermes
+hasn't posted anything yet** — that's slice 9, not this one.
 
 ---
 
@@ -739,9 +747,17 @@ clarification is durable instead of trapped in a run that might time out.
 decide. **Not built speculatively — revisit once Hermes has been running for
 real (post slice 9) and a genuine mid-run question shows up.**
 
-**Android push.** The inbox is plain polling now (§6 is cut), so there's no
-"live while open" story to begin with, let alone a background one. Real push
-needs FCM. `severity` is the seam. Out of scope for this build.
+**Android push — resolved 2026-08-23, no longer open.** Built ahead of slice
+12 itself, since the Android app needed somewhere to register a token
+against: `models/push_token.py`, `db/client.py`'s `push_tokens` table,
+`services/push.py` (Firebase Admin SDK, best-effort), `POST /api/push/register`
++ `/unregister` (`routers/push.py`). Fan-out wired into `services/alerts.py`
+at the two moments that matter — a new/re-fired alert, and a delegation
+settling either way — not a general-purpose event stream; §6's reasoning for
+cutting the SSE alert-list stream still holds; this doesn't reopen it.
+`api-contract.md` §4a is the Android-facing contract. `GACA_FCM_CREDENTIALS_PATH`
+(a Firebase service-account key) is optional — unset disables sending, not a
+startup failure.
 
 **Password reset.** Deferred from slice 1 — needs an SMTP decision, and single-user
 doesn't need it yet.
@@ -804,7 +820,7 @@ this ever gets shared beyond one person.
 - A Hermes plugin or MCP server (skill first; MCP is the escalation)
 - Revocable DB-backed agent keys (phase-10 JWTs chosen instead)
 - Alert triage in the web UI (Android owns triage)
-- FCM push, password reset
+- Password reset (FCM push shipped 2026-08-23 — see §9's "Android push")
 - Gating registration — anyone can still create an account (§10) and use it
   for free with their own agent; that's a cost/abuse question left open, not
   a security one — the actual security gap (unauthenticated sessions) is closed

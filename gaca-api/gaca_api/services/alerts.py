@@ -10,6 +10,7 @@ from ..models.base import utcnow
 from ..models.user import UserDoc
 from ..schemas.alert import AlertCreate
 from ..schemas.event import GacaEvent, RunCompleted, RunFailed
+from . import push as push_service
 from . import runs as run_service
 from . import sessions as session_service
 from .exceptions import InvalidRequest, InvalidTransition, NotFound
@@ -83,10 +84,24 @@ async def create(user_id: str, payload: AlertCreate) -> tuple[AlertDoc, bool]:
                 }
             )
             await alerts_db.replace(updated)
+            await push_service.notify(
+                user_id,
+                title=updated.title,
+                body=updated.body or "",
+                alert_id=updated.id,
+                severity=updated.severity,
+            )
             return updated, False
 
     alert = AlertDoc(user_id=user_id, **payload.model_dump())
     await alerts_db.insert(alert)
+    await push_service.notify(
+        user_id,
+        title=alert.title,
+        body=alert.body or "",
+        alert_id=alert.id,
+        severity=alert.severity,
+    )
     return alert, True
 
 
@@ -244,6 +259,14 @@ async def _settle_delegation(alert_id: str, event: GacaEvent) -> None:
         resolved = current.model_copy(
             update={"status": "acted", "status_changed_at": utcnow()}
         )
+        await alerts_db.replace(resolved)
+        await push_service.notify(
+            resolved.user_id,
+            title=f"Hermes finished: {resolved.title}",
+            body="The delegated task is done.",
+            alert_id=resolved.id,
+            severity=resolved.severity,
+        )
     elif isinstance(event, RunFailed):
         resolved = current.model_copy(
             update={
@@ -252,9 +275,16 @@ async def _settle_delegation(alert_id: str, event: GacaEvent) -> None:
                 "resolution_note": event.error,
             }
         )
+        await alerts_db.replace(resolved)
+        await push_service.notify(
+            resolved.user_id,
+            title=f"Hermes couldn't finish: {resolved.title}",
+            body=event.error or "The delegated run failed — it's back in your inbox.",
+            alert_id=resolved.id,
+            severity=resolved.severity,
+        )
     else:
         return
-    await alerts_db.replace(resolved)
 
 
 async def list_for_user(

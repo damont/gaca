@@ -35,6 +35,11 @@ services:
     # falls back to a project-relative ./data (gitignored) if unset.
     volumes:
       - ${GACA_DATA_DIR:-./data}:/var/lib/gaca
+      # Optional: set GACA_FCM_CREDENTIALS_HOST_PATH to a Firebase service-
+      # account JSON key to test push locally. Unset -> /dev/null mounts
+      # instead and GACA_FCM_CREDENTIALS_PATH resolves empty (see the ":+"
+      # note in compose.production.yml), so push just no-ops.
+      - ${GACA_FCM_CREDENTIALS_HOST_PATH:-/dev/null}:/run/secrets/fcm-service-account.json:ro
     environment:
       - GACA_JWT_SECRET=${GACA_JWT_SECRET:-change-me-in-production}
       - GACA_JWT_ALGORITHM=${GACA_JWT_ALGORITHM:-HS256}
@@ -48,6 +53,7 @@ services:
       - GACA_DB_PATH=/var/lib/gaca/gaca.db
       - GACA_AGENT_ENGINE=${GACA_AGENT_ENGINE:-hermes}
       - GACA_AGENT_STREAM_IDLE_TIMEOUT=${GACA_AGENT_STREAM_IDLE_TIMEOUT:-30}
+      - GACA_FCM_CREDENTIALS_PATH=${GACA_FCM_CREDENTIALS_HOST_PATH:+/run/secrets/fcm-service-account.json}
     restart: unless-stopped
 
   frontend:

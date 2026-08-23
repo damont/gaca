@@ -31,8 +31,15 @@ services:
       # PUT /api/auth/agent-config after signing in, not app-wide config.
       GACA_AGENT_ENGINE: ${GACA_AGENT_ENGINE:-hermes}
       GACA_AGENT_STREAM_IDLE_TIMEOUT: ${GACA_AGENT_STREAM_IDLE_TIMEOUT:-30}
+      # Push is optional: GACA_FCM_CREDENTIALS_PATH only resolves to the
+      # mounted file when GACA_FCM_CREDENTIALS_HOST_PATH is actually set
+      # (":+" substitutes iff the var is set, unlike ":-"'s "iff unset").
+      # Leaving it unset means the volume mount below binds /dev/null instead
+      # of a real file — harmless, since the app never opens it either way.
+      GACA_FCM_CREDENTIALS_PATH: ${GACA_FCM_CREDENTIALS_HOST_PATH:+/run/secrets/fcm-service-account.json}
     volumes:
       - ${GACA_DATA_DIR:?GACA_DATA_DIR must be set to a directory you own — see README}:/var/lib/gaca
+      - ${GACA_FCM_CREDENTIALS_HOST_PATH:-/dev/null}:/run/secrets/fcm-service-account.json:ro
     expose:
       - "41700"
     restart: unless-stopped

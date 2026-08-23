@@ -70,6 +70,20 @@ CREATE INDEX IF NOT EXISTS ix_alerts_inbox
 -- check-then-insert — is what makes a duplicate impossible.
 CREATE UNIQUE INDEX IF NOT EXISTS ux_alerts_dedupe
     ON alerts (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL;
+CREATE TABLE IF NOT EXISTS push_tokens (
+    id         TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL,
+    token      TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    doc        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_push_tokens_user
+    ON push_tokens (user_id);
+-- One row per device token, full stop: a token that shows up again (same
+-- device re-registering, or moving to a different account) upserts in place
+-- rather than accumulating duplicates that would each get their own push.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_push_tokens_token
+    ON push_tokens (token);
 """
 
 # Columns added to a table AFTER it first shipped. `CREATE TABLE IF NOT EXISTS`

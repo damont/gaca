@@ -242,6 +242,62 @@ subject and an expiry, so there is no key label to read.
 
 ---
 
+## 4a. Push registration — FCM
+
+Added 2026-08-23, no longer out of scope (§5 below explains why polling was
+the whole story before this). Both routes require the normal `Authorization:
+Bearer` header, same as everything else.
+
+### `POST /api/push/register`
+
+```jsonc
+{ "token": "…", "platform": "android" }   // platform optional, defaults "android"
+```
+
+`204` on success. Call this on every app launch and whenever
+`FirebaseMessagingService.onNewToken()` fires — tokens rotate, so this is
+"keep me current," not a one-time call. Idempotent: registering the same
+token again is a no-op. If the same token shows up under a different account
+than before, it moves to the new one — that's the same device signing into a
+different account, not two people sharing a token.
+
+### `POST /api/push/unregister`
+
+```jsonc
+{ "token": "…" }
+```
+
+`204` on success (also `204` if the token wasn't found, or belonged to
+someone else — this never leaks whether a token exists). Call on sign-out so
+a shared or reset device doesn't keep alerting for the account that just
+signed out.
+
+### What triggers a push
+
+Fan-out lives server-side (`services/push.py`), not something the app drives:
+a new alert (`POST /api/alerts`, including a dedupe re-fire that resets
+`status` to `new`) and a delegation settling (§4's `/delegate`, either
+outcome — Hermes finishing or the run failing) each send one push per
+registered device. Best-effort throughout: a missing/invalid token is dropped
+server-side, and nothing about alert creation or delegation ever fails or
+slows down because a push couldn't be sent. The app's own polling (§5) is
+still the source of truth; push is a "tell me sooner" layered on top, not a
+replacement.
+
+Every message carries `data.alert_id` and `data.severity` (not just a title/
+body) so the app can deep-link straight to the alert and pick a notification
+channel. **Channel selection happens twice, and the two must agree**: the
+server sets `android.notification.channel_id` on the FCM message itself
+(matters when the app is backgrounded — the OS displays the notification
+directly without running any app code), and the app picks the same channel
+by hand in `onMessageReceived` (matters when the app is foregrounded — FCM
+never auto-displays in that case). Today that's a two-value map, `severity ==
+"urgent"` → the urgent channel, everything else → standard — literal channel
+id strings that have to match the Android app's `strings.xml` exactly, since
+nothing enforces that across the two repos.
+
+---
+
 ## 5. Reading the inbox — plain polling, no stream
 
 There is no `/api/alerts/stream`. An earlier draft of this doc specced one
@@ -250,8 +306,9 @@ There is no `/api/alerts/stream`. An earlier draft of this doc specced one
 
 1. **It wasn't push.** It only helped if the inbox screen happened to be open
    at the exact instant Hermes posted something — everything else (the app
-   backgrounded, the phone locked) still needed FCM, which is out of scope for
-   this build. That's a narrow window to build a whole channel for.
+   backgrounded, the phone locked) needed FCM regardless, which at the time
+   (2026-08-21) was out of scope. That's a narrow window to build a whole
+   channel for.
 2. **It duplicated a real stream with a fake one.** The interactive
    back-and-forth that actually benefits from being live — watching Hermes
    work once you've delegated — already has one: `GET
@@ -259,11 +316,14 @@ There is no `/api/alerts/stream`. An earlier draft of this doc specced one
    list itself doesn't need the same treatment; you look at it, act on it, and
    move on.
 
-**So: `GET /api/alerts` on app-foreground, plus pull-to-refresh.** Simpler
-client, no reconnect-with-backoff logic, no `bus.py` channel to maintain
-server-side. If real "notify me the instant this happens" is ever wanted, that
-is still an FCM project — `severity` is the seam for it — not a reason to bring
-this stream back.
+**So: `GET /api/alerts` on app-foreground, plus pull-to-refresh, is still the
+whole story for the alert *list*.** Simpler client, no reconnect-with-backoff
+logic, no `bus.py` channel to maintain server-side. **FCM itself did land**
+(§4a, 2026-08-23) — "notify me the instant this happens" is real now — but it
+answers a different question than this section does: it's a push *notification*
+telling you something changed, not a live *stream* of the inbox screen. The
+app still fetches the alert list the same way it always did; FCM just gives it
+a reason to do that sooner than the next foreground/pull-to-refresh.
 
 ---
 
