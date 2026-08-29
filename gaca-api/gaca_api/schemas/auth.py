@@ -50,17 +50,42 @@ class AgentTokenResponse(BaseModel):
     expires_in_days: int
 
 
-class AgentConfigUpdate(BaseModel):
-    """Body for PUT /auth/agent-config — where the user points GACA at their
-    own agent. Both required together; there's no partial update."""
+class AgentHostUpdate(BaseModel):
+    """Body for PUT /auth/agent-host — the scheme+host shared by every one of
+    this user's agents, e.g. "http://david-claw". No port: each agent below
+    supplies its own."""
 
-    agent_base_url: str = Field(..., min_length=1, max_length=500)
-    agent_api_key: str = Field(..., min_length=1, max_length=500)
+    host: str = Field(..., min_length=1, max_length=300)
 
 
-class AgentConfigOut(BaseModel):
-    """Never echoes the key back — same rule as a password. The base URL isn't
-    secret, so it's fine to read back and show in a settings screen."""
+class AgentCreate(BaseModel):
+    """Body for POST /auth/agents — register a new named agent."""
 
-    agent_base_url: str | None = None
-    agent_configured: bool
+    name: str = Field(..., min_length=1, max_length=50)
+    port: int = Field(..., ge=1, le=65535)
+    api_key: str = Field(..., min_length=1, max_length=500)
+
+
+class AgentUpdate(BaseModel):
+    """Body for PUT /auth/agents/{name}. Both fields required together, same
+    no-partial-update rule the single-agent form used to have."""
+
+    port: int = Field(..., ge=1, le=65535)
+    api_key: str = Field(..., min_length=1, max_length=500)
+
+
+class AgentOut(BaseModel):
+    """Never echoes the key back — same rule as a password."""
+
+    name: str
+    port: int
+    is_default: bool
+
+
+class AgentsOut(BaseModel):
+    """The full picture: shared host plus every configured agent. Every
+    mutating agent endpoint returns this, so the client can just replace its
+    state wholesale after any change."""
+
+    host: str | None
+    agents: list[AgentOut]

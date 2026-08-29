@@ -7,9 +7,12 @@ do no DB access — so the same two steps live here and the route reads the same
 """
 from __future__ import annotations
 
+from ..agent import runtime as agent_runtime
+from ..agent.base import AgentBackend
 from ..db import users as users_db
-from ..models.user import UserDoc
+from ..models.user import AgentProfile, UserDoc
 from ..utils.auth import hash_password
+from .exceptions import AgentNotConfigured, InvalidRequest, NotFound
 
 
 async def find_by_id(user_id: str) -> UserDoc | None:
@@ -75,14 +78,127 @@ async def create_user(name: str, email: str, password: str) -> UserDoc:
     return user
 
 
-async def set_agent_config(user: UserDoc, base_url: str, api_key: str) -> UserDoc:
-    """Point this user's session/delegate calls at their own agent.
+async def set_agent_host(user: UserDoc, host: str) -> UserDoc:
+    """Set the scheme+host shared by every one of this user's agents."""
+    updated = user.model_copy(update={"agent_host": host})
+    await users_db.replace(updated)
+    return updated
 
-    Both are required together — a base URL with no key or vice versa isn't a
-    usable configuration, so there's no partial-update path here.
+
+def find_agent(user: UserDoc, name: str) -> AgentProfile | None:
+    """Plain lookup by name — no error if it isn't there."""
+    return next((a for a in user.agents if a.name == name), None)
+
+
+async def add_agent(user: UserDoc, name: str, port: int, api_key: str) -> UserDoc:
+    """Register a new named agent.
+
+    The first agent a user adds becomes their default automatically — there's
+    no separate onboarding step for that, and a user with exactly one agent
+    obviously means for it to be used.
     """
+    if find_agent(user, name) is not None:
+        raise InvalidRequest(f"agent {name!r} already exists")
+
+    profile = AgentProfile(name=name, port=port, api_key=api_key)
     updated = user.model_copy(
-        update={"agent_base_url": base_url, "agent_api_key": api_key}
+        update={
+            "agents": [*user.agents, profile],
+            "default_agent": user.default_agent or name,
+        }
     )
     await users_db.replace(updated)
     return updated
+
+
+async def update_agent(user: UserDoc, name: str, port: int, api_key: str) -> UserDoc:
+    """Replace an existing agent's port and key. Both required together, same
+    no-partial-update rule the single-agent config used to have."""
+    if find_agent(user, name) is None:
+        raise NotFound("agent", name)
+
+    agents = [
+        AgentProfile(name=name, port=port, api_key=api_key) if a.name == name else a
+        for a in user.agents
+    ]
+    updated = user.model_copy(update={"agents": agents})
+    await users_db.replace(updated)
+    return updated
+
+
+async def remove_agent(user: UserDoc, name: str) -> UserDoc:
+    """Delete a named agent.
+
+    Deleting the current default while others remain is rejected rather than
+    silently picking a new default — that's a real decision the user should
+    make explicitly via set_default_agent. Deleting the last agent clears the
+    default too, since there's nothing left for it to name.
+    """
+    if find_agent(user, name) is None:
+        raise NotFound("agent", name)
+
+    remaining = [a for a in user.agents if a.name != name]
+    if name == user.default_agent and remaining:
+        raise InvalidRequest(
+            f"{name!r} is the default agent — set a different default before "
+            "deleting it"
+        )
+
+    updated = user.model_copy(
+        update={
+            "agents": remaining,
+            "default_agent": user.default_agent if remaining else None,
+        }
+    )
+    await users_db.replace(updated)
+    return updated
+
+
+async def set_default_agent(user: UserDoc, name: str) -> UserDoc:
+    if find_agent(user, name) is None:
+        raise NotFound("agent", name)
+    updated = user.model_copy(update={"default_agent": name})
+    await users_db.replace(updated)
+    return updated
+
+
+def resolve_agent_for_delegate(
+    user: UserDoc, requested: str | None, alert_agent: str | None
+) -> AgentProfile:
+    """Which agent handles a delegation, in priority order:
+
+    1. `requested` — an explicit, deliberate choice from the caller. Naming
+       one that doesn't exist is a real error, not something to paper over.
+    2. `alert_agent` — the alert's own `agent` field, soft-matched: it's
+       advisory metadata (same trust level as `source`), so a stale or
+       unmatched value just falls through to the next step rather than
+       erroring.
+    3. The account's `default_agent`.
+
+    Raises AgentNotConfigured if none of the above resolves to a real agent.
+    """
+    if requested is not None:
+        profile = find_agent(user, requested)
+        if profile is None:
+            raise InvalidRequest(f"agent {requested!r} is not configured")
+        return profile
+
+    if alert_agent is not None:
+        profile = find_agent(user, alert_agent)
+        if profile is not None:
+            return profile
+
+    if user.default_agent is not None:
+        profile = find_agent(user, user.default_agent)
+        if profile is not None:
+            return profile
+
+    raise AgentNotConfigured()
+
+
+def backend_for_agent(user: UserDoc, agent: AgentProfile) -> AgentBackend:
+    """The AgentBackend for one of this user's agents."""
+    if not user.agent_host:
+        raise AgentNotConfigured()
+    base_url = f"{user.agent_host}:{agent.port}"
+    return agent_runtime.backend_for(base_url, agent.api_key)

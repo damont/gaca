@@ -43,6 +43,13 @@ class AlertDoc(BaseModel):
     # to read. `user_id` above is the real ownership boundary.
     source: str = "unknown"
 
+    # Which Hermes agent profile posted this, e.g. "david-alerts" or
+    # "work-assistant" — distinct from `source` (which channel/mechanism
+    # posted it, e.g. "hermes-skill" vs "manual"). Same trust level as
+    # `source`: advisory, unauthenticated, just for telling agents apart and
+    # filtering the inbox by one of them.
+    agent: str | None = None
+
     # Free-form dotted string: "disk.low", "email.flagged", "cal.conflict".
     # Deliberately not an enum — the agent must be able to invent a new kind
     # without an API release, so clients have to render unknown kinds sensibly.
