@@ -28,6 +28,10 @@ class AlertCreate(BaseModel):
     # Advisory label for who posted this. Not authenticated — ownership comes
     # from the token, this is only for telling posters apart in the UI.
     source: str = "unknown"
+    # Which Hermes agent profile posted this. Optional and separate from
+    # `source` — a Hermes box can run multiple named agent profiles, and this
+    # is what the client filters the inbox by.
+    agent: str | None = Field(default=None, max_length=100)
 
 
 class AlertOut(BaseModel):
@@ -39,6 +43,7 @@ class AlertOut(BaseModel):
     user_id: str
     created_at: datetime
     source: str
+    agent: str | None = None
     kind: str
     severity: str
     title: str
@@ -69,15 +74,21 @@ class AlertResolve(BaseModel):
 
 
 class AlertDelegate(BaseModel):
-    """Body for POST /{id}/delegate — both fields optional.
+    """Body for POST /{id}/delegate — all fields optional.
 
     `suggested_action_index` is a convenience: it points at one of the alert's
     own `suggested_actions` rather than making the caller retype its prompt.
     `instruction` layers free text on top (or stands alone with no index).
+
+    `agent` names which of the user's configured agents should handle this —
+    an explicit choice, so an unknown name is a real error (422), unlike the
+    alert's own `agent` field which is soft-matched. Omit it to fall back to
+    the alert's own `agent`, then the account's default.
     """
 
     instruction: str | None = Field(default=None, max_length=2000)
     suggested_action_index: int | None = Field(default=None, ge=0)
+    agent: str | None = Field(default=None, max_length=100)
 
 
 class AlertSnooze(BaseModel):

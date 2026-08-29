@@ -1,4 +1,4 @@
-import type { AgentConfig, AgentTokenResponse, TokenResponse, User } from "../types";
+import type { AgentsConfig, AgentTokenResponse, TokenResponse, User } from "../types";
 
 /**
  * The one place the app talks to the API.
@@ -106,19 +106,41 @@ class ApiClient {
   }
 
   /**
-   * This user's own agent config — there is no shared, app-wide agent.
-   * `agent_api_key` never comes back in the response, same rule as a
-   * password; `agent_configured` is how the caller knows one's set.
+   * This user's own agents — there is no shared, app-wide agent. Every
+   * mutation below returns the full AgentsConfig, so the caller can just
+   * replace its state wholesale after any change.
    */
-  agentConfig() {
-    return this.get<AgentConfig>("/auth/agent-config");
+  agents() {
+    return this.get<AgentsConfig>("/auth/agents");
   }
 
-  setAgentConfig(agentBaseUrl: string, agentApiKey: string) {
-    return this.put<AgentConfig>("/auth/agent-config", {
-      agent_base_url: agentBaseUrl,
-      agent_api_key: agentApiKey,
+  setAgentHost(host: string) {
+    return this.put<AgentsConfig>("/auth/agent-host", { host });
+  }
+
+  addAgent(name: string, port: number, apiKey: string) {
+    return this.post<AgentsConfig>("/auth/agents", {
+      name,
+      port,
+      api_key: apiKey,
     });
+  }
+
+  updateAgent(name: string, port: number, apiKey: string) {
+    return this.put<AgentsConfig>(`/auth/agents/${encodeURIComponent(name)}`, {
+      port,
+      api_key: apiKey,
+    });
+  }
+
+  removeAgent(name: string) {
+    return this.delete<AgentsConfig>(`/auth/agents/${encodeURIComponent(name)}`);
+  }
+
+  setDefaultAgent(name: string) {
+    return this.post<AgentsConfig>(
+      `/auth/agents/${encodeURIComponent(name)}/default`,
+    );
   }
 }
 

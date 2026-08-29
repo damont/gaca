@@ -47,15 +47,16 @@ class InvalidRequest(Exception):
 
 
 class AgentNotConfigured(Exception):
-    """The caller hasn't submitted their own agent_base_url/agent_api_key yet.
+    """The caller has no usable agent to reach yet: no host, no agents, or no
+    default among the agents they do have.
 
     Mapped to HTTP 400. A normal, expected state for a new user — not a
-    startup or wiring bug — since every operator brings their own agent
+    startup or wiring bug — since every operator brings their own agent(s)
     rather than sharing one configured for the whole app.
     """
 
     def __init__(self) -> None:
         super().__init__(
-            "agent not configured — submit agent_base_url and agent_api_key "
-            "via PUT /api/auth/agent-config first"
+            "agent not configured — set a host via PUT /api/auth/agent-host "
+            "and add at least one agent via POST /api/auth/agents first"
         )

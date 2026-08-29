@@ -25,11 +25,17 @@ export interface AgentTokenResponse extends TokenResponse {
 }
 
 /**
- * GET/PUT /api/auth/agent-config — this user's own agent (never a shared,
- * app-wide one). `agent_api_key` never round-trips back from the API, same
- * rule as a password — `agent_configured` is how the UI knows one is set.
+ * GET /api/auth/agents — this user's own agents (never shared, app-wide
+ * ones), all sharing one host. `api_key` never round-trips back from the
+ * API, same rule as a password — these two shapes just don't have the field.
  */
-export interface AgentConfig {
-  agent_base_url: string | null;
-  agent_configured: boolean;
+export interface AgentProfile {
+  name: string;
+  port: number;
+  is_default: boolean;
+}
+
+export interface AgentsConfig {
+  host: string | null;
+  agents: AgentProfile[];
 }

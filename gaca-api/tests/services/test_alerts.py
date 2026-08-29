@@ -15,7 +15,7 @@ from gaca_api.config import settings
 from gaca_api.db import alerts as alerts_db
 from gaca_api.db import client
 from gaca_api.models.alert import AlertDoc
-from gaca_api.models.user import UserDoc
+from gaca_api.models.user import AgentProfile, UserDoc
 from gaca_api.schemas.alert import AlertCreate
 from gaca_api.schemas.event import RunCompleted, RunFailed
 from gaca_api.services import alerts as alert_service
@@ -309,6 +309,18 @@ def test_list_filters_by_severity(tmp_path):
     assert [a.title for a in _run(go)] == ["loud"]
 
 
+def test_list_filters_by_agent(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        await alert_service.create("u1", _payload(agent="david-alerts", title="mine"))
+        await alert_service.create("u1", _payload(agent="work-assistant", title="theirs"))
+        await alert_service.create("u1", _payload(title="unset"))
+        return await alert_service.list_for_user("u1", agents=["david-alerts"])
+
+    assert [a.title for a in _run(go)] == ["mine"]
+
+
 # ── triage transitions ──────────────────────────────────────────────
 
 def _with_status(status: str, **fields) -> AlertDoc:
@@ -456,7 +468,11 @@ def _user(user_id: str = "u1", *, agent_configured: bool = True, **overrides) ->
     handful of tests that care about the unconfigured case pass
     agent_configured=False explicitly."""
     creds = (
-        {"agent_base_url": "http://agent.example.com", "agent_api_key": "test-key"}
+        {
+            "agent_host": "http://agent.example.com",
+            "agents": [AgentProfile(name="default", port=8642, api_key="test-key")],
+            "default_agent": "default",
+        }
         if agent_configured
         else {}
     )
@@ -649,6 +665,114 @@ def test_delegate_rejects_an_out_of_range_suggested_action_index(tmp_path):
         with pytest.raises(InvalidRequest):
             await alert_service.delegate(
                 _user(agent_configured=False), alert.id, suggested_action_index=0
+            )
+
+    _run(go)
+
+
+# ── delegate: which agent handles it ─────────────────────────────────
+
+def _multi_agent_user(user_id: str = "u1", *, default_agent: str = "toolshed") -> UserDoc:
+    return UserDoc(
+        id=user_id,
+        email=f"{user_id}@example.com",
+        display_name=user_id,
+        agent_host="http://agent.example.com",
+        agents=[
+            AgentProfile(name="toolshed", port=8643, api_key="toolshed-key"),
+            AgentProfile(name="trading", port=8644, api_key="trading-key"),
+        ],
+        default_agent=default_agent,
+    )
+
+
+def _install_recording_backend(monkeypatch) -> list[tuple[str, str]]:
+    """Like _install_backend, but records every (base_url, api_key) it was
+    resolved with, so a test can prove WHICH agent actually got picked."""
+    calls: list[tuple[str, str]] = []
+    stub = _StubBackend(output="ok")
+
+    def fake_backend_for(base_url: str, api_key: str):
+        calls.append((base_url, api_key))
+        return stub
+
+    monkeypatch.setattr(agent_runtime, "backend_for", fake_backend_for)
+    return calls
+
+
+def test_delegate_uses_the_alerts_own_agent_by_default(tmp_path, monkeypatch):
+    settings.db_path = str(tmp_path / "t.db")
+    calls = _install_recording_backend(monkeypatch)
+
+    async def go():
+        alert, _ = await alert_service.create("u1", _payload(agent="trading"))
+        await alert_service.delegate(_multi_agent_user(), alert.id)
+        await _drain_background()
+
+    _run(go)
+    assert calls == [("http://agent.example.com:8644", "trading-key")]
+
+
+def test_delegate_explicit_agent_overrides_the_alerts_own_agent(tmp_path, monkeypatch):
+    settings.db_path = str(tmp_path / "t.db")
+    calls = _install_recording_backend(monkeypatch)
+
+    async def go():
+        alert, _ = await alert_service.create("u1", _payload(agent="trading"))
+        await alert_service.delegate(_multi_agent_user(), alert.id, agent="toolshed")
+        await _drain_background()
+
+    _run(go)
+    assert calls == [("http://agent.example.com:8643", "toolshed-key")]
+
+
+def test_delegate_falls_back_to_the_default_when_the_alerts_agent_is_unset(
+    tmp_path, monkeypatch
+):
+    settings.db_path = str(tmp_path / "t.db")
+    calls = _install_recording_backend(monkeypatch)
+
+    async def go():
+        alert, _ = await alert_service.create("u1", _payload())  # no agent
+        await alert_service.delegate(
+            _multi_agent_user(default_agent="trading"), alert.id
+        )
+        await _drain_background()
+
+    _run(go)
+    assert calls == [("http://agent.example.com:8644", "trading-key")]
+
+
+def test_delegate_falls_back_to_the_default_when_the_alerts_agent_is_unmatched(
+    tmp_path, monkeypatch
+):
+    """The alert's `agent` is advisory metadata, not a guarantee — a name
+    that doesn't match any configured agent (stale config, typo) falls
+    through to the default rather than erroring."""
+    settings.db_path = str(tmp_path / "t.db")
+    calls = _install_recording_backend(monkeypatch)
+
+    async def go():
+        alert, _ = await alert_service.create("u1", _payload(agent="some-other-profile"))
+        await alert_service.delegate(
+            _multi_agent_user(default_agent="trading"), alert.id
+        )
+        await _drain_background()
+
+    _run(go)
+    assert calls == [("http://agent.example.com:8644", "trading-key")]
+
+
+def test_delegate_rejects_an_unknown_explicit_agent(tmp_path):
+    """Unlike the alert's own `agent`, an explicit override is a deliberate
+    choice — naming one that doesn't exist is a real error, not a soft miss."""
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        alert, _ = await alert_service.create("u1", _payload())
+        with pytest.raises(InvalidRequest):
+            await alert_service.delegate(
+                _multi_agent_user(), alert.id, agent="nonexistent"
             )
 
     _run(go)

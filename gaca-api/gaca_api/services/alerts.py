@@ -3,13 +3,13 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from ..agent import runtime as agent_runtime
 from ..db import alerts as alerts_db
 from ..models.alert import AlertDoc
 from ..models.base import utcnow
 from ..models.user import UserDoc
 from ..schemas.alert import AlertCreate
 from ..schemas.event import GacaEvent, RunCompleted, RunFailed
+from . import auth as auth_service
 from . import push as push_service
 from . import runs as run_service
 from . import sessions as session_service
@@ -198,13 +198,17 @@ async def delegate(
     *,
     instruction: str | None = None,
     suggested_action_index: int | None = None,
+    agent: str | None = None,
 ) -> AlertDoc:
-    """Hand an alert to the caller's own agent: open a session, start a run,
-    mark it delegated.
+    """Hand an alert to one of the caller's own agents: open a session, start
+    a run, mark it delegated.
 
-    Takes the full UserDoc, not just an id — delegating needs the user's own
-    agent_base_url/agent_api_key (agent_runtime.backend_for raises
-    AgentNotConfigured if either is missing, same as the chat routes).
+    Which agent handles it is resolved by auth_service.resolve_agent_for_delegate:
+    `agent` (an explicit, named choice) first, then the alert's own `agent`
+    field (who raised it), then the account's default. Takes the full
+    UserDoc, not just an id — resolving an agent needs the user's configured
+    host/agents (raises AgentNotConfigured if none resolve, same as the chat
+    routes).
 
     Same guard as manual triage — only `new` or `snoozed` can be delegated. The
     run settles the alert asynchronously via `_on_run_settled`, wired in as
@@ -218,7 +222,8 @@ async def delegate(
     # agent at all — a bad suggested_action_index is a 422 regardless of
     # whether this user has even configured an agent yet.
     prompt = _delegate_prompt(alert, instruction, suggested_action_index)
-    backend = agent_runtime.backend_for(user.agent_base_url, user.agent_api_key)
+    agent_profile = auth_service.resolve_agent_for_delegate(user, agent, alert.agent)
+    backend = auth_service.backend_for_agent(user, agent_profile)
     session = await session_service.create(user.id, alert.title)
 
     updated = alert.model_copy(
@@ -292,6 +297,7 @@ async def list_for_user(
     *,
     statuses: list[str] | None = None,
     severities: list[str] | None = None,
+    agents: list[str] | None = None,
     limit: int = 50,
     now: datetime | None = None,
 ) -> list[AlertDoc]:
@@ -310,5 +316,8 @@ async def list_for_user(
     if severities:
         wanted = set(severities)
         alerts = [a for a in alerts if a.severity in wanted]
+    if agents:
+        wanted = set(agents)
+        alerts = [a for a in alerts if a.agent in wanted]
 
     return alerts[:limit]

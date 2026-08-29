@@ -9,7 +9,19 @@ from gaca_api.db import client
 from gaca_api.db import users as users_db
 from gaca_api.models.user import UserDoc
 from gaca_api.services import auth as auth_service
+from gaca_api.services.exceptions import AgentNotConfigured, InvalidRequest, NotFound
 from gaca_api.utils.auth import hash_password, verify_password
+
+
+def _run(factory):
+    async def main():
+        await client.connect()
+        try:
+            return await factory()
+        finally:
+            await client.close()
+
+    return asyncio.run(main())
 
 
 def test_create_user_persists_and_is_findable(tmp_path):
@@ -258,52 +270,220 @@ def test_duplicate_email_rejected_by_the_database(tmp_path):
 
 # ── per-user agent config ───────────────────────────────────────────
 
-def test_set_agent_config_persists_both_fields(tmp_path):
+async def _new_user() -> UserDoc:
+    return await auth_service.create_user(
+        name="David", email="david@example.com", password="hunter2"
+    )
+
+
+def test_set_agent_host_persists(tmp_path):
     settings.db_path = str(tmp_path / "t.db")
 
-    async def main():
-        await client.connect()
-        try:
-            user = await auth_service.create_user(
-                name="David", email="david@example.com", password="hunter2"
-            )
-            assert user.agent_base_url is None and user.agent_api_key is None
+    async def go():
+        user = await _new_user()
+        assert user.agent_host is None
+        updated = await auth_service.set_agent_host(user, "http://david-claw.lan")
+        reloaded = await auth_service.find_by_id(user.id)
+        return updated, reloaded
 
-            updated = await auth_service.set_agent_config(
-                user, "http://david-claw.lan:8642", "the-real-key"
-            )
-            reloaded = await auth_service.find_by_id(user.id)
-            return updated, reloaded
-        finally:
-            await client.close()
-
-    updated, reloaded = asyncio.run(main())
-    assert updated.agent_base_url == "http://david-claw.lan:8642"
-    assert updated.agent_api_key == "the-real-key"
+    updated, reloaded = _run(go)
+    assert updated.agent_host == "http://david-claw.lan"
     # persisted, not just returned
-    assert reloaded.agent_base_url == "http://david-claw.lan:8642"
-    assert reloaded.agent_api_key == "the-real-key"
+    assert reloaded.agent_host == "http://david-claw.lan"
 
 
-def test_set_agent_config_overwrites_a_previous_value(tmp_path):
-    """Re-submitting replaces the old credentials outright — no merge, same
-    as every other replace() in this app."""
+def test_add_agent_persists_and_becomes_the_default(tmp_path):
+    """The first agent a user adds becomes their default automatically — a
+    user with exactly one agent obviously means for it to be used."""
     settings.db_path = str(tmp_path / "t.db")
 
-    async def main():
-        await client.connect()
-        try:
-            user = await auth_service.create_user(
-                name="David", email="david@example.com", password="hunter2"
-            )
-            await auth_service.set_agent_config(user, "http://old:8642", "old-key")
-            latest = await auth_service.find_by_id(user.id)
-            return await auth_service.set_agent_config(
-                latest, "http://new.lan:8642", "new-key"
-            )
-        finally:
-            await client.close()
+    async def go():
+        user = await _new_user()
+        updated = await auth_service.add_agent(user, "toolshed", 8643, "toolshed-key")
+        reloaded = await auth_service.find_by_id(user.id)
+        return updated, reloaded
 
-    result = asyncio.run(main())
-    assert result.agent_base_url == "http://new.lan:8642"
-    assert result.agent_api_key == "new-key"
+    updated, reloaded = _run(go)
+    for user in (updated, reloaded):
+        assert [a.name for a in user.agents] == ["toolshed"]
+        assert user.agents[0].port == 8643
+        assert user.agents[0].api_key == "toolshed-key"
+        assert user.default_agent == "toolshed"
+
+
+def test_add_a_second_agent_does_not_change_the_default(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        user = await _new_user()
+        user = await auth_service.add_agent(user, "toolshed", 8643, "toolshed-key")
+        return await auth_service.add_agent(user, "trading", 8644, "trading-key")
+
+    updated = _run(go)
+    assert [a.name for a in updated.agents] == ["toolshed", "trading"]
+    assert updated.default_agent == "toolshed"
+
+
+def test_add_agent_rejects_a_duplicate_name(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        user = await _new_user()
+        user = await auth_service.add_agent(user, "toolshed", 8643, "key-1")
+        with pytest.raises(InvalidRequest):
+            await auth_service.add_agent(user, "toolshed", 8644, "key-2")
+
+    _run(go)
+
+
+def test_update_agent_replaces_port_and_key(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        user = await _new_user()
+        user = await auth_service.add_agent(user, "toolshed", 8643, "old-key")
+        updated = await auth_service.update_agent(user, "toolshed", 8645, "new-key")
+        reloaded = await auth_service.find_by_id(user.id)
+        return updated, reloaded
+
+    updated, reloaded = _run(go)
+    for user in (updated, reloaded):
+        assert user.agents[0].port == 8645
+        assert user.agents[0].api_key == "new-key"
+
+
+def test_update_agent_raises_not_found_for_an_unknown_name(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        user = await _new_user()
+        with pytest.raises(NotFound):
+            await auth_service.update_agent(user, "nonexistent", 8643, "key")
+
+    _run(go)
+
+
+def test_remove_agent_deletes_it(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        user = await _new_user()
+        user = await auth_service.add_agent(user, "toolshed", 8643, "key-1")
+        user = await auth_service.add_agent(user, "trading", 8644, "key-2")
+        return await auth_service.remove_agent(user, "trading")
+
+    updated = _run(go)
+    assert [a.name for a in updated.agents] == ["toolshed"]
+
+
+def test_remove_agent_rejects_deleting_the_default_while_others_remain(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        user = await _new_user()
+        user = await auth_service.add_agent(user, "toolshed", 8643, "key-1")
+        user = await auth_service.add_agent(user, "trading", 8644, "key-2")
+        with pytest.raises(InvalidRequest):
+            await auth_service.remove_agent(user, "toolshed")  # still the default
+
+    _run(go)
+
+
+def test_remove_agent_clears_the_default_when_it_was_the_last_one(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        user = await _new_user()
+        user = await auth_service.add_agent(user, "toolshed", 8643, "key-1")
+        return await auth_service.remove_agent(user, "toolshed")
+
+    updated = _run(go)
+    assert updated.agents == []
+    assert updated.default_agent is None
+
+
+def test_set_default_agent_changes_it(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        user = await _new_user()
+        user = await auth_service.add_agent(user, "toolshed", 8643, "key-1")
+        user = await auth_service.add_agent(user, "trading", 8644, "key-2")
+        return await auth_service.set_default_agent(user, "trading")
+
+    updated = _run(go)
+    assert updated.default_agent == "trading"
+
+
+def test_set_default_agent_raises_not_found_for_an_unknown_name(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        user = await _new_user()
+        with pytest.raises(NotFound):
+            await auth_service.set_default_agent(user, "nonexistent")
+
+    _run(go)
+
+
+def test_resolve_agent_for_delegate_prefers_the_explicit_request(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        user = await _new_user()
+        user = await auth_service.add_agent(user, "toolshed", 8643, "key-1")
+        user = await auth_service.add_agent(user, "trading", 8644, "key-2")
+        return auth_service.resolve_agent_for_delegate(user, "trading", "toolshed")
+
+    resolved = _run(go)
+    assert resolved.name == "trading"
+
+
+def test_resolve_agent_for_delegate_rejects_an_unknown_explicit_request(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        user = await _new_user()
+        user = await auth_service.add_agent(user, "toolshed", 8643, "key-1")
+        with pytest.raises(InvalidRequest):
+            auth_service.resolve_agent_for_delegate(user, "nonexistent", None)
+
+    _run(go)
+
+
+def test_resolve_agent_for_delegate_falls_back_to_the_alerts_agent(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        user = await _new_user()
+        user = await auth_service.add_agent(user, "toolshed", 8643, "key-1")
+        user = await auth_service.add_agent(user, "trading", 8644, "key-2")
+        return auth_service.resolve_agent_for_delegate(user, None, "trading")
+
+    resolved = _run(go)
+    assert resolved.name == "trading"
+
+
+def test_resolve_agent_for_delegate_falls_back_to_the_default(tmp_path):
+    """An alert-agent that doesn't match any configured name is a soft miss,
+    not an error — it falls through to the account's default."""
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        user = await _new_user()
+        user = await auth_service.add_agent(user, "toolshed", 8643, "key-1")
+        return auth_service.resolve_agent_for_delegate(user, None, "some-other-profile")
+
+    resolved = _run(go)
+    assert resolved.name == "toolshed"
+
+
+def test_resolve_agent_for_delegate_raises_when_nothing_resolves(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        user = await _new_user()
+        with pytest.raises(AgentNotConfigured):
+            auth_service.resolve_agent_for_delegate(user, None, None)
+
+    _run(go)

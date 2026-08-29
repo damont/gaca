@@ -58,6 +58,9 @@ Tokens do not auto-refresh. On `401`, send the user back to the login screen.
                                     // the request body, not authenticated. Do not
                                     // use it for trust decisions; `user_id` is the
                                     // real ownership boundary
+  "agent": "david-alerts",          // nullable. Which Hermes agent profile posted
+                                    // this — distinct from `source` (the channel).
+                                    // Same trust level: advisory, unauthenticated
   "kind": "disk.low",               // free-form dotted string — do NOT switch on
                                     // an exhaustive list; new kinds appear without
                                     // an API release
@@ -144,6 +147,7 @@ it on another device. Refetch and re-render rather than retrying.
 |---|---|---|---|
 | `status` | string | *(all)* | filters on **effective** status; repeatable |
 | `severity` | string | *(all)* | repeatable |
+| `agent` | string | *(all)* | repeatable |
 | `since` | ISO-8601 | — | `created_at >` |
 | `limit` | int | `50` | max 200 |
 
@@ -154,9 +158,9 @@ it on another device. Refetch and re-render rather than retrying.
 }
 ```
 
-`status` and `severity` are repeatable — pass them more than once to widen the
-filter. **Cursor pagination is not implemented yet**; `limit` alone is the whole
-story until an inbox gets big enough to need paging.
+`status`, `severity`, and `agent` are repeatable — pass them more than once to
+widen the filter. **Cursor pagination is not implemented yet**; `limit` alone
+is the whole story until an inbox gets big enough to need paging.
 
 Newest first. Always scoped to the authenticated user — there is no cross-user read.
 
@@ -169,10 +173,11 @@ One Alert, or `404`.
 Hand it to Hermes.
 
 ```jsonc
-// request — both fields optional
+// request — all fields optional
 {
   "instruction": "Free space but don't touch anything under /var/lib/gaca",
-  "suggested_action_index": 0    // convenience: use that action's prompt
+  "suggested_action_index": 0,   // convenience: use that action's prompt
+  "agent": "toolshed"             // which configured agent handles it — see §6
 }
 ```
 
@@ -332,7 +337,7 @@ a reason to do that sooner than the next foreground/pull-to-refresh.
 | Code | Meaning | What the app should do |
 |---|---|---|
 | `200` / `201` | Success | — |
-| `400` | On `/{id}/delegate`: this user hasn't submitted `agent_base_url`/`agent_api_key` yet | Tell them to set it up in the web app's profile page. Don't retry |
+| `400` | On `/{id}/delegate`: this user has no usable agent — no host, no agents, or no default | Tell them to set it up in the web app's profile page. Don't retry |
 | `422` | Body doesn't match the schema — including `snooze until` in the past | Fix and don't retry |
 | `401` | Token missing, malformed, or expired | Send to login. **Do not retry** |
 | `403` | Authenticated but forbidden | Show the body. Don't retry |
@@ -345,10 +350,22 @@ Hermes settled a delegation, or you triaged it on another device. Refetch and
 re-render rather than showing an error.
 
 **There is no shared, app-wide agent** — every account brings its own via the
-web app's profile page (`PUT /api/auth/agent-config`, base URL + key). A
+web app's profile page: one shared host (`PUT /api/auth/agent-host`) plus any
+number of named agents under it (`POST /api/auth/agents`, each with its own
+port and key; `GET /api/auth/agents` lists them, never the keys). A
 brand-new account can create and triage alerts (act/dismiss/snooze) with
-nothing configured; `/delegate` is the one endpoint that needs it, and 400s
-clearly if it's missing rather than failing some other way.
+nothing configured; `/delegate` is the one endpoint that needs an agent, and
+400s clearly if none resolves rather than failing some other way.
+
+**Which agent handles a delegation** — `POST /{id}/delegate` takes an optional
+`agent` field naming one of the account's configured agents. Resolution order:
+1. `agent` in the request body, if given — an explicit, deliberate choice, so
+   naming one that isn't configured is a `422`, not a silent fallback.
+2. Otherwise the alert's own `agent` field (who raised it), if it matches a
+   configured agent name.
+3. Otherwise the account's default agent.
+
+If none of the three resolves to a real agent, it's the `400` above.
 
 ---
 

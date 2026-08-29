@@ -13,6 +13,20 @@ from pydantic import BaseModel, Field
 from .base import new_id, utcnow
 
 
+class AgentProfile(BaseModel):
+    """One named Hermes profile this user can direct sessions/delegations at.
+
+    Each profile runs on its own port on the user's shared `agent_host`, with
+    its own `api_key` — separate ports because the user runs several Hermes
+    profiles (e.g. "toolshed", "trading") on one box, each addressed
+    independently rather than through Hermes' path-prefix multiplexing.
+    """
+
+    name: str
+    port: int
+    api_key: str
+
+
 class UserDoc(BaseModel):
     id: str = Field(default_factory=new_id)
     # Stored lowercase — the service normalizes before both writes and lookups,
@@ -39,12 +53,20 @@ class UserDoc(BaseModel):
     is_active: bool = True
     created_at: datetime = Field(default_factory=utcnow)
 
-    # Each operator brings their own Hermes (or future engine) instance —
-    # there is no shared, app-wide agent target. Both unset until the user
-    # submits them via PUT /api/auth/agent-config; every delegate/chat call
-    # until then raises AgentNotConfigured rather than reaching someone else's
-    # box. Stored plaintext in `doc` like the rest of this model's non-password
-    # fields — no weaker than the single shared GACA_AGENT_API_KEY this
-    # replaces, which also lived in plaintext in an env file.
-    agent_base_url: str | None = None
-    agent_api_key: str | None = None
+    # Each operator brings their own Hermes (or future engine) instance(s) —
+    # there is no shared, app-wide agent target. `agent_host` is the scheme
+    # and host shared by every agent below (e.g. "http://david-claw", no
+    # port); each AgentProfile supplies its own port and key. Unset/empty
+    # until the user configures at least one agent via POST
+    # /api/auth/agents; every delegate/chat call until then raises
+    # AgentNotConfigured. Stored plaintext in `doc` like the rest of this
+    # model's non-password fields — no weaker than the single shared
+    # GACA_AGENT_API_KEY this replaces, which also lived in plaintext in an
+    # env file.
+    agent_host: str | None = None
+    agents: list[AgentProfile] = Field(default_factory=list)
+    # Which agent a delegate/session uses when nothing more specific applies
+    # (no explicit override, and the alert's own `agent` doesn't match a
+    # configured name). Cleared automatically if the agent it names is
+    # removed.
+    default_agent: str | None = None
