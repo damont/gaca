@@ -38,6 +38,7 @@
   <span class="pill">Pi stack: nginx · docker · cloudflared · gh</span>
   <span class="pill">Host: base Ubuntu Desktop</span>
   <span class="pill">Posture: minimal-on-purpose</span>
+  <span class="pill">GACA: <code>david-alerts</code> skill, live</span>
 </div>
 
 <div class="callout pick"><span class="label">Why the minimal path was chosen on purpose</span>
@@ -191,7 +192,7 @@ Auth was a browser flow. Tavily was a key in <code>~/.hermes/.env</code>. This o
 <div class="callout pick"><span class="label">A deviation from the plan, and it's fine</span>
 The <a href="index.html">Overview</a>'s build-vs-buy table calls for the <strong>official GitHub MCP server</strong> under "tools / integrations." Reality took the <strong><code>gh</code> CLI through the terminal tool</strong> instead. That is a reasonable trade — the CLI is one install with no server to run, no MCP wiring, and it covers the entire GitHub surface rather than a curated tool subset. The costs are worth stating: <strong>no per-tool scoping</strong> (an MCP server can expose read-only operations; a shell with <code>gh</code> exposes everything the token allows), and <strong>coarser audit</strong> — the <a href="hermes-plan.html">Hermes Plan</a>'s audit trail sees a <code>terminal</code> call, not <code>github.create_issue</code>. If the audit timeline matters as much as that page argues, the MCP server becomes the better answer later. For getting access working today, the CLI won on effort and it was the right call.</div>
 
-<h2>Step 5 — Memory: the first adopted subsystem switched on</h2>
+<h2 id="step5">Step 5 — Memory: the first adopted subsystem switched on</h2>
 <p>Everything up to here was <em>access</em> — a model, the web, the repos. Memory is the first step that turns on a <strong>subsystem the GACA plan has a named port for</strong>, so it is the first one where the setup choice and the architecture touch. The decision for now: <strong>use Hermes' out-of-the-box memory management</strong> rather than building or substituting anything.</p>
 <pre><code>memory:
   memory_enabled: true          # long-term memory across sessions
@@ -308,7 +309,7 @@ TELEGRAM_HOME_CHANNEL=…   # where unprompted / scheduled output lands</code></
 <strong>The allowlist is the security model.</strong> A Telegram bot is reachable by <em>anyone who finds it</em> — unlike the gateway, which binds loopback and sits behind a bearer token. <code>TELEGRAM_ALLOWED_USERS</code> is the only thing standing between a stranger and an agent that has a shell, a GitHub token, and SSH into the Pi. Earlier boot logs warned about exactly this (<em>"platforms default to pairing/allowlist policies and will deny unknown senders"</em>) — it matters far more now than when <code>api_server</code> was the only platform.<br><br>
 <strong>It validates the multi-platform shape ahead of time.</strong> <code>gaca-api</code> will be one front end among several rather than the only one — and <code>TELEGRAM_HOME_CHANNEL</code> is a preview of a problem GACA inherits: when a scheduled job or an unprompted message fires, <em>which</em> client should it reach? Hermes answers with a configured home channel. GACA will need its own answer.</div>
 
-<h2>Step 9 — Google Workspace: the first capability delivered by a skill</h2>
+<h2 id="step9">Step 9 — Google Workspace: the first capability delivered by a skill</h2>
 <p>Everything so far was configured through Hermes — a flag, a key, a backend name. Google is different: <strong>the capability arrives as a <em>skill</em></strong> (<code>skills/productivity/google-workspace/</code>, a <code>SKILL.md</code> plus helper scripts), and the decision was to <strong>lean on it rather than wire the APIs by hand</strong> — the skill authors clearly knew the terrain better than a first-time integrator would.</p>
 <p>What that took on the Google side, all of it outside Hermes entirely:</p>
 <ol class="lede-list">
@@ -384,7 +385,7 @@ Every earlier step configured <em>Hermes</em> to reach outward — a key in <cod
 <strong>Token lifetime is a real decision.</strong> A long-lived bearer token stored where an unsupervised agent can read it is a standing grant — convenient, and exactly why per-app scoping matters. Prefer the shortest lifetime that avoids constant re-minting, and make sure revocation genuinely works before relying on it.<br><br>
 <strong>The skills carry security instructions, so they must be followed.</strong> These <code>SKILL.md</code> files tell the agent never to print, log, or commit the token, and never to expose it in generated output. That is the right guidance — but it is <em>guidance to a language model</em>, not an enforced boundary. Treat it as defence in depth, and keep the token out of any output path that ends up somewhere public.</div>
 
-<h2>Step 11 — Making it start every time: user services for the dashboard</h2>
+<h2 id="step11">Step 11 — Making it start every time: user services for the dashboard</h2>
 <p>Hermes has a <strong>browser dashboard</strong> — a local web UI for driving the agent, watching runs, and generally living in the thing day to day. Starting it by hand after every reboot gets old immediately, so it needed to come up on its own. That turned into a small lesson about <em>user-level</em> background jobs on Linux.</p>
 
 <p>Three things now start automatically, all as <strong>systemd user units</strong> (<code>systemctl --user</code>) rather than root services:</p>
@@ -452,6 +453,39 @@ Recording <code>last_used_commit</code> turns updating into a <strong>bounded, i
 <div class="callout"><span class="label b">Where this lands for GACA</span>
 This is the clearest instance yet of the <a href="hermes-plan.html">Hermes Plan</a>'s "skills come free with the engine" claim paying off — and the format is <strong>portable</strong>. A <code>SKILL.md</code> plus reference documents is not Hermes-specific; the open skill format is exactly what the <a href="index.html">Overview</a> proposed adopting. <strong>When <code>gaca-agent</code> eventually replaces Hermes behind the port, this skill library moves across unchanged.</strong> It is capability accumulating in a form that survives the engine swap — which is precisely what the adapter architecture was designed to protect.</div>
 
+<h2 id="step13">Step 13 — GACA: the agent-ready pattern, exercised for real</h2>
+<p><a href="#step10">Step 10</a> named the agent-ready-application pattern from watching the Pi apps. GACA itself now <em>is</em> one, and slice 9 of its own <a href="alerts/build-plan.md">build plan</a> — "Hermes actually posts an alert you can see" — is done. This section is that pattern exercised for real, not sketched: the skill exists, it authenticates against the live deployment, and a full delegate round trip has been proven twice.</p>
+
+<div class="callout pick"><span class="label">Two deliberate deviations from the plan's own spec</span>
+<a href="alerts/build-plan.md">build-plan.md</a>'s slice 9 called for a new top-level category (<code>~/.hermes/skills/gaca/gaca-alerts/SKILL.md</code>) specifically so it "can't collide and survives an update," since bundled categories are read-only Nix store paths. What actually landed is <strong><code>~/.hermes/skills/productivity/david-alerts/</code></strong> — existing, already-writable category, different name. Neither deviation seems to matter in practice: <code>productivity</code> already holds the hand-authored Google Workspace skill from <a href="#step9">Step 9</a>, so it's exactly as durable as a dedicated category would have been on this box. Worth knowing about if a future skill audit goes looking for <code>gaca-alerts</code> and doesn't find it.</div>
+
+<h3>What's actually there</h3>
+<div class="grid cols-2">
+  <div class="card"><h4><code>SKILL.md</code></h4>
+    <p>Considerably more detailed than the phase-10 <code>agentSkill()</code> template it's built on top of — the base template covers auth, discovery, and the failure-mode table; this adds GACA-specific judgment the template can't express: when a condition rises to <code>urgent</code> vs <code>warn</code>, how to compose a stable <code>dedupe_key</code> (<code>permission:&lt;task&gt;:&lt;operation&gt;</code>, <code>service:&lt;host&gt;:&lt;service&gt;:unhealthy</code>, …), and a full permission-request protocol: post a <code>warn</code> alert stating the exact proposed action, report in-chat that it was sent, then <strong>stop before the gated action</strong> — an alert response is explicitly <em>not</em> approval, and resuming requires a separately authenticated operator response.</p>
+    <p class="muted">Declares <code>required_environment_variables: [GACA_API_TOKEN]</code> and <code>requires_toolsets: [terminal]</code> in its frontmatter — the newest frontmatter shape seen on this box, a step past the flatter <code>tags</code>/<code>trigger</code> style <a href="alerts/build-plan.md">build-plan.md</a> anticipated when it was written against the research-skill template.</p>
+  </div>
+  <div class="card"><h4><code>scripts/gaca.py</code></h4>
+    <p>A companion helper, stdlib-only (no <code>requests</code>) — 110 lines. Independently arrives at nearly every hardening rule the <a href="#step10">Step 10</a> pattern and the phase-10 template call for: rejects a non-HTTPS <code>GACA_BASE_URL</code> or one carrying embedded credentials, disables redirect-following entirely (a redirect is exactly how a bearer token leaks to a host that shouldn't see it), rejects a token containing a newline, and reads the alert payload from <strong>stdin</strong>, never a CLI argument — so it never lands in shell history or a process listing.</p>
+    <p class="muted">Four subcommands: <code>schema</code>, <code>me</code>, <code>post</code>, <code>get</code>, <code>list</code> — thin wrappers the skill's prose tells the model when and how to call.</p>
+  </div>
+</div>
+
+<div class="callout"><span class="label b">Verified live, not just read off disk</span>
+Ran the helper directly on <code>david-claw</code> with the box's own <code>~/.hermes/.env</code> sourced:
+<pre><code>$ python3 ~/.hermes/skills/productivity/david-alerts/scripts/gaca.py me
+{
+  "http_status": 200,
+  "response": {"id": "28e72767…", "name": "David Monts", "email": "david.monts@gmail.com"}
+}</code></pre>
+Authenticates cleanly against the live <code>goodandcheapagent.com</code> deployment. <code>gaca.py list</code> shows six real alerts already posted by Hermes, not just a connectivity check — including two independent, successful <strong>delegate round trips</strong>: an alert posted with a <code>suggested_actions</code> prompt, delegated back to Hermes (<code>status: acted</code>, a real <code>session_id</code>), and a second alert appearing moments later confirming the delegated session ran and reported back. Proven twice, a day apart. Alerts and delegation — <a href="alerts/build-plan.md">build-plan.md</a> slices 9 and 10 — both confirmed working against the real engine, not a stub.</div>
+
+<div class="callout warn"><span class="label">The credential landed exactly where the pattern says it should</span>
+<code>GACA_API_TOKEN</code> (the operator-minted bearer, 160 characters — consistent with the JWTs this app mints) sits in <code>~/.hermes/.env</code>, alongside <code>TAVILY_API_KEY</code> and <code>TELEGRAM_BOT_TOKEN</code> — the fourth thing confirming "secrets go to <code>.env</code>." <code>GACA_BASE_URL</code> is not set — the skill and script both fall back to the hardcoded <code>https://goodandcheapagent.com</code> default, which is fine while the URL is stable but is the same "operator may have moved it" seam the phase-10 template already flags in its own prose.</div>
+
+<div class="callout"><span class="label b">A loose end from <a href="#step5">Step 5</a>/<a href="#step9">Step 9</a>, now resolved by observation</span>
+Both earlier steps flagged <code>skills</code> as still sitting in <code>agent.disabled_toolsets</code>, and the box's <strong>"Verified on the box"</strong> section below re-confirms it's <em>still</em> there today, alongside <code>cronjob</code> and <code>delegation</code>. And yet <code>david-alerts</code> plainly loaded and worked — proof, not just a working theory, that this toolset flag governs a different capability (most likely a dynamic runtime skill-discovery tool) and has no bearing on whether a hand-authored <code>SKILL.md</code> with a matching <code>trigger</code>/<code>description</code> gets read and followed. Worth a real answer before <code>gaca-agent</code>'s adapter has to reason about it, but empirically it is not blocking anything here.</div>
+
 <h2>Where each thing landed on disk</h2>
 <p>The reason to do this by hand is to end up with this table — the map the adapter needs:</p>
 <div class="table-scroll">
@@ -469,7 +503,8 @@ This is the clearest instance yet of the <a href="hermes-plan.html">Hermes Plan<
     <tr><td>Host stack on <code>piservices</code></td><td><strong>another machine entirely</strong> — packages, group membership, systemd units</td><td><span class="badge no">external</span></td><td>Unreachable from any config write. Needs a host-prerequisites manifest or a first-run probe that reports what is missing.</td></tr>
     <tr><td>Telegram front end</td><td><code>~/.hermes/.env</code> → <code>TELEGRAM_BOT_TOKEN</code>, <code>_ALLOWED_USERS</code>, <code>_HOME_CHANNEL</code></td><td><span class="badge pick">secret</span></td><td>Adapter-writable. The allowlist is the whole security model — treat it as required, not optional.</td></tr>
     <tr><td>Google Workspace (via skill)</td><td><code>~/.hermes/google_client_secret.json</code> + <code>google_token.json</code></td><td><span class="badge no">interactive</span></td><td>Consent flow, then files at paths <em>the skill</em> chose. Invisible to <code>/capabilities</code>; refresh + 7-day testing expiry to handle.</td></tr>
-    <tr><td>App skill + agent token</td><td><strong>supplied by the app</strong> — skill archive into the skills dir; token minted from the app UI</td><td><span class="badge maybe">app-owned</span></td><td>Nothing for the adapter to write. GACA's job is to <em>be</em> such an app, and to give the agent somewhere to put what it receives.</td></tr>
+    <tr><td>App skill + agent token</td><td><strong>supplied by the app</strong> — skill archive into the skills dir; token minted from the app UI</td><td><span class="badge maybe">app-owned</span></td><td>Nothing for the adapter to write. GACA's job is to <em>be</em> such an app, and to give the agent somewhere to put what it receives. <span class="badge pick">CONFIRMED</span> see the next row — GACA now is one.</td></tr>
+    <tr><td>The <code>david-alerts</code> skill (GACA itself, <a href="#step13">Step 13</a>)</td><td><code>~/.hermes/skills/productivity/david-alerts/{SKILL.md,scripts/gaca.py}</code>; token + optional base-URL override in <code>.env</code> → <code>GACA_API_TOKEN</code>, <code>GACA_BASE_URL</code></td><td><span class="badge pick">app-owned, verified</span></td><td>Same as the row above — nothing to automate here, it's the app being agent-ready. Landed in <code>productivity</code>, not a dedicated <code>gaca</code> category as slice 9 specced; harmless in practice.</td></tr>
     <tr><td>Auto-start dashboard + gateway + TUI</td><td><code>~/.config/systemd/user/*.service</code> + <code>loginctl enable-linger</code></td><td><span class="badge no">host prereq</span></td><td>Process supervision, not configuration. Must be described in a deploy manifest — a restored <code>HERMES_HOME</code> alone runs nothing.</td></tr>
     <tr><td>Personal build skills</td><td><code>~/.hermes/skills/software-development/david-build{,-update}/</code></td><td><span class="badge maybe">skill</span></td><td>Portable across engines — moves to <code>gaca-agent</code> unchanged. Self-updating from its source repo via a tracked <code>last_used_commit</code>.</td></tr>
     <tr><td>Gateway on <code>:8642</code></td><td><code>.env</code> → <code>API_SERVER_ENABLED</code>, <code>API_SERVER_KEY</code></td><td><span class="badge pick">secret</span></td><td>Adapter both <em>writes</em> this key and <em>authenticates with</em> it. Localhost-only, never through Cloudflare.</td></tr>
@@ -514,6 +549,20 @@ This is the clearest instance yet of the <a href="hermes-plan.html">Hermes Plan<
 <div class="callout warn"><span class="label">The one that matters for the plan</span>
 The <a href="hermes-plan.html">Hermes Plan</a> banks on <strong>skills, scheduler, subagents, and memory coming free with the engine</strong> — a whole row of its own own-vs-adopt table. On this box those arrived <strong>switched off</strong>: <code>skills</code>, <code>cronjob</code>, and <code>delegation</code> are all still in <code>disabled_toolsets</code>. Nothing is broken — this is the minimal posture working as intended — but "adopted for free" is a claim that only becomes true one switch at a time. <strong>Memory is the first to be turned on</strong> (Step 5), which makes the <code>MemoryBackend</code> port testable for the first time. The scheduler and subagents remain unexercised, so the plan's claim about them is still on credit.</div>
 
+<h3>Re-verified 2026-08-23, alongside <a href="#step13">Step 13</a></h3>
+<p>Same box, checked again over SSH now that GACA is live and <code>david-alerts</code> is installed. Most of the "needs action" list from the first pass is closed out:</p>
+<div class="grid cols-2">
+  <div class="card"><h4>Resolved</h4><ul>
+    <li><span class="badge pick">CONFIRMED</span> <strong>The gateway is running</strong> — <code>hermes-gateway.service</code> active 16h+ at read time, all three user units (<code>hermes-gateway</code>, <code>hermes-dashboard</code>, <code>hermes-tui</code>) <code>enabled</code>, <code>loginctl show-user david</code> reports <code>Linger=yes</code>. The <a href="#step11">Step 11</a> auto-start setup is doing exactly what it was built to do — this was an open question the first time, now it's just true.</li>
+    <li><span class="badge pick">CONFIRMED</span> <strong><code>API_SERVER_ENABLED</code> and <code>API_SERVER_KEY</code> are both set</strong> in <code>.env</code> (64-character key) — closes the gap the very first pass left open (gateway not running meant this was never actually checked).</li>
+    <li><span class="badge pick">CONFIRMED</span> <code>GACA_API_TOKEN</code> present alongside them, 160 characters — an operator-minted GACA agent token, not a raw API key, matching <a href="#step10">Step 10</a>'s pattern exactly.</li>
+  </ul></div>
+  <div class="card"><h4>Unchanged, now with an answer</h4><ul>
+    <li><span class="badge maybe">?</span> <strong><code>skills</code>, <code>cronjob</code>, and <code>delegation</code> are still in <code>disabled_toolsets</code></strong> — identical to the first reading. But <a href="#step13">Step 13</a>'s <code>david-alerts</code> skill demonstrably loaded and ran despite it, which is the empirical answer the warning below used to only guess at: this flag does not gate whether a hand-authored <code>SKILL.md</code> gets read. What it actually gates is still unconfirmed — likely a dynamic runtime skill-discovery tool distinct from static skill loading — but "does it block GACA" is now answered: no.</li>
+    <li>Sleep-target masking and the <code>~/.local/bin</code> user-local install (no <code>/nix</code>) — not re-checked this pass; nothing about deploying GACA touches either.</li>
+  </ul></div>
+</div>
+
 <h2>What this changes in the plan</h2>
 <div class="callout pick"><span class="label">Carry these forward</span>
 <ol style="margin-top:6px">
@@ -528,7 +577,7 @@ The <a href="hermes-plan.html">Hermes Plan</a> banks on <strong>skills, schedule
 </ol></div>
 
 <div class="foot">
-  <p>Setup log for the <a href="hermes-plan.html">Hermes Plan</a>'s build-order step 1 — "stand up Hermes with the api_server adapter on <code>:8642</code>." Deliberately minimal first install, then auth, then web, then GitHub, each step performed by hand so the <code>HermesAdapter</code>'s first-time-setup routine is written from observation rather than guesswork. Configuration claims here are <strong>read back from the box's live state over SSH</strong> — the OAuth credential, <code>gpt-5.6-sol</code> on <code>openai-codex</code>, <code>web.backend: tavily</code>, and the fine-grained <code>github_pat_</code> in the system keyring all confirmed. The running score on the adapter design: <strong>four setup steps, three distinct credential shapes, two of which ADR 0001 does not currently cover.</strong></p>
+  <p>Setup log for the <a href="hermes-plan.html">Hermes Plan</a>'s build-order step 1 — "stand up Hermes with the api_server adapter on <code>:8642</code>." Deliberately minimal first install, then auth, then web, then GitHub, each step performed by hand so the <code>HermesAdapter</code>'s first-time-setup routine is written from observation rather than guesswork. Configuration claims here are <strong>read back from the box's live state over SSH</strong> — the OAuth credential, <code>gpt-5.6-sol</code> on <code>openai-codex</code>, <code>web.backend: tavily</code>, and the fine-grained <code>github_pat_</code> in the system keyring all confirmed. The running score on the adapter design: <strong>four setup steps, three distinct credential shapes, two of which ADR 0001 does not currently cover.</strong> <a href="#step13">Step 13</a>, added later, is the first time this page verifies GACA itself rather than a hypothesis about how GACA will eventually use Hermes — <code>david-alerts</code> live, authenticated, and proven through a real delegate round trip.</p>
 </div>
 </div>
 </body>

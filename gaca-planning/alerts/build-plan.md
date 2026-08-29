@@ -1,16 +1,20 @@
 # GACA Alerts — build plan
 
-**Status:** Slices 0–4, 7, and 8 shipped and *live* at `goodandcheapagent.com`;
-slice 5 (React frontend) shipped, Google sign-in added on top; slice 6 (SSE
-alert stream) **cut**; slice 10 (Delegation) shipped early, out of numeric
-order — see its heading below for why. §10 (new, not in the original slice
-list) retrofit per-user agent credentials + closed a real auth gap in
-sessions, also shipped and deployed. Remaining: 9 (Hermes skill — nothing has
-actually posted an alert yet), 11 (cron, depends on 9), 12 (Android). FCM push
-notification scaffolding (models/push_token.py, schemas/push.py,
-db/client.py's push_tokens table) is in progress, started 2026-08-23 — ahead
-of slice 12, since Android needs somewhere to register a token against. ·
-**Date:** 2026-08-07, reordered 2026-08-09, updated 2026-08-23
+**Status:** Slices 0–5, 7, 8, 9, and 12 shipped — the real triage surface
+exists now, not just `curl`. Hermes is genuinely posting and delegating real
+alerts through the real deployment, not a stub (see slice 9 and
+[`hermes-setup.html` Step 13](../hermes-setup.html#step13)). Google sign-in on
+top of 5; slice 6 (SSE alert stream) **cut**; slice 10 (Delegation) shipped
+early, out of numeric order — see its heading below for why. §10 (new, not in
+the original slice list) retrofit per-user agent credentials + closed a real
+auth gap in sessions, also shipped and deployed. **Slice 11 (Hermes cron) is a
+deliberate skip, not a gap** — decided against, not scheduled. FCM push
+notification work (`models/push_token.py`, `schemas/push.py`,
+`db/client.py`'s `push_tokens` table, wired into `main.py`/`services/alerts.py`)
+went in alongside 12, giving Android somewhere to register a device token
+against. **This build is done** — everything remaining is enhancement, not a
+missing slice. · **Date:** 2026-08-07, reordered 2026-08-09, updated
+2026-08-23
 **Branch:** `feature/hermes-alerts` · **Area:** gaca-api ↔ Hermes ↔ Android
 
 **Ordering (revised 2026-08-09):** finish the app — frontend, Docker — then
@@ -540,9 +544,23 @@ hasn't posted anything yet** — that's slice 9, not this one.
 
 ---
 
-### Slice 9 — The Hermes skill · ⭐ first end-to-end
+### Slice 9 — The Hermes skill · ⭐ first end-to-end — shipped 2026-08-23
 
 **Goal:** Hermes actually posts an alert you can see.
+
+**Shipped, and it deviated from this spec in two ways that turned out not to
+matter — full writeup in [`hermes-setup.html` Step 13](../hermes-setup.html#step13).**
+The skill installed as `~/.hermes/skills/productivity/david-alerts/`, not
+`~/.hermes/skills/gaca/gaca-alerts/` — existing category, different name,
+same durability in practice since `productivity` is already a live,
+writable, non-Nix-store path. It ships a companion `scripts/gaca.py` (stdlib
+only) alongside `SKILL.md`, which the spec below didn't anticipate but is a
+strict improvement — no dependency to install, and it independently landed on
+most of the same hardening this section calls for. **Verified live, not just
+installed:** authenticates against `goodandcheapagent.com`
+(`GET /api/auth/me` → 200), and a full delegate round trip — post an alert
+with `suggested_actions`, delegate it, watch Hermes post a confirming
+follow-up alert — has been proven twice.
 
 Canonical copy lives in the repo at `gaca-planning/alerts/hermes-skill/SKILL.md`;
 installed to `~/.hermes/skills/gaca/gaca-alerts/SKILL.md`.
@@ -605,7 +623,9 @@ the exact thing that port exists to prevent.
 
 **Done when:** Hermes, told "let David know the disk is filling up", posts a
 well-formed alert that appears in `GET /api/alerts`. Works entirely on localhost
-at this stage; only the base URL changes at slice 10.
+at this stage; only the base URL changes at slice 10. **Met** — against the
+real public URL, not localhost, since slice 8 already had it deployed by the
+time this shipped.
 
 ---
 
@@ -657,7 +677,7 @@ tested independent of that.
 
 ---
 
-### Slice 11 — Hermes cron
+### Slice 11 — Hermes cron · skipped, decided against 2026-08-23
 
 **Goal:** the loop runs itself.
 
@@ -674,7 +694,7 @@ the 0.18 store path.
 
 ---
 
-### Slice 12 — Android app
+### Slice 12 — Android app · shipped 2026-08-23
 
 **Goal:** the triage surface.
 
