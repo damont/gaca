@@ -355,6 +355,45 @@ def test_dismiss_settles_the_alert(tmp_path):
     assert dismissed.resolution_note == "not interesting"
 
 
+def test_act_with_no_note_preserves_the_existing_resolution_note(tmp_path):
+    """Acting on a `completed` alert with no note of your own keeps Hermes's
+    own output rather than silently wiping it to None."""
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        await alerts_db.insert(_with_status("completed", resolution_note="Hermes: cleaned up 4GB"))
+        alert = (await alerts_db.find_by_user("u1"))[0]
+        return await alert_service.act("u1", alert.id)
+
+    acted = _run(go)
+    assert acted.status == "acted"
+    assert acted.resolution_note == "Hermes: cleaned up 4GB"
+
+
+def test_act_with_a_note_overwrites_the_existing_resolution_note(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        await alerts_db.insert(_with_status("completed", resolution_note="Hermes: cleaned up 4GB"))
+        alert = (await alerts_db.find_by_user("u1"))[0]
+        return await alert_service.act("u1", alert.id, note="looks good, thanks")
+
+    acted = _run(go)
+    assert acted.resolution_note == "looks good, thanks"
+
+
+def test_dismiss_with_no_note_preserves_the_existing_resolution_note(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        await alerts_db.insert(_with_status("completed", resolution_note="Hermes: nothing to report"))
+        alert = (await alerts_db.find_by_user("u1"))[0]
+        return await alert_service.dismiss("u1", alert.id)
+
+    dismissed = _run(go)
+    assert dismissed.resolution_note == "Hermes: nothing to report"
+
+
 def test_snooze_defers_and_then_returns_on_its_own(tmp_path):
     settings.db_path = str(tmp_path / "t.db")
     until = NOW + timedelta(hours=2)
@@ -398,6 +437,42 @@ def test_a_snoozed_alert_can_still_be_triaged(tmp_path):
         return await alert_service.dismiss("u1", alert.id)
 
     assert _run(go).status == "dismissed"
+
+
+def test_completed_alerts_are_triageable(tmp_path):
+    """`completed` behaves exactly like `new` for manual triage — Hermes
+    finishing isn't the same as the alert being closed out."""
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        await alerts_db.insert(_with_status("completed"))
+        alert = (await alerts_db.find_by_user("u1"))[0]
+        return await alert_service.act("u1", alert.id)
+
+    assert _run(go).status == "acted"
+
+
+def test_completed_alert_can_be_snoozed(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        await alerts_db.insert(_with_status("completed"))
+        alert = (await alerts_db.find_by_user("u1"))[0]
+        return await alert_service.snooze("u1", alert.id, NOW + timedelta(days=1))
+
+    assert _run(go).status == "snoozed"
+
+
+def test_completed_alert_can_be_redelegated(tmp_path, monkeypatch):
+    settings.db_path = str(tmp_path / "t.db")
+    _install_backend(monkeypatch, output="ok")
+
+    async def go():
+        await alerts_db.insert(_with_status("completed"))
+        alert = (await alerts_db.find_by_user("u1"))[0]
+        return await alert_service.delegate(_user(), alert.id)
+
+    assert _run(go).status == "delegated"
 
 
 @pytest.mark.parametrize("settled", ["acted", "dismissed"])
@@ -536,7 +611,10 @@ def test_delegate_starts_a_session_and_marks_the_alert_delegated(tmp_path, monke
     assert delegated.snooze_until is None
 
 
-def test_a_completed_run_settles_the_alert_to_acted(tmp_path, monkeypatch):
+def test_a_completed_run_settles_the_alert_to_completed_with_the_output(tmp_path, monkeypatch):
+    """Not `acted` — Hermes finishing isn't the same as the alert being closed
+    out. `resolution_note` carries the run's own output so there's something
+    to actually look at."""
     settings.db_path = str(tmp_path / "t.db")
     _install_backend(monkeypatch, output="cleaned up 4GB")
 
@@ -546,7 +624,9 @@ def test_a_completed_run_settles_the_alert_to_acted(tmp_path, monkeypatch):
         await _drain_background()
         return await alert_service.get("u1", alert.id)
 
-    assert _run(go).status == "acted"
+    settled = _run(go)
+    assert settled.status == "completed"
+    assert settled.resolution_note == "cleaned up 4GB"
 
 
 def test_a_failed_run_bounces_the_alert_back_to_new_with_the_error(tmp_path, monkeypatch):

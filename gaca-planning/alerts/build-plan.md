@@ -196,26 +196,43 @@ column holding the Pydantic model as JSON.
 ```
                   ┌──────────────────────────► dismissed   (ignored, terminal)
                   │
-  [hermes posts] ─┼─► new ─┬─────────────────► acted       (done, terminal)
-                  │        │                      ▲
-                  │        ├─► snoozed ───────────┼──┐ (snooze_until passes → new)
-                  │        │                      │
-                  │        └─► delegated ─────────┘  (Hermes finished)
-                  │                  │
-                  └──────────────────┘  (Hermes failed → back to new, error attached)
+  [hermes posts] ─┼─► new ─┬─────────────────► acted       (done, terminal — user only)
+                  │  ▲     │                      ▲
+                  │  │     ├─► snoozed ───────────┼──┐ (snooze_until passes → new)
+                  │  │     │                      │  │
+                  │  │     └─► delegated ──┐       │  │
+                  │  │                     │       │  │
+                  │  │                     ▼        │  │
+                  │  └──────────────── completed ────┘  │
+                  │                  (Hermes finished — triageable exactly
+                  │                   like `new`, not terminal)
+                  └──────────────────  (Hermes failed → back to new, error attached)
 ```
 
-Five states. Four of them are David's four choices; `new` is the inbox.
+Six states. `new` is the inbox; `completed` is Hermes finishing, not the
+alert being closed — that's still yours to do.
 
-**Three design calls:**
+**Four design calls:**
 
-1. **`delegated` resolves into `acted`, not its own terminal state.** "Acted"
-   means *something got done* — by you or by Hermes. Five states instead of seven.
+1. **`delegated` resolves into `completed`, not `acted`.** Hermes finishing a
+   task and you actually closing it out are different events — `completed`
+   carries `resolution_note` set to the run's own output, so there's
+   something to review, and it sits in the same "needs attention" view as
+   `new` until you act on or dismiss it. (Earlier drafts of this doc folded
+   this straight into `acted` — five states instead of seven. That undercounted:
+   it meant a finished delegation looked identical to something you'd already
+   dealt with, with no way to see what Hermes actually did before it vanished
+   into history.)
 
 2. **A failed Hermes run bounces to `new`** with the failure in `resolution_note`.
    A delegation can never silently vanish.
 
-3. **Snooze needs no background worker.** Rather than a sweeper flipping
+3. **Finalizing with no note preserves whatever's already there.** `act`/
+   `dismiss` only overwrite `resolution_note` if the caller actually passes
+   one — so reviewing a `completed` alert's output and tapping "handled"
+   with nothing typed doesn't erase what Hermes wrote.
+
+4. **Snooze needs no background worker.** Rather than a sweeper flipping
    `snoozed → new` on a timer, the list query computes it:
 
    ```
@@ -654,26 +671,31 @@ now rather than leaving one endpoint dangling until slice 8.
   hook — awaited once with the terminal `RunCompleted`/`RunFailed` event. Kept
   generic on purpose: the invariant core still doesn't know what an Alert is,
   it just offers a callback any caller can hang logic off of
-- On `run.completed` the alert settles to `acted`; on `run.failed` it bounces
-  to `new` with the error in `resolution_note` — same "never silently vanish"
-  rule as every other terminal outcome (§4), just triggered by the agent
-  instead of a hand
+- On `run.completed` the alert settles to `completed`, with `resolution_note`
+  set to the run's own output — not `acted`, since Hermes finishing a task
+  isn't the same as you closing it out; on `run.failed` it bounces to `new`
+  with the error in `resolution_note` — same "never silently vanish" rule as
+  every other terminal outcome (§4), just triggered by the agent instead of a
+  hand
 - `routers/alerts.py`: `POST /api/alerts/{id}/delegate`
 - A bad `suggested_action_index` (out of range for that alert) is a new
   `InvalidRequest` domain error → 422 — same shape as `NotFound`/`InvalidTransition`,
   just for "well-formed JSON, semantically wrong given this resource's state"
 - Tests: `tests/services/test_alerts.py` — delegate marks `delegated` and
   returns immediately (non-blocking); a stubbed completed run settles to
-  `acted`; a stubbed failed run bounces to `new` with the error recorded;
-  terminal alerts reject delegation; prompt-building precedence (action vs.
-  instruction vs. fallback); the out-of-range index rejection
+  `completed` with the output recorded; a stubbed failed run bounces to `new`
+  with the error recorded; terminal alerts reject delegation; a `completed`
+  alert remains triageable (act/dismiss/snooze/re-delegate); prompt-building
+  precedence (action vs. instruction vs. fallback); the out-of-range index
+  rejection
 
 **Done when:** delegating an alert starts a real run (or, in tests, a stubbed
-one), the alert flips to `delegated` immediately, and it settles to `acted` or
-bounces to `new` once the run ends. Met against the stub; a live check against
-the real local Hermes gateway is David's to run, same working agreement as
-everywhere else Hermes is involved — but the API-side mechanics are done and
-tested independent of that.
+one), the alert flips to `delegated` immediately, and it settles to
+`completed` (with the run's output visible) or bounces to `new` once the run
+ends. Met against the stub; a live check against the real local Hermes
+gateway is David's to run, same working agreement as everywhere else Hermes
+is involved — but the API-side mechanics are done and tested independent of
+that.
 
 ---
 
@@ -744,7 +766,7 @@ same shape. Per slice, the tests that would actually catch a regression:
 | 2 | agent token accepted by `get_current_user`; `expires_in_days` bounds enforced |
 | 3 | **dedupe upsert**; effective-status computation for a passed snooze; user scoping |
 | 4 | every legal transition; illegal transitions 409 |
-| 10 | delegate marks `delegated` and returns without waiting; `run.completed` settles to `acted`; `run.failed` bounces to `new` with the error recorded; terminal alerts reject delegation; out-of-range `suggested_action_index` → 422 |
+| 10 | delegate marks `delegated` and returns without waiting; `run.completed` settles to `completed` with the output recorded; `run.failed` bounces to `new` with the error recorded; terminal alerts reject delegation; a `completed` alert stays triageable; out-of-range `suggested_action_index` → 422 |
 
 The dedupe and effective-status tests are the two worth writing carefully —
 they're the logic that isn't obvious from reading the code.
