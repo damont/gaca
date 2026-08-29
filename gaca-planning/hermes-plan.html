@@ -45,6 +45,7 @@
     <marker id="ha" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#ffa657"/></marker>
     <marker id="hp" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#d2a8ff"/></marker>
     <marker id="hps" markerWidth="9" markerHeight="9" refX="0" refY="3" orient="auto"><path d="M7,0 L0,3 L7,6 Z" fill="#d2a8ff"/></marker>
+    <marker id="hf" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#39c5cf"/></marker>
   </defs>
   <style>
     .bx{fill:#1a2029;stroke:#2a323d;stroke-width:1.4}
@@ -65,6 +66,8 @@
     .lr2{stroke:#ff7b72;stroke-width:2;fill:none;marker-end:url(#hr);marker-start:url(#hrs)}
     .la{stroke:#ffa657;stroke-width:1.8;fill:none;marker-end:url(#ha)}
     .lp{stroke:#d2a8ff;stroke-width:1.8;fill:none;marker-end:url(#hp);marker-start:url(#hps)}
+    .lf{stroke:#39c5cf;stroke-width:1.8;fill:none;marker-end:url(#hf)}
+    .push{fill:#122428;stroke:#39c5cf;stroke-width:1.5}
   </style>
 
   <!-- model -->
@@ -118,6 +121,12 @@
   <text class="ts" x="815" y="342" text-anchor="middle">the control surface —</text>
   <text class="ts" x="815" y="357" text-anchor="middle">where you tap approve</text>
 
+  <!-- Firebase Cloud Messaging -->
+  <rect class="push" x="724" y="118" width="182" height="66" rx="9"/>
+  <text class="t" x="815" y="141" text-anchor="middle" fill="#39c5cf">Firebase (FCM)</text>
+  <text class="ts" x="815" y="158" text-anchor="middle">push, not the SSE stream</text>
+  <text class="ts" x="815" y="173" text-anchor="middle">wakes the phone when it's closed</text>
+
   <!-- right labels -->
   <text class="t" x="938" y="256" fill="#58a6ff">messages</text>
   <text class="t" x="938" y="320" fill="#ffa657">approvals</text>
@@ -142,6 +151,10 @@
   <path class="lb" d="M602,320 L722,320"/>
   <text class="ts lbl" x="662" y="310" text-anchor="middle" fill="#58a6ff">SSE + REST</text>
 
+  <path class="lf" d="M580,250 C 610,200 670,190 722,175"/>
+  <text class="ts lbl" x="650" y="203" text-anchor="middle" fill="#39c5cf">push</text>
+  <path class="lf" d="M815,184 L815,264"/>
+
   <path class="lb1" d="M908,298 L932,262"/>
   <path class="la" d="M908,320 L932,314"/>
   <path class="lb1" d="M908,346 L932,378"/>
@@ -151,9 +164,9 @@
   <text class="ts" x="502" y="596" text-anchor="middle" fill="#9aa7b4">API layer — every privileged write</text>
   <text class="ts" x="815" y="596" text-anchor="middle" fill="#9aa7b4">phone — the approval gate</text>
   <path d="M40,612 L980,612" stroke="#2a323d" stroke-width="1" fill="none"/>
-  <text class="ts" x="510" y="634" text-anchor="middle" fill="#9aa7b4">green = read paths · red = privileged writes · blue = control plane · purple = inference</text>
+  <text class="ts" x="510" y="634" text-anchor="middle" fill="#9aa7b4">green = read paths · red = privileged writes · blue = control plane · purple = inference · teal = push delivery</text>
 </svg>
-<figcaption>The agent proposes; the API layer disposes. Hermes can <em>read</em> email, but the credential that can <em>send</em> it sits in the API layer, unreachable from the agent. Personal applications we built ourselves are the deliberate exception — Hermes holds a scoped agent token and writes to them directly.</figcaption>
+<figcaption>The agent proposes; the API layer disposes. Hermes can <em>read</em> email, but the credential that can <em>send</em> it sits in the API layer, unreachable from the agent. Personal applications we built ourselves are the deliberate exception — Hermes holds a scoped agent token and writes to them directly. Firebase Cloud Messaging is a second, separate path to the phone: the API layer pushes through it to raise a system notification when the app is closed or backgrounded, which the always-open SSE stream cannot do on its own — the stream still carries the actual messages, approvals, and events once the app is open.</figcaption>
 </figure>
 
 <h2>The permission model</h2>
