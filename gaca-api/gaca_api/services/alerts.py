@@ -17,7 +17,9 @@ from .exceptions import InvalidRequest, InvalidTransition, NotFound
 
 # Manual triage is only possible out of the inbox states. `delegated` is settled
 # by the run working on it, not by hand; `acted` and `dismissed` are terminal.
-TRIAGEABLE = ("new", "snoozed")
+# `completed` — Hermes finished, but not yet closed out — is triageable the
+# same as `new`.
+TRIAGEABLE = ("new", "snoozed", "completed")
 
 
 def effective_status(alert: AlertDoc, now: datetime | None = None) -> str:
@@ -139,21 +141,36 @@ async def _triage(
     return updated
 
 
+async def _resolution_note_for(user_id: str, alert_id: str, note: str | None) -> str | None:
+    """The note to store: the caller's, if given — otherwise whatever's
+    already there.
+
+    Matters most for a `completed` alert: it arrives with `resolution_note`
+    set to Hermes's own output, and closing it out with no note of your own
+    should keep that, not silently wipe it with None.
+    """
+    if note is not None:
+        return note
+    return (await get(user_id, alert_id)).resolution_note
+
+
 async def act(user_id: str, alert_id: str, note: str | None = None) -> AlertDoc:
     """Mark an alert handled. Terminal.
 
     `snooze_until` is cleared on the way out so no stale deferral is left
     hanging on a settled alert.
     """
+    resolution_note = await _resolution_note_for(user_id, alert_id, note)
     return await _triage(
-        user_id, alert_id, "acted", resolution_note=note, snooze_until=None
+        user_id, alert_id, "acted", resolution_note=resolution_note, snooze_until=None
     )
 
 
 async def dismiss(user_id: str, alert_id: str, note: str | None = None) -> AlertDoc:
     """Ignore an alert. Terminal — but a re-fired dedupe_key still resurfaces it."""
+    resolution_note = await _resolution_note_for(user_id, alert_id, note)
     return await _triage(
-        user_id, alert_id, "dismissed", resolution_note=note, snooze_until=None
+        user_id, alert_id, "dismissed", resolution_note=resolution_note, snooze_until=None
     )
 
 
@@ -210,9 +227,10 @@ async def delegate(
     host/agents (raises AgentNotConfigured if none resolve, same as the chat
     routes).
 
-    Same guard as manual triage — only `new` or `snoozed` can be delegated. The
-    run settles the alert asynchronously via `_on_run_settled`, wired in as
-    `on_settled` below; this call only starts the run, it doesn't wait for it.
+    Same guard as manual triage — only a TRIAGEABLE alert (`new`, `snoozed`,
+    or `completed`) can be delegated. The run settles the alert asynchronously
+    via `_on_run_settled`, wired in as `on_settled` below; this call only
+    starts the run, it doesn't wait for it.
     """
     alert = await get(user.id, alert_id)
     if alert.status not in TRIAGEABLE:
@@ -246,10 +264,14 @@ async def delegate(
 async def _settle_delegation(alert_id: str, event: GacaEvent) -> None:
     """Resolve a delegated alert once its run ends, one way or the other.
 
-    A completed run means Hermes finished the work: settle to `acted`. A failed
-    run bounces back to `new` with the error in `resolution_note`, so a failed
-    delegation can never silently vanish — it's the same rule slice 4 applies to
-    every other terminal outcome, just triggered by the agent instead of a hand.
+    A completed run means Hermes finished the work: settle to `completed`,
+    not `acted` — finishing isn't the same as being closed out, and
+    `resolution_note` gets the run's own output so there's something to
+    actually look at. Only a later `act`/`dismiss` (a real user action)
+    reaches a terminal state from here. A failed run bounces back to `new`
+    with the error in `resolution_note`, so a failed delegation can never
+    silently vanish — it's the same rule slice 4 applies to every other
+    terminal outcome, just triggered by the agent instead of a hand.
 
     Reads the row fresh rather than trusting the copy captured at delegate()
     time, and no-ops if it's no longer `delegated` — the alert could have moved
@@ -262,13 +284,17 @@ async def _settle_delegation(alert_id: str, event: GacaEvent) -> None:
 
     if isinstance(event, RunCompleted):
         resolved = current.model_copy(
-            update={"status": "acted", "status_changed_at": utcnow()}
+            update={
+                "status": "completed",
+                "status_changed_at": utcnow(),
+                "resolution_note": event.output,
+            }
         )
         await alerts_db.replace(resolved)
         await push_service.notify(
             resolved.user_id,
             title=f"Hermes finished: {resolved.title}",
-            body="The delegated task is done.",
+            body="Tap to see what it found.",
             alert_id=resolved.id,
             severity=resolved.severity,
         )

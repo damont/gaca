@@ -101,11 +101,18 @@ Tokens do not auto-refresh. On `401`, send the user back to the login screen.
 
 ## 3. Status — read `effective_status`, send transitions against `status`
 
-Five stored states:
+Six stored states:
 
 ```
-new · snoozed · delegated · acted · dismissed
+new · snoozed · delegated · completed · acted · dismissed
 ```
+
+**`completed` is Hermes finishing a delegated run — not the same as the alert
+being closed out.** It carries `resolution_note` set to the run's own output,
+and it's triageable exactly like `new` (act/dismiss/snooze/re-delegate all
+work on it). Only `act`/`dismiss` — a real user action — reach a terminal
+state from here. Treat `completed` as belonging in the same "needs attention"
+list as `new`, not in history.
 
 **Snooze is computed, not swept.** There's no background worker flipping expired
 snoozes back. The API derives:
@@ -122,17 +129,22 @@ Legal transitions:
 
 | From | To | Via |
 |---|---|---|
-| `new` | `delegated` | `POST /alerts/{id}/delegate` |
-| `new` | `acted` | `POST /alerts/{id}/act` |
-| `new` | `dismissed` | `POST /alerts/{id}/dismiss` |
-| `new` | `snoozed` | `POST /alerts/{id}/snooze` |
-| `snoozed` | any of the four | same (an expired snooze reads as `new`) |
-| `delegated` | `acted` | automatic — Hermes finished |
+| `new` / `completed` | `delegated` | `POST /alerts/{id}/delegate` |
+| `new` / `completed` | `acted` | `POST /alerts/{id}/act` |
+| `new` / `completed` | `dismissed` | `POST /alerts/{id}/dismiss` |
+| `new` / `completed` | `snoozed` | `POST /alerts/{id}/snooze` |
+| `snoozed` | any of the five | same (an expired snooze reads as `new`) |
+| `delegated` | `completed` | automatic — Hermes finished; `resolution_note` gets the run's output |
 | `delegated` | `new` | automatic — Hermes failed; see `resolution_note` |
 
-`acted` and `dismissed` are terminal. **`delegated` is also not manually
-triageable** — it's settled by the run working on it. Anything else returns
-**409**.
+`acted` and `dismissed` are terminal; `completed` is not. **`delegated` is
+also not manually triageable** — it's settled by the run working on it.
+Anything else returns **409**.
+
+**Finalizing with no note keeps whatever `resolution_note` was already
+there** — `act`/`dismiss` only overwrite it if you actually pass one. So
+reviewing a `completed` alert's output and tapping "handled" with nothing
+typed doesn't erase what Hermes wrote.
 
 A `409` means the alert moved underneath you: a run settled it, or you triaged
 it on another device. Refetch and re-render rather than retrying.
@@ -190,7 +202,9 @@ guidance. With `instruction` alone, that's the whole prompt. With neither,
 the prompt falls back to the alert's own `title` + `body`.
 
 **Settlement is automatic, not a client action.** When the run ends, the API
-watches its outcome and moves the alert on its own: `run.completed` → `acted`;
+watches its outcome and moves the alert on its own: `run.completed` →
+`completed`, with `resolution_note` set to the run's own output — not
+`acted`, since Hermes finishing isn't the same as you closing it out;
 `run.failed` → back to `new`, with the error in `resolution_note` (same "never
 silently vanish" rule §4 applies to every other terminal outcome). Poll
 `GET /api/alerts/{id}` — or the run's own stream, next paragraph — to see it

@@ -13,9 +13,12 @@ from pydantic import BaseModel, Field, field_validator
 
 from .base import new_id, utcnow
 
-# The triage states. Four of them are the dispositions the user picks; `new` is
-# the inbox. `acted` and `dismissed` are terminal.
-STATUSES = ("new", "snoozed", "delegated", "acted", "dismissed")
+# The triage states. `new` is the inbox. `completed` is Hermes finishing a
+# delegated run — NOT terminal, and grouped with `new` in the client's
+# "needs attention" view, since finishing isn't the same as being closed out.
+# Only a user action (`act`/`dismiss`) can reach the two truly terminal
+# states, `acted` and `dismissed`.
+STATUSES = ("new", "snoozed", "delegated", "completed", "acted", "dismissed")
 
 # Drives how loudly the client presents the alert. Unlike `kind`, this IS a
 # closed set — clients switch on it.
