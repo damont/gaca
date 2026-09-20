@@ -17,7 +17,8 @@ async def create(
 
 
 async def list_for_user(user_id: str) -> list[SessionDoc]:
-    """This user's sessions, newest first — the Chat tab's list."""
+    """This user's sessions, most recently active first — the Chat tab's
+    list. See db/sessions.py:find_by_user for what "active" means."""
     return await sessions_db.find_by_user(user_id)
 
 
