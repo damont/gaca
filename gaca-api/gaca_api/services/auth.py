@@ -7,6 +7,8 @@ do no DB access — so the same two steps live here and the route reads the same
 """
 from __future__ import annotations
 
+import secrets
+
 from ..agent import runtime as agent_runtime
 from ..agent.base import AgentBackend
 from ..db import users as users_db
@@ -159,6 +161,32 @@ async def add_crew_member(
     )
     await users_db.replace(updated)
     return updated
+
+
+async def provision_crew_member(
+    user: UserDoc, name: str, color: str | None = None
+) -> UserDoc:
+    """Create a brand new Hermes profile on the box and register it as a
+    crew member in one step — the caller only ever names it; gaca-api picks
+    the port (one past whatever's already running on the box, not just what
+    it happens to already know about) and generates the key.
+
+    Requires provisioning access already granted (PUT /agent/provisioning);
+    raises CrewNotConfigured if none is stored, same as testing it would.
+    Checked against gaca-api's own crew list before ever touching the box —
+    a duplicate name is a 422 regardless of whether the box is reachable;
+    Hermes' own `profile create` is the authority on whether the name
+    collides there too, surfaced as SSHError (mapped to 502) if so.
+    """
+    if user.ssh is None:
+        raise CrewNotConfigured()
+    if find_crew_member(user, name) is not None:
+        raise InvalidRequest(f"crew member {name!r} already exists")
+
+    port = await ssh_provisioning.next_free_port(user.ssh)
+    api_key = secrets.token_hex(32)
+    await ssh_provisioning.create_profile(user.ssh, name, port, api_key)
+    return await add_crew_member(user, name, port, api_key, color)
 
 
 async def update_crew_member(

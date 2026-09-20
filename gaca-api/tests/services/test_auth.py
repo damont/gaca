@@ -869,3 +869,84 @@ def test_discover_crew_never_overwrites_an_already_known_member(tmp_path, monkey
     assert len(updated.crew) == 1
     assert updated.crew[0].port == 8643
     assert updated.crew[0].api_key == "already-here"
+
+
+# ── provisioning a brand new crew member ────────────────────────────
+# Unit-level here too — next_free_port/create_profile are monkeypatched;
+# the real remote script is proven end-to-end in
+# tests/provisioning/test_ssh.py. These are about provision_crew_member's
+# own orchestration: what it checks, what order, what it persists.
+
+def _install_fake_provisioning(monkeypatch, *, port: int, calls: list | None = None):
+    async def fake_next_free_port(conn):
+        return port
+
+    async def fake_create_profile(conn, name, port_, api_key):
+        if calls is not None:
+            calls.append((name, port_, api_key))
+
+    monkeypatch.setattr(auth_service.ssh_provisioning, "next_free_port", fake_next_free_port)
+    monkeypatch.setattr(auth_service.ssh_provisioning, "create_profile", fake_create_profile)
+
+
+def test_provision_crew_member_raises_crew_not_configured_without_ssh(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        user = await _new_user()
+        with pytest.raises(CrewNotConfigured):
+            await auth_service.provision_crew_member(user, "toolshed")
+
+    _run(go)
+
+
+def test_provision_crew_member_rejects_a_duplicate_name_before_touching_the_box(
+    tmp_path, monkeypatch
+):
+    settings.db_path = str(tmp_path / "t.db")
+    calls: list = []
+    _install_fake_provisioning(monkeypatch, port=8643, calls=calls)
+
+    async def go():
+        user = await _connected_user()
+        user = await auth_service.add_crew_member(user, "toolshed", 1111, "k")
+        with pytest.raises(InvalidRequest):
+            await auth_service.provision_crew_member(user, "toolshed")
+
+    _run(go)
+    assert calls == []  # never reached create_profile
+
+
+def test_provision_crew_member_creates_and_registers_it(tmp_path, monkeypatch):
+    settings.db_path = str(tmp_path / "t.db")
+    calls: list = []
+    _install_fake_provisioning(monkeypatch, port=8643, calls=calls)
+
+    async def go():
+        user = await _connected_user()
+        return await auth_service.provision_crew_member(user, "toolshed")
+
+    updated = _run(go)
+    assert len(calls) == 1
+    name, port, api_key = calls[0]
+    assert name == "toolshed"
+    assert port == 8643
+    assert len(api_key) >= 32  # a real generated secret, not a placeholder
+
+    member = updated.crew[0]
+    assert member.name == "toolshed"
+    assert member.port == 8643
+    assert member.api_key == api_key
+    assert updated.default_crew == "toolshed"  # first crew member on this account
+
+
+def test_provision_crew_member_honors_a_given_color(tmp_path, monkeypatch):
+    settings.db_path = str(tmp_path / "t.db")
+    _install_fake_provisioning(monkeypatch, port=8643)
+
+    async def go():
+        user = await _connected_user()
+        return await auth_service.provision_crew_member(user, "toolshed", color="#8A6A9E")
+
+    updated = _run(go)
+    assert updated.crew[0].color == "#8A6A9E"

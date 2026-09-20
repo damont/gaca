@@ -11,7 +11,13 @@ import asyncssh
 import pytest
 
 from gaca_api.models.user import SSHConnection
-from gaca_api.provisioning.ssh import SSHError, discover_profiles, run
+from gaca_api.provisioning.ssh import (
+    SSHError,
+    create_profile,
+    discover_profiles,
+    next_free_port,
+    run,
+)
 
 
 class _AcceptingServer(asyncssh.SSHServer):
@@ -228,3 +234,151 @@ def test_discover_profiles_handles_no_hermes_home_at_all(tmp_path):
             return await discover_profiles(conn)
 
     assert asyncio.run(go()) == {}
+
+
+# ── next_free_port ───────────────────────────────────────────────────
+
+def test_next_free_port_is_one_past_the_highest_in_use(tmp_path):
+    home = tmp_path / "home"
+    _write_env(
+        home / ".hermes" / ".env",
+        API_SERVER_ENABLED="true", API_SERVER_PORT="8642", API_SERVER_KEY="k",
+    )
+    _write_env(
+        home / ".hermes" / "profiles" / "trading" / ".env",
+        API_SERVER_ENABLED="true", API_SERVER_PORT="8644", API_SERVER_KEY="k",
+    )
+
+    async def go():
+        async with _local_ssh_server(home_override=str(home)) as (port, client_key, _w):
+            conn = SSHConnection(
+                host="127.0.0.1", port=port, username="david",
+                private_key=client_key.export_private_key().decode(),
+            )
+            return await next_free_port(conn)
+
+    assert asyncio.run(go()) == 8645  # past the highest (8644), not the count (2)
+
+
+def test_next_free_port_falls_back_to_base_with_nothing_configured(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+
+    async def go():
+        async with _local_ssh_server(home_override=str(home)) as (port, client_key, _w):
+            conn = SSHConnection(
+                host="127.0.0.1", port=port, username="david",
+                private_key=client_key.export_private_key().decode(),
+            )
+            return await next_free_port(conn)
+
+    assert asyncio.run(go()) == 8642
+
+
+# ── create_profile — against a FAKE hermes CLI, since the real one isn't
+# available in a test sandbox. Faithful about what matters here: the exact
+# argv sequence gaca-api sends and the .env it writes, not Hermes' own
+# internals (already confirmed live against david-claw, 2026-09-20 — see
+# the comment above _CREATE_PROFILE_SCRIPT in ssh.py).
+
+_FAKE_HERMES = r"""#!/bin/bash
+set -e
+if [ "$1" = "profile" ] && [ "$2" = "create" ]; then
+  dir="$HOME/.hermes/profiles/$3"
+  if [ -d "$dir" ]; then
+    echo "profile '$3' already exists" >&2
+    exit 1
+  fi
+  mkdir -p "$dir"
+  exit 0
+elif [ "$1" = "--profile" ] && [ "$3" = "gateway" ] && [ "$4" = "install" ]; then
+  touch "$HOME/.hermes/profiles/$2/.installed"
+  exit 0
+fi
+echo "fake hermes: unrecognized args: $*" >&2
+exit 1
+"""
+
+
+def _install_fake_hermes(home) -> None:
+    """A `hermes` on PATH only in a login shell, matching the real box
+    (hermes lives in ~/.local/bin, added to PATH by ~/.profile) — proves
+    create_profile's `bash -lc` wrapping is actually doing something, not
+    just cargo-culted."""
+    bin_dir = home / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    hermes = bin_dir / "hermes"
+    hermes.write_text(_FAKE_HERMES)
+    hermes.chmod(0o755)
+    (home / ".profile").write_text('export PATH="$HOME/bin:$PATH"\n')
+
+
+def test_create_profile_runs_the_real_sequence_and_writes_the_env(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    _install_fake_hermes(home)
+
+    async def go():
+        async with _local_ssh_server(home_override=str(home)) as (port, client_key, _w):
+            conn = SSHConnection(
+                host="127.0.0.1", port=port, username="david",
+                private_key=client_key.export_private_key().decode(),
+            )
+            await create_profile(conn, "toolshed", 8643, "the-generated-key")
+
+    asyncio.run(go())
+
+    profile_dir = home / ".hermes" / "profiles" / "toolshed"
+    assert (profile_dir / ".installed").is_file()  # gateway install really ran
+    env_lines = (profile_dir / ".env").read_text().splitlines()
+    assert "API_SERVER_ENABLED=true" in env_lines
+    assert "API_SERVER_PORT=8643" in env_lines
+    assert "API_SERVER_KEY=the-generated-key" in env_lines
+
+
+def test_create_profile_preserves_unrelated_env_lines(tmp_path):
+    """Upsert, not overwrite — a fresh profile's .env may have other content
+    (Hermes seeds one from a template); confirm it survives untouched."""
+    home = tmp_path / "home"
+    home.mkdir()
+    _install_fake_hermes(home)
+    # Patch the fake CLI's own `profile create` step to seed an unrelated
+    # line, the same way Hermes' real one seeds a .env from a template.
+    hermes = home / "bin" / "hermes"
+    hermes.write_text(_FAKE_HERMES.replace(
+        'mkdir -p "$dir"\n  exit 0',
+        'mkdir -p "$dir"\n  echo "SOME_OTHER_SETTING=keep-me" > "$dir/.env"\n  exit 0',
+    ))
+    hermes.chmod(0o755)
+
+    async def go():
+        async with _local_ssh_server(home_override=str(home)) as (port, client_key, _w):
+            conn = SSHConnection(
+                host="127.0.0.1", port=port, username="david",
+                private_key=client_key.export_private_key().decode(),
+            )
+            await create_profile(conn, "toolshed", 8643, "k")
+
+    asyncio.run(go())
+
+    env_text = (home / ".hermes" / "profiles" / "toolshed" / ".env").read_text()
+    assert "SOME_OTHER_SETTING=keep-me" in env_text
+    assert "API_SERVER_PORT=8643" in env_text
+
+
+def test_create_profile_raises_when_the_name_already_exists(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    _install_fake_hermes(home)
+    (home / ".hermes" / "profiles" / "toolshed").mkdir(parents=True)
+
+    async def go():
+        async with _local_ssh_server(home_override=str(home)) as (port, client_key, _w):
+            conn = SSHConnection(
+                host="127.0.0.1", port=port, username="david",
+                private_key=client_key.export_private_key().decode(),
+            )
+            await create_profile(conn, "toolshed", 8643, "k")
+
+    with pytest.raises(SSHError, match="already exists"):
+        asyncio.run(go())

@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from .agent import runtime as agent_runtime
 from .bus import event_bus
 from .db import client
+from .provisioning.ssh import SSHError
 from .routers import agent, alerts, auth, crew, push, sessions
 from .services import push as push_service
 from .services.exceptions import (
@@ -89,6 +90,14 @@ async def handle_crew_not_configured(
 ) -> JSONResponse:
     """Map a missing per-user crew config to HTTP 400, in one place."""
     return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.exception_handler(SSHError)
+async def handle_ssh_error(request: Request, exc: SSHError) -> JSONResponse:
+    """Map a failed provisioning call to HTTP 502 — gaca-api reached out to
+    the user's own box on their behalf and that failed; not a client error,
+    and not gaca-api's own fault either, hence 502 rather than 500."""
+    return JSONResponse(status_code=502, content={"detail": str(exc)})
 
 
 @app.get("/api/health")

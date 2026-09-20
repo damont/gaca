@@ -96,6 +96,21 @@ def test_crew_member_create_rejects_a_non_hex_color():
         CrewMemberCreate(name="toolshed", port=8643, api_key="k", color="blue")
 
 
+def test_crew_member_create_allows_omitting_port_and_key_together():
+    """Omitting both means "gaca-api, create this one for me" — a real,
+    valid request, not a validation failure."""
+    created = CrewMemberCreate(name="toolshed")
+    assert created.port is None
+    assert created.api_key is None
+
+
+def test_crew_member_create_rejects_only_one_of_port_or_key():
+    with pytest.raises(ValidationError):
+        CrewMemberCreate(name="toolshed", port=8643)
+    with pytest.raises(ValidationError):
+        CrewMemberCreate(name="toolshed", api_key="k")
+
+
 def test_crew_member_update_has_no_name_field():
     """Renaming isn't supported — the name is the path, not the body; this
     just re-submits port and key together, same no-partial-update rule."""

@@ -54,11 +54,18 @@ async def add_crew_member(
     user: UserDoc = Depends(get_current_user),
 ):
     """Register another named crew member on the already-connected agent.
+    Given `port`/`api_key`, registers one already set up by hand. Given
+    neither, has gaca-api create a brand new Hermes profile on the box
+    directly — it picks the port and generates the key (needs provisioning
+    access already granted, see /agent/provisioning); `502` if that fails.
     Its color is auto-assigned from the palette unless given. (The *first*
     crew member is created by POST /agent/connect, not here.)"""
-    updated = await auth_service.add_crew_member(
-        user, data.name, data.port, data.api_key, data.color
-    )
+    if data.port is not None:
+        updated = await auth_service.add_crew_member(
+            user, data.name, data.port, data.api_key, data.color
+        )
+    else:
+        updated = await auth_service.provision_crew_member(user, data.name, data.color)
     return crew_out(updated)
 
 
