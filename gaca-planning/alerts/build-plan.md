@@ -854,7 +854,84 @@ this ever gets shared beyond one person.
 
 ---
 
-## 11. What isn't in this build
+## 11. Crew rename, chat fix, and skills — shipped 2026-09-20
+
+**Why this happened outside the slice plan, again.** A design pass for
+Android chat/crew-switching/skills surfaced that `POST /api/sessions/{id}/messages`
+was completely broken: it still read `user.agent_base_url`/`agent_api_key`,
+fields §10's retrofit had already replaced with `agent_host` + a list of
+named agents. No test caught it — session tests only covered the service
+layer, never the router. Chat had been silently dead since 2026-08-22.
+
+**Renamed the whole multi-profile concept to "Crew" while fixing it**, since
+building more UI on top of "agent" (already overloaded with "the AI agent
+doing the work" and "an external agent's API token," §2) would only make the
+confusion worse. `AgentProfile` → `CrewMember`, `UserDoc.agents` /
+`.default_agent` → `.crew` / `.default_crew`, `AgentNotConfigured` →
+`CrewNotConfigured`, `/api/auth/agents*` → its own `/api/crew*` router (it
+had grown past a login concern into its own resource). Old JSON keys are
+read via a `model_validator(mode="before")` shim on `UserDoc`/`AlertDoc` so
+an already-configured account's crew survives the rename instead of reading
+back empty — verified against a copy of the live `gaca.db`, not just a unit
+test.
+
+**First pass flattened "connect an agent" and "add a crew member" into one
+resource — wrong, corrected same day.** `agent_host` got renamed to
+`crew_host` and folded under `/crew` alongside member CRUD, on the theory
+that "the host every crew member shares" was a crew concern. Building the
+Android app against that surfaced the real shape: a user connects to *one*
+Hermes agent (that's the "agent" language they actually think in), and
+*then* can create additional named crew members (Hermes profiles) under it —
+two different actions with two different error modes, not one flat resource.
+Split it back out: `agent_host` un-renamed (it was only ever briefly
+`crew_host,` within this same day — the shim in `UserDoc` handles a row
+saved under either), and a new `/api/agent` resource owns connecting
+(`POST /agent/connect`, which also creates the first, "default," crew
+member — no separate onboarding step needed just to get one working
+profile) and moving the host (`PUT /agent`). `/api/crew` is now only ever
+"add/manage another profile," never first-time setup. See the current
+`api-contract.md` §2 for the shape that stuck.
+
+**The actual fix**: a session now carries `crew` (which member it talks to,
+resolved once at creation, fixed for its life) instead of resolving
+per-message from stale user fields. Also gave sessions the bidirectional
+link alerts needed: `Session.alert_id` alongside the existing
+`Alert.session_id`.
+
+**New, not a fix**: each `CrewMember` gets a `color` (hex, auto-assigned from
+a fixed palette) — the answer to "how do you tell crew members apart at a
+glance" for the Android redesign. `GET /api/crew/{name}/skills`, backed by
+`AgentBackend.list_skills()` → a live `GET /v1/skills` on that crew member's
+own Hermes gateway (confirmed to exist by reading Hermes' actual source,
+not assumed) — never cached, so it can't show a skill Hermes no longer has.
+`GET /api/sessions` (list) — didn't exist before, needed for an Android Chat
+tab; required adding a `user_id` column to the `sessions` table for the
+first time (it predates multi-user auth entirely, per §10 — was pure
+JSON-blob-by-id until now) with a startup backfill from each row's `doc`.
+
+**Frontend**: `AgentsSection.tsx` → `CrewSection.tsx` (renamed, relabeled,
+now shows/edits `color`), and further split internally once `/agent` and
+`/crew` diverged: a "Your agent" connect form when no agent is configured
+yet, "Your crew" (list + add-another-member form) once one is. **Left alone
+on purpose**: `AgentTokenSection.tsx` and `POST /auth/agent-token` — a
+different feature entirely (a bearer token for an *external* agent, like
+Hermes or a coding tool, to call *this* API; see §2's original mint-a-key
+purpose), not touched by any of the above.
+
+**See** `gaca-planning/hermes/0002-storage-boundary.md` for the resulting
+rule on what gaca-api persists (crew identity/config) vs. what it always
+reads live from Hermes (skills, and models once built) — asked for
+explicitly during this pass, worth keeping as its own decision doc rather
+than buried in a changelog entry.
+
+**Not done as part of this**: the web frontend fix above covers `CrewSection`
+only — no chat/skills UI was added to the web app, since Android owns triage
+and chat both (§7 of the original plan). Android itself: not built yet,
+handed off as `gaca-android/BUILD_NEXT.md`.
+
+---
+
+## 12. What isn't in this build
 
 - A live SSE alert stream (slice 6, cut 2026-08-21 — see its heading)
 - Renaming the streaming `Event` concept (decided against)

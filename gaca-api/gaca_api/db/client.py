@@ -13,6 +13,7 @@ column holding the full Pydantic model as JSON. Objects stay natural — dump wi
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import aiosqlite
@@ -31,6 +32,7 @@ CREATE TABLE IF NOT EXISTS users (
 );
 CREATE TABLE IF NOT EXISTS sessions (
     id         TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL,
     created_at TEXT NOT NULL,
     doc        TEXT NOT NULL
 );
@@ -93,6 +95,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_push_tokens_token
 # so we look before we leap.
 _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("users", "google_sub", "TEXT"),
+    # Sessions predate multi-user auth entirely (the original chat feature
+    # had no user concept at all) — `user_id` lived only inside `doc` until
+    # GET /sessions (listing "my" sessions for the Chat tab) needed it as a
+    # real, indexed column. Nullable here because ALTER TABLE can't backfill
+    # a NOT NULL default from existing rows; _backfill_session_user_ids does
+    # that from each row's own `doc` right after.
+    ("sessions", "user_id", "TEXT"),
 )
 
 # Indexes that depend on a column from _ADDED_COLUMNS, so they can only be
@@ -100,6 +109,8 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
 _LATE_INDEXES = """
 CREATE UNIQUE INDEX IF NOT EXISTS ux_users_google_sub
     ON users (google_sub) WHERE google_sub IS NOT NULL;
+CREATE INDEX IF NOT EXISTS ix_sessions_user
+    ON sessions (user_id, created_at);
 """
 
 
@@ -109,6 +120,24 @@ async def _add_missing_columns(conn: aiosqlite.Connection) -> None:
             present = {row["name"] for row in await cursor.fetchall()}
         if column not in present:
             await conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
+
+
+async def _backfill_session_user_ids(conn: aiosqlite.Connection) -> None:
+    """A session row added before the `user_id` column existed still has its
+    real owner inside `doc` — promote it into the column so it's usable in a
+    WHERE clause instead of requiring a full-table scan. No-op (empty
+    result) on a database that never had the gap, fresh or otherwise.
+    """
+    async with conn.execute(
+        "SELECT id, doc FROM sessions WHERE user_id IS NULL"
+    ) as cursor:
+        rows = await cursor.fetchall()
+    for row in rows:
+        owner = json.loads(row["doc"]).get("user_id")
+        if owner is not None:
+            await conn.execute(
+                "UPDATE sessions SET user_id = ? WHERE id = ?", (owner, row["id"])
+            )
 
 
 async def connect() -> None:
@@ -124,6 +153,7 @@ async def connect() -> None:
     await _conn.execute("PRAGMA journal_mode=WAL")
     await _conn.executescript(_SCHEMA)
     await _add_missing_columns(_conn)
+    await _backfill_session_user_ids(_conn)
     await _conn.executescript(_LATE_INDEXES)
     await _conn.commit()
 

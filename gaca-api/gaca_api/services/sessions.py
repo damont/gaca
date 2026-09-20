@@ -8,10 +8,17 @@ from ..models.session import SessionDoc
 from .exceptions import NotFound
 
 
-async def create(user_id: str, title: str | None) -> SessionDoc:
-    session = SessionDoc(user_id=user_id, title=title)
+async def create(
+    user_id: str, title: str | None, crew: str, *, alert_id: str | None = None
+) -> SessionDoc:
+    session = SessionDoc(user_id=user_id, title=title, crew=crew, alert_id=alert_id)
     await sessions_db.insert(session)
     return session
+
+
+async def list_for_user(user_id: str) -> list[SessionDoc]:
+    """This user's sessions, newest first — the Chat tab's list."""
+    return await sessions_db.find_by_user(user_id)
 
 
 async def ensure_owned(user_id: str, session_id: str) -> SessionDoc:

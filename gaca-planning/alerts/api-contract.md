@@ -1,16 +1,16 @@
-# GACA Alerts — HTTP contract
+# GACA Alerts & Chat — HTTP contract
 
-**Status:** Create, read, triage (act/dismiss/snooze) and delegate are
-implemented and tested server-side · **Date:** 2026-08-07, updated 2026-08-21
-**Audience:** the Android app (and anything else reading the inbox)
+**Status:** Alerts (create, read, triage, delegate), Crew management, Chat
+sessions, and Skills are all implemented and tested server-side ·
+**Date:** 2026-08-07, updated 2026-09-20 (crew rename + chat/skills)
+**Audience:** the Android app (and anything else reading the inbox or chatting)
 
 Standalone by design — you can build the app against this without reading
-[`build-plan.md`](build-plan.md). Endpoints land across slices 1–4 and 10 of
-that plan.
+[`build-plan.md`](build-plan.md).
 
-> **The API is the source of truth, not this file.** Once slice 2 ships, the
-> live schema is at `<base>/api/openapi.json` and a browsable UI at
-> `<base>/api/agent`. If they disagree with this document, they win.
+> **The API is the source of truth, not this file.** The live schema is at
+> `<base>/api/openapi.json` and a browsable UI at `<base>/api/agent`. If they
+> disagree with this document, they win.
 
 ---
 
@@ -46,7 +46,114 @@ Tokens do not auto-refresh. On `401`, send the user back to the login screen.
 
 ---
 
-## 2. The Alert object
+## 2. Agent and crew — connect once, then add profiles
+
+**There is no shared, app-wide agent.** Every account connects its own, in
+two steps that map onto two different resources:
+
+1. **`/agent`** — the one Hermes agent this account talks to. Connect once
+   (`POST /agent/connect`, host + port + API key); this also creates your
+   first crew member automatically, so there's already someone to chat with.
+   Move it to a new host later with `PUT /agent`.
+2. **`/crew`** — named profiles under that agent. A brand-new account starts
+   with exactly the one crew member `/agent/connect` created; add more with
+   `POST /crew` if the same box runs several purpose-built Hermes profiles
+   (e.g. "toolshed", "trading"), each its own port + API key.
+
+**Why two resources and not one form:** connecting is a one-time "is there
+an agent at all" question with a real error mode (already connected); adding
+a crew member is a repeatable "one more profile" question with a different
+one (duplicate name). Collapsing them caused real confusion building the
+first client against this API — see `build-plan.md` §11.
+
+A brand-new account can create and triage alerts (act/dismiss/snooze) with
+no agent connected at all. Chat (`POST /sessions`) and delegation
+(`POST /alerts/{id}/delegate`) are the two things that need one; both `400`
+with `CrewNotConfigured` if no crew member resolves, rather than failing
+some other way.
+
+**What's a Hermes implementation detail, not an API concept:** a crew member
+happens to be a separate Hermes process on its own port under the hood
+(rather than one process multiplexing several profiles) — that's why
+`port`/`api_key` exist on `CrewMember` at all. Nothing about *why* is part of
+this contract; treat `port` as an opaque addressing detail the API needs
+back, not something to build UI copy around.
+
+### `/agent`
+
+| | |
+|---|---|
+| `GET /api/agent` | `{ "connected": bool, "host": string \| null }` |
+| `POST /api/agent/connect` | body `{ "host", "port", "api_key", "name"? }` (`name` defaults `"default"`) → `201` + the full crew picture (below). `422` if already connected — this account gets one agent; use `PUT /agent` to move it, `POST /crew` to add another profile on it |
+| `PUT /api/agent` | body `{ "host" }` — move the connected agent to a new host. Leaves the crew list untouched |
+
+### `/agent/provisioning` — optional, lets gaca-api set up crew members for you
+
+A second, materially bigger grant than anything above: access to the box
+itself, so gaca-api can create a new crew member directly (choosing its
+port) instead of the user doing that by hand and re-entering the result.
+**How gaca-api actually reaches the box is not part of this contract** —
+today that's SSH (see `gaca-planning/hermes/0003-ssh-provisioning.md`), but
+nothing here should be built assuming that; treat `/provisioning`'s request
+body as an opaque access credential shaped the way this kind of access
+needs, the same way `CrewMember.port` is an opaque addressing detail (§2).
+Entirely optional — nothing about connecting the agent or managing crew
+requires it.
+
+| | |
+|---|---|
+| `GET /api/agent/provisioning` | `{ "enabled": bool, "host": string \| null, "username": string \| null }` — never the credential |
+| `PUT /api/agent/provisioning` | body `{ "host", "port"? (default 22), "username", "private_key" }` → same shape as GET. Not verified here |
+| `POST /api/agent/provisioning/test` | confirms the stored access actually works → `{ "ok": bool, "message": string }` — `200` either way; check `ok`, don't rely on the status code |
+
+**Not yet true, don't build against it:** `POST /crew` does not yet use this
+to actually create a profile on the box — that (Slice B) needs the box's
+real Hermes CLI syntax confirmed first. Today, enabling provisioning only
+gets you `provisioning/test`; `POST /crew` still requires `port`/`api_key`
+exactly as before.
+
+### The CrewMember object
+
+```jsonc
+{
+  "name": "toolshed",
+  "port": 8643,
+  "color": "#6B8F5A",   // hex, always present — see "Color" below
+  "is_default": false
+}
+```
+
+Never carries the API key — same rule as a password.
+
+### Color
+
+Every crew member has a persistent hex color, auto-assigned from a fixed
+6-hue palette when it's created (first swatch not already in use), unless
+the caller supplies one. **Use it everywhere that crew member shows up** —
+avatar, chat header accent, that crew member's own message bubbles, filter
+chips, a settings-row border — so which profile you're talking to is obvious
+at a glance without reading its name every time. It's a plain hex string the
+client renders as-is; the server is the one source of truth for it; nothing
+about the palette itself is part of this contract, just the field.
+
+### `/crew` endpoints
+
+| | |
+|---|---|
+| `GET /api/crew` | `{ "host": "http://david-claw", "crew": [CrewMember, …] }` |
+| `POST /api/crew` | body `{ "name", "port", "api_key", "color"? }` → `201` + the full picture. Adds *another* profile — the first one is created by `/agent/connect`, not here |
+| `PUT /api/crew/{name}` | body `{ "port", "api_key", "color"? }` — port+key required together (no partial update); color alone can't change without them |
+| `DELETE /api/crew/{name}` | `422` if it's the current default and others remain — set a different default first |
+| `POST /api/crew/{name}/default` | make this the fallback for a chat/delegation that doesn't name one |
+| `GET /api/crew/{name}/skills` | see §5 |
+
+Every mutating `/agent` or `/crew` endpoint returns the same
+`{ host, crew: [...] }` shape, so the client can just replace its whole
+local state after any change rather than patching it.
+
+---
+
+## 3. The Alert object
 
 ```jsonc
 {
@@ -58,8 +165,8 @@ Tokens do not auto-refresh. On `401`, send the user back to the login screen.
                                     // the request body, not authenticated. Do not
                                     // use it for trust decisions; `user_id` is the
                                     // real ownership boundary
-  "agent": "david-alerts",          // nullable. Which Hermes agent profile posted
-                                    // this — distinct from `source` (the channel).
+  "crew": "toolshed",               // nullable. Which crew member posted this —
+                                    // distinct from `source` (the channel).
                                     // Same trust level: advisory, unauthenticated
   "kind": "disk.low",               // free-form dotted string — do NOT switch on
                                     // an exhaustive list; new kinds appear without
@@ -78,11 +185,11 @@ Tokens do not auto-refresh. On `401`, send the user back to the login screen.
     { "label": "Show me what's big", "prompt": "List the 20 largest files under …" }
   ],
 
-  "status": "new",                  // stored status — see §3
-  "effective_status": "new",        // what to DISPLAY — see §3
+  "status": "new",                  // stored status — see §4
+  "effective_status": "new",        // what to DISPLAY — see §4
   "status_changed_at": "2026-08-07T14:22:05.123456Z",
   "snooze_until": null,             // set when snoozed
-  "session_id": null,               // set when delegated — the chat session running it
+  "session_id": null,               // set when delegated — the chat session running it (§6)
   "resolution_note": null,          // how it ended, or why it failed
   "parent_alert_id": null           // set on gaca.clarify children (may not ship initially)
 }
@@ -99,7 +206,7 @@ Tokens do not auto-refresh. On `401`, send the user back to the login screen.
 
 ---
 
-## 3. Status — read `effective_status`, send transitions against `status`
+## 4. Status — read `effective_status`, send transitions against `status`
 
 Six stored states:
 
@@ -151,7 +258,7 @@ it on another device. Refetch and re-render rather than retrying.
 
 ---
 
-## 4. Endpoints
+## 5. Alert endpoints
 
 ### `GET /api/alerts`
 
@@ -159,7 +266,7 @@ it on another device. Refetch and re-render rather than retrying.
 |---|---|---|---|
 | `status` | string | *(all)* | filters on **effective** status; repeatable |
 | `severity` | string | *(all)* | repeatable |
-| `agent` | string | *(all)* | repeatable |
+| `crew` | string | *(all)* | repeatable |
 | `since` | ISO-8601 | — | `created_at >` |
 | `limit` | int | `50` | max 200 |
 
@@ -170,7 +277,7 @@ it on another device. Refetch and re-render rather than retrying.
 }
 ```
 
-`status`, `severity`, and `agent` are repeatable — pass them more than once to
+`status`, `severity`, and `crew` are repeatable — pass them more than once to
 widen the filter. **Cursor pagination is not implemented yet**; `limit` alone
 is the whole story until an inbox gets big enough to need paging.
 
@@ -182,14 +289,15 @@ One Alert, or `404`.
 
 ### `POST /api/alerts/{id}/delegate`
 
-Hand it to Hermes.
+Hand it to a crew member. Opens a chat session (bidirectionally linked —
+see §6) and starts a run.
 
 ```jsonc
 // request — all fields optional
 {
   "instruction": "Free space but don't touch anything under /var/lib/gaca",
   "suggested_action_index": 0,   // convenience: use that action's prompt
-  "agent": "toolshed"             // which configured agent handles it — see §6
+  "crew": "toolshed"              // which configured crew member handles it — see §7
 }
 ```
 
@@ -207,15 +315,7 @@ watches its outcome and moves the alert on its own: `run.completed` →
 `acted`, since Hermes finishing isn't the same as you closing it out;
 `run.failed` → back to `new`, with the error in `resolution_note` (same "never
 silently vanish" rule §4 applies to every other terminal outcome). Poll
-`GET /api/alerts/{id}` — or the run's own stream, next paragraph — to see it
-land.
-
-> `session_id` links to an existing chat session, so the app can stream the
-> run's progress on `GET /api/sessions/{session_id}/events` — the pre-existing
-> SSE endpoint carrying `assistant.delta` / `tool.started` / `run.completed`.
-> That's the only live stream in this API — see §1 of the build plan for why
-> it's a different concept from an Alert, and §5 below for why the *alert list*
-> itself is plain polling, not a stream.
+`GET /api/alerts/{id}` — or the session's own stream, §6 — to see it land.
 
 ### `POST /api/alerts/{id}/act` · `/dismiss`
 
@@ -261,11 +361,127 @@ subject and an expiry, so there is no key label to read.
 
 ---
 
-## 4a. Push registration — FCM
+## 6. Chat — sessions and messages
 
-Added 2026-08-23, no longer out of scope (§5 below explains why polling was
-the whole story before this). Both routes require the normal `Authorization:
-Bearer` header, same as everything else.
+A session is a standing conversation with exactly one crew member, fixed for
+its whole lifetime (no mid-thread swap — start a new session to talk to
+someone else). It can start two ways: directly from the Chat tab, or as the
+side effect of delegating an alert. Either way it's the same object and the
+same endpoints from here on.
+
+### The Session object
+
+```jsonc
+{
+  "id": "01JX9…",
+  "created_at": "2026-09-20T14:00:00Z",
+  "title": "Disk usage on gaca-pi",   // nullable
+  "status": "idle",                   // idle | active
+  "crew": "toolshed",                 // which crew member this session talks to
+  "alert_id": "01JX8K2M4P7QRSTVWXYZ", // set only if this session was opened by
+                                       // a delegation — null for a session
+                                       // started directly from the Chat tab
+  "messages": [ { /* Message, GET only */ } ]
+}
+```
+
+**Bidirectional alert↔chat link:** an alert delegated via `/delegate` carries
+the forward pointer (`Alert.session_id`); the session it opens carries the
+back pointer (`Session.alert_id`). A chat screen with a non-null `alert_id`
+can render a "from alert" pill and `GET /api/alerts/{alert_id}` to show it;
+an alert screen with a non-null `session_id` can open that session directly.
+A session started from the Chat tab has `alert_id: null` — nothing to link
+back to.
+
+### `GET /api/sessions`
+
+```jsonc
+{ "sessions": [ { /* Session, no messages */ }, … ] }
+```
+
+Newest first. The Chat tab's list. Always scoped to the authenticated user.
+No filtering or pagination yet — revisit if a single user's chat list ever
+gets big enough to need it, same as the alert list (§5).
+
+### `POST /api/sessions`
+
+```jsonc
+// request — both optional
+{ "title": "…", "crew": "toolshed" }
+```
+
+`crew` names which of the account's crew members this chat talks to; omit it
+to use the account default. Unlike `/delegate`, there's no alert to
+soft-match against — just the explicit name or the default. `201` + the
+Session (no messages yet).
+
+### `GET /api/sessions/{id}`
+
+The Session plus every message in it, oldest first.
+
+### `POST /api/sessions/{id}/messages`
+
+```jsonc
+{ "content": "What's using all the disk space?" }
+```
+
+`202` immediately (`{ "turn_id": "…" }`) — this does not wait for a reply.
+The user message is persisted right away; the reply streams in on the events
+endpoint below and lands in the transcript when the run completes.
+
+### `GET /api/sessions/{id}/events`
+
+Server-Sent Events. Reconnect with `Last-Event-ID` to replay anything missed
+— events are durable and sequenced, not fire-and-forget. Event types:
+`assistant.delta`, `tool.started`, `run.completed`, `run.failed`. This is the
+one live stream in the API (see §8 for why the alert list itself is plain
+polling instead).
+
+---
+
+## 7. Which crew member handles a delegation
+
+`POST /{id}/delegate` takes an optional `crew` field naming one of the
+account's configured crew members. Resolution order:
+1. `crew` in the request body, if given — an explicit, deliberate choice, so
+   naming one that isn't configured is a `422`, not a silent fallback.
+2. Otherwise the alert's own `crew` field (who raised it), if it matches a
+   configured name.
+3. Otherwise the account's default crew member.
+
+If none of the three resolves to a real crew member, it's a `400` with
+`CrewNotConfigured` (§9).
+
+A session started directly (`POST /sessions`) has no alert to fall through
+via step 2 — just `crew` in the body, else the default.
+
+---
+
+## 8. Skills — what a crew member can actually do
+
+Read-only insight, not control: skills load however Hermes loads them for
+that crew member; the app just shows what's there. **Never cached by
+gaca-api** — every call is live against that crew member's own Hermes
+gateway, so it can never show a skill Hermes no longer has installed.
+
+### `GET /api/crew/{name}/skills`
+
+```jsonc
+[
+  { "name": "email", "description": "Reads and drafts Gmail messages.", "category": "productivity" },
+  { "name": "smart-home", "description": "Controls Home Assistant devices.", "category": "smart-home" }
+]
+```
+
+Sorted by category then name. `category` may be `null` for an uncategorized
+skill. `404` if `name` isn't one of this account's configured crew members.
+
+---
+
+## 8a. Push registration — FCM
+
+Both routes require the normal `Authorization: Bearer` header, same as
+everything else.
 
 ### `POST /api/push/register`
 
@@ -295,13 +511,17 @@ signed out.
 
 Fan-out lives server-side (`services/push.py`), not something the app drives:
 a new alert (`POST /api/alerts`, including a dedupe re-fire that resets
-`status` to `new`) and a delegation settling (§4's `/delegate`, either
+`status` to `new`) and a delegation settling (§5's `/delegate`, either
 outcome — Hermes finishing or the run failing) each send one push per
 registered device. Best-effort throughout: a missing/invalid token is dropped
 server-side, and nothing about alert creation or delegation ever fails or
-slows down because a push couldn't be sent. The app's own polling (§5) is
-still the source of truth; push is a "tell me sooner" layered on top, not a
-replacement.
+slows down because a push couldn't be sent. The app's own polling (§9 below)
+is still the source of truth; push is a "tell me sooner" layered on top, not
+a replacement.
+
+**A standalone chat session (not opened via delegation) does not push on
+completion yet** — that's a known gap, not a documented behavior; don't build
+against it either way.
 
 Every message carries `data.alert_id` and `data.severity` (not just a title/
 body) so the app can deep-link straight to the alert and pick a notification
@@ -317,7 +537,7 @@ nothing enforces that across the two repos.
 
 ---
 
-## 5. Reading the inbox — plain polling, no stream
+## 9. Reading the inbox — plain polling, no stream
 
 There is no `/api/alerts/stream`. An earlier draft of this doc specced one
 (SSE, keyed by `user_id`) for a "live while the app is open" inbox; cut on
@@ -325,71 +545,51 @@ There is no `/api/alerts/stream`. An earlier draft of this doc specced one
 
 1. **It wasn't push.** It only helped if the inbox screen happened to be open
    at the exact instant Hermes posted something — everything else (the app
-   backgrounded, the phone locked) needed FCM regardless, which at the time
-   (2026-08-21) was out of scope. That's a narrow window to build a whole
-   channel for.
+   backgrounded, the phone locked) needed FCM regardless. That's a narrow
+   window to build a whole channel for.
 2. **It duplicated a real stream with a fake one.** The interactive
-   back-and-forth that actually benefits from being live — watching Hermes
-   work once you've delegated — already has one: `GET
-   /api/sessions/{session_id}/events` (§3, `POST /{id}/delegate`). The alert
-   list itself doesn't need the same treatment; you look at it, act on it, and
-   move on.
+   back-and-forth that actually benefits from being live — watching a crew
+   member work — already has one: `GET /api/sessions/{id}/events` (§6). The
+   alert list itself doesn't need the same treatment; you look at it, act on
+   it, and move on.
 
 **So: `GET /api/alerts` on app-foreground, plus pull-to-refresh, is still the
 whole story for the alert *list*.** Simpler client, no reconnect-with-backoff
 logic, no `bus.py` channel to maintain server-side. **FCM itself did land**
-(§4a, 2026-08-23) — "notify me the instant this happens" is real now — but it
-answers a different question than this section does: it's a push *notification*
+(§8a) — "notify me the instant this happens" is real now — but it answers a
+different question than this section does: it's a push *notification*
 telling you something changed, not a live *stream* of the inbox screen. The
-app still fetches the alert list the same way it always did; FCM just gives it
-a reason to do that sooner than the next foreground/pull-to-refresh.
+app still fetches the alert list the same way it always did; FCM just gives
+it a reason to do that sooner than the next foreground/pull-to-refresh.
 
 ---
 
-## 6. Status codes
+## 10. Status codes
 
 | Code | Meaning | What the app should do |
 |---|---|---|
-| `200` / `201` | Success | — |
-| `400` | On `/{id}/delegate`: this user has no usable agent — no host, no agents, or no default | Tell them to set it up in the web app's profile page. Don't retry |
-| `422` | Body doesn't match the schema — including `snooze until` in the past | Fix and don't retry |
+| `200` / `201` / `202` | Success | — |
+| `400` | `CrewNotConfigured` — this user has no usable crew member: no host, no crew, or no default | Tell them to set one up (Settings → crew). Don't retry |
+| `422` | Body doesn't match the schema — including `snooze until` in the past, or naming a `crew`/`suggested_action_index` that doesn't exist | Fix and don't retry |
 | `401` | Token missing, malformed, or expired | Send to login. **Do not retry** |
 | `403` | Authenticated but forbidden | Show the body. Don't retry |
 | `404` | Doesn't exist or isn't yours | Drop it from the list; the id is stale |
-| `409` | Illegal state transition | Refetch the alert — someone else moved it |
+| `409` | Illegal state transition | Refetch the resource — someone else moved it |
 | `5xx` | Server error | Backoff with jitter |
 
-`409` is the one worth handling well: it means the alert moved underneath you —
-Hermes settled a delegation, or you triaged it on another device. Refetch and
-re-render rather than showing an error.
-
-**There is no shared, app-wide agent** — every account brings its own via the
-web app's profile page: one shared host (`PUT /api/auth/agent-host`) plus any
-number of named agents under it (`POST /api/auth/agents`, each with its own
-port and key; `GET /api/auth/agents` lists them, never the keys). A
-brand-new account can create and triage alerts (act/dismiss/snooze) with
-nothing configured; `/delegate` is the one endpoint that needs an agent, and
-400s clearly if none resolves rather than failing some other way.
-
-**Which agent handles a delegation** — `POST /{id}/delegate` takes an optional
-`agent` field naming one of the account's configured agents. Resolution order:
-1. `agent` in the request body, if given — an explicit, deliberate choice, so
-   naming one that isn't configured is a `422`, not a silent fallback.
-2. Otherwise the alert's own `agent` field (who raised it), if it matches a
-   configured agent name.
-3. Otherwise the account's default agent.
-
-If none of the three resolves to a real agent, it's the `400` above.
+`409` is the one worth handling well: it means the resource moved underneath
+you — a run settled a delegation, or you triaged it on another device.
+Refetch and re-render rather than showing an error.
 
 ---
 
-## 7. Division of responsibility
+## 11. Division of responsibility
 
 | | Owns |
 |---|---|
-| **Hermes** | Noticing things. Writing well-formed alerts — good `dedupe_key`, honest `severity`, useful `suggested_actions`. Doing delegated work |
-| **gaca-api** | System of record. Auth. State machine and its guards. Effective-status computation. Fan-out |
-| **Android** | Triage UX. Rendering unknown `kind`s gracefully. Local read/unread. Reconnect and refetch |
+| **Hermes** | Noticing things. Writing well-formed alerts — good `dedupe_key`, honest `severity`, useful `suggested_actions`. Doing delegated and chatted-with work. Its own skills |
+| **gaca-api** | System of record for users, crew config, alerts, sessions and messages. Auth. State machine and its guards. Effective-status computation. Fan-out. Never caches a crew member's skills or models — always live |
+| **Android** | Triage and chat UX. Rendering unknown `kind`s gracefully. Making which crew member you're talking to obvious (color, name) everywhere it's relevant. Local read/unread. Reconnect and refetch |
 | **frontend** | Signup, login, minting the agent token. **Not** triage |
 
 **The app does not compute state.** Don't locally derive whether a snooze has

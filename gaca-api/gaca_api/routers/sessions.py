@@ -5,17 +5,17 @@ DB model to a response schema. No business logic, no DB access here.
 
 Every route requires auth and is scoped to the caller — this predates the
 alerting build (original chat feature, no user concept at all) and was
-retrofitted here alongside per-user agent credentials.
+retrofitted here alongside per-user crew credentials.
 """
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
 from sse_starlette.sse import EventSourceResponse
 
-from ..agent import runtime as agent_runtime
 from ..models.user import UserDoc
 from ..schemas.message import MessageAccepted, MessageCreate, MessageOut
-from ..schemas.session import SessionCreate, SessionDetail, SessionOut
+from ..schemas.session import SessionCreate, SessionDetail, SessionList, SessionOut
+from ..services import auth as auth_service
 from ..services import events as events_service
 from ..services import runs as run_service
 from ..services import sessions as session_service
@@ -28,8 +28,16 @@ router = APIRouter(prefix="/sessions", tags=["sessions"])
 async def create_session(
     body: SessionCreate, user: UserDoc = Depends(get_current_user)
 ) -> SessionOut:
-    session = await session_service.create(user.id, body.title)
+    crew_member = auth_service.resolve_crew_member(user, body.crew)
+    session = await session_service.create(user.id, body.title, crew_member.name)
     return SessionOut.model_validate(session)
+
+
+@router.get("")
+async def list_sessions(user: UserDoc = Depends(get_current_user)) -> SessionList:
+    """The Chat tab: this user's sessions, newest first."""
+    sessions = await session_service.list_for_user(user.id)
+    return SessionList(sessions=[SessionOut.model_validate(s) for s in sessions])
 
 
 @router.get("/{session_id}")
@@ -49,8 +57,14 @@ async def post_message(
     body: MessageCreate,
     user: UserDoc = Depends(get_current_user),
 ) -> MessageAccepted:
-    await session_service.ensure_owned(user.id, session_id)
-    backend = agent_runtime.backend_for(user.agent_base_url, user.agent_api_key)
+    session = await session_service.ensure_owned(user.id, session_id)
+    # `session.crew` is unset only for a session created before crew members
+    # existed; fall back to the account default the same way a fresh session
+    # would have resolved it, rather than 400ing on old data.
+    crew_member = auth_service.find_crew_member(user, session.crew)
+    if crew_member is None:
+        crew_member = auth_service.resolve_crew_member(user, None)
+    backend = auth_service.backend_for_crew(user, crew_member)
     message = await run_service.start_turn(backend, session_id, body.content)
     return MessageAccepted(turn_id=message.id)
 

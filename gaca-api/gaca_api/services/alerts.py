@@ -215,17 +215,22 @@ async def delegate(
     *,
     instruction: str | None = None,
     suggested_action_index: int | None = None,
-    agent: str | None = None,
+    crew: str | None = None,
 ) -> AlertDoc:
-    """Hand an alert to one of the caller's own agents: open a session, start
-    a run, mark it delegated.
+    """Hand an alert to one of the caller's own crew members: open a session,
+    start a run, mark it delegated.
 
-    Which agent handles it is resolved by auth_service.resolve_agent_for_delegate:
-    `agent` (an explicit, named choice) first, then the alert's own `agent`
-    field (who raised it), then the account's default. Takes the full
-    UserDoc, not just an id — resolving an agent needs the user's configured
-    host/agents (raises AgentNotConfigured if none resolve, same as the chat
-    routes).
+    Which crew member handles it is resolved by
+    auth_service.resolve_crew_for_delegate: `crew` (an explicit, named
+    choice) first, then the alert's own `crew` field (who raised it), then
+    the account's default. Takes the full UserDoc, not just an id — resolving
+    a crew member needs the user's configured host/crew (raises
+    CrewNotConfigured if none resolve, same as the chat routes).
+
+    The session this opens carries `crew` (which member owns it, fixed for
+    its lifetime) and `alert_id` (the chat-side half of the bidirectional
+    link back to this alert — the alert holds the forward pointer via
+    `session_id`, set below).
 
     Same guard as manual triage — only a TRIAGEABLE alert (`new`, `snoozed`,
     or `completed`) can be delegated. The run settles the alert asynchronously
@@ -237,12 +242,14 @@ async def delegate(
         raise InvalidTransition("alert", alert_id, alert.status, "delegated")
 
     # Validate the request against the alert's own data before touching the
-    # agent at all — a bad suggested_action_index is a 422 regardless of
-    # whether this user has even configured an agent yet.
+    # crew at all — a bad suggested_action_index is a 422 regardless of
+    # whether this user has even configured a crew member yet.
     prompt = _delegate_prompt(alert, instruction, suggested_action_index)
-    agent_profile = auth_service.resolve_agent_for_delegate(user, agent, alert.agent)
-    backend = auth_service.backend_for_agent(user, agent_profile)
-    session = await session_service.create(user.id, alert.title)
+    crew_member = auth_service.resolve_crew_for_delegate(user, crew, alert.crew)
+    backend = auth_service.backend_for_crew(user, crew_member)
+    session = await session_service.create(
+        user.id, alert.title, crew_member.name, alert_id=alert.id
+    )
 
     updated = alert.model_copy(
         update={
@@ -323,7 +330,7 @@ async def list_for_user(
     *,
     statuses: list[str] | None = None,
     severities: list[str] | None = None,
-    agents: list[str] | None = None,
+    crews: list[str] | None = None,
     limit: int = 50,
     now: datetime | None = None,
 ) -> list[AlertDoc]:
@@ -342,8 +349,8 @@ async def list_for_user(
     if severities:
         wanted = set(severities)
         alerts = [a for a in alerts if a.severity in wanted]
-    if agents:
-        wanted = set(agents)
-        alerts = [a for a in alerts if a.agent in wanted]
+    if crews:
+        wanted = set(crews)
+        alerts = [a for a in alerts if a.crew in wanted]
 
     return alerts[:limit]

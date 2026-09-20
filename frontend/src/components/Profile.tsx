@@ -1,5 +1,5 @@
 import { useAuth } from "../context/AuthContext";
-import AgentsSection from "./profile/AgentsSection";
+import CrewSection from "./profile/CrewSection";
 import AgentTokenSection from "./profile/AgentTokenSection";
 
 /** The only signed-in screen. Everything this app does after sign-in lives here. */
@@ -21,7 +21,7 @@ export default function Profile() {
         </button>
       </header>
 
-      <AgentsSection />
+      <CrewSection />
       <AgentTokenSection />
     </main>
   );

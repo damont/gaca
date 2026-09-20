@@ -17,6 +17,7 @@ from typing import Protocol, runtime_checkable
 from ..schemas.event import GacaEvent
 from ..schemas.message import MessageOut
 from ..schemas.model import ModelConfig, ModelInfo, ProviderCredential
+from ..schemas.skill import SkillInfo
 
 
 @runtime_checkable
@@ -80,4 +81,14 @@ class AgentBackend(Protocol):
 
     async def get_model_info(self, model_id: str) -> ModelInfo:
         """Return metadata/capabilities for one model."""
+        ...
+
+    # ── Skills ──────────────────────────────────────────────────────
+    async def list_skills(self) -> list[SkillInfo]:
+        """List the skills installed and visible to this crew member.
+
+        Read-only insight, not control — skills load however the engine
+        loads them; the app just shows what's there. Never cached by
+        gaca-api: each call reflects whatever the engine currently has.
+        """
         ...

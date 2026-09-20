@@ -144,3 +144,23 @@ def test_reserved_methods_not_implemented():
 
     with pytest.raises(NotImplementedError):
         asyncio.run(call())
+
+
+def test_list_skills_maps_hermes_v1_skills():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/skills"
+        assert request.method == "GET"
+        return httpx.Response(200, json={
+            "object": "list",
+            "data": [
+                {"name": "email", "description": "Reads and drafts Gmail.", "category": "productivity"},
+                {"name": "research", "description": "Runs web research.", "category": "research"},
+            ],
+        })
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = HermesAdapter("http://engine:8642", "supersecretkey123456", client=client)
+
+    skills = asyncio.run(adapter.list_skills())
+    assert [s.name for s in skills] == ["email", "research"]
+    assert skills[0].category == "productivity"

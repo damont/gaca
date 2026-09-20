@@ -8,8 +8,13 @@ from .client import connection
 async def insert(session: SessionDoc) -> None:
     conn = connection()
     await conn.execute(
-        "INSERT INTO sessions (id, created_at, doc) VALUES (?, ?, ?)",
-        (session.id, session.created_at.isoformat(), session.model_dump_json()),
+        "INSERT INTO sessions (id, user_id, created_at, doc) VALUES (?, ?, ?, ?)",
+        (
+            session.id,
+            session.user_id,
+            session.created_at.isoformat(),
+            session.model_dump_json(),
+        ),
     )
     await conn.commit()
 
@@ -27,3 +32,13 @@ async def exists(session_id: str) -> bool:
         "SELECT 1 FROM sessions WHERE id = ? LIMIT 1", (session_id,)
     ) as cursor:
         return await cursor.fetchone() is not None
+
+
+async def find_by_user(user_id: str) -> list[SessionDoc]:
+    """Every session for a user, newest first — the Chat tab's list."""
+    async with connection().execute(
+        "SELECT doc FROM sessions WHERE user_id = ? ORDER BY created_at DESC, id DESC",
+        (user_id,),
+    ) as cursor:
+        rows = await cursor.fetchall()
+    return [SessionDoc.model_validate_json(row["doc"]) for row in rows]

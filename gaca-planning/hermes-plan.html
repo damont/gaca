@@ -254,6 +254,7 @@ Step 4 is the proof. When a draft composed by an agent that <em>cannot send it</
   <li><strong>The phone is the control surface.</strong> Messages, events, and approvals; nothing should require a terminal.</li>
   <li><strong>SQLite is the durable record; the bus is ephemeral.</strong> Approvals and events survive reconnects and replay by <code>Last-Event-ID</code>.</li>
   <li><strong>The scope is this and no more for now.</strong> The approval/event layer is the whole of the next build.</li>
+  <li><strong>gaca-api stores how to reach a crew member, never what it can currently do.</strong> Identity/config (host, port, key, color) is a database row; skills and models are always read live from Hermes, never cached — see <a href="hermes/0002-storage-boundary.md">ADR 0002</a>.</li>
 </ol>
 </div>
 

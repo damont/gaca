@@ -31,12 +31,12 @@ def test_unknown_severity_rejected(severity):
         AlertCreate(**_payload(severity=severity))
 
 
-def test_agent_defaults_to_none():
-    assert AlertCreate(**_payload()).agent is None
+def test_crew_defaults_to_none():
+    assert AlertCreate(**_payload()).crew is None
 
 
-def test_agent_accepts_an_arbitrary_profile_name():
-    assert AlertCreate(**_payload(agent="david-alerts")).agent == "david-alerts"
+def test_crew_accepts_an_arbitrary_profile_name():
+    assert AlertCreate(**_payload(crew="david-alerts")).crew == "david-alerts"
 
 
 def test_arbitrary_kind_accepted():

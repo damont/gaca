@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .base import new_id, utcnow
 
@@ -46,12 +46,12 @@ class AlertDoc(BaseModel):
     # to read. `user_id` above is the real ownership boundary.
     source: str = "unknown"
 
-    # Which Hermes agent profile posted this, e.g. "david-alerts" or
-    # "work-assistant" — distinct from `source` (which channel/mechanism
-    # posted it, e.g. "hermes-skill" vs "manual"). Same trust level as
-    # `source`: advisory, unauthenticated, just for telling agents apart and
+    # Which of the user's crew members posted this, e.g. "toolshed" or
+    # "trading" — distinct from `source` (which channel/mechanism posted it,
+    # e.g. "hermes-skill" vs "manual"). Same trust level as `source`:
+    # advisory, unauthenticated, just for telling crew members apart and
     # filtering the inbox by one of them.
-    agent: str | None = None
+    crew: str | None = None
 
     # Free-form dotted string: "disk.low", "email.flagged", "cal.conflict".
     # Deliberately not an enum — the agent must be able to invent a new kind
@@ -78,6 +78,17 @@ class AlertDoc(BaseModel):
     resolution_note: str | None = None
     # Set on a clarification raised against another alert.
     parent_alert_id: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_agent_field(cls, data):
+        """Read rows written before the agent→crew rename (2026-09): the old
+        `agent` key maps onto `crew` when `crew` isn't already present, so an
+        already-posted alert's poster survives instead of reading back None.
+        """
+        if isinstance(data, dict) and "crew" not in data and "agent" in data:
+            data["crew"] = data["agent"]
+        return data
 
     @field_validator("created_at", "status_changed_at", "snooze_until")
     @classmethod

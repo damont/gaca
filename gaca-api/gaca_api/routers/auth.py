@@ -15,13 +15,8 @@ from google.oauth2 import id_token as google_id_token
 from ..config import settings
 from ..models.user import UserDoc
 from ..schemas.auth import (
-    AgentCreate,
-    AgentHostUpdate,
-    AgentOut,
-    AgentsOut,
     AgentTokenRequest,
     AgentTokenResponse,
-    AgentUpdate,
     GoogleLoginRequest,
     RegisterRequest,
     TokenResponse,
@@ -155,67 +150,3 @@ async def agent_token(
     )
 
 
-def _agents_out(user: UserDoc) -> AgentsOut:
-    return AgentsOut(
-        host=user.agent_host,
-        agents=[
-            AgentOut(name=a.name, port=a.port, is_default=a.name == user.default_agent)
-            for a in user.agents
-        ],
-    )
-
-
-@router.get("/agents", response_model=AgentsOut)
-async def list_agents(user: UserDoc = Depends(get_current_user)):
-    """This user's shared host and every agent configured under it.
-
-    Never returns a key — same rule as a password.
-    """
-    return _agents_out(user)
-
-
-@router.put("/agent-host", response_model=AgentsOut)
-async def set_agent_host(
-    data: AgentHostUpdate,
-    user: UserDoc = Depends(get_current_user),
-):
-    """Set the scheme+host shared by every one of this user's agents."""
-    updated = await auth_service.set_agent_host(user, data.host)
-    return _agents_out(updated)
-
-
-@router.post("/agents", status_code=status.HTTP_201_CREATED, response_model=AgentsOut)
-async def add_agent(
-    data: AgentCreate,
-    user: UserDoc = Depends(get_current_user),
-):
-    """Register a new named agent. The first one added becomes the default."""
-    updated = await auth_service.add_agent(user, data.name, data.port, data.api_key)
-    return _agents_out(updated)
-
-
-@router.put("/agents/{name}", response_model=AgentsOut)
-async def update_agent(
-    name: str,
-    data: AgentUpdate,
-    user: UserDoc = Depends(get_current_user),
-):
-    """Replace an existing agent's port and key."""
-    updated = await auth_service.update_agent(user, name, data.port, data.api_key)
-    return _agents_out(updated)
-
-
-@router.delete("/agents/{name}", response_model=AgentsOut)
-async def remove_agent(name: str, user: UserDoc = Depends(get_current_user)):
-    """Delete a named agent. Rejected if it's the default and others remain —
-    set a different default first."""
-    updated = await auth_service.remove_agent(user, name)
-    return _agents_out(updated)
-
-
-@router.post("/agents/{name}/default", response_model=AgentsOut)
-async def set_default_agent(name: str, user: UserDoc = Depends(get_current_user)):
-    """Make this the agent used when a delegate/session doesn't name one and
-    the alert's own `agent` doesn't match a configured name."""
-    updated = await auth_service.set_default_agent(user, name)
-    return _agents_out(updated)

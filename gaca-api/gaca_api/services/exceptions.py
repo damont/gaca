@@ -46,17 +46,17 @@ class InvalidRequest(Exception):
         super().__init__(message)
 
 
-class AgentNotConfigured(Exception):
-    """The caller has no usable agent to reach yet: no host, no agents, or no
-    default among the agents they do have.
+class CrewNotConfigured(Exception):
+    """The caller has no usable crew member to reach yet: no host, no crew,
+    or no default among the crew they do have.
 
     Mapped to HTTP 400. A normal, expected state for a new user — not a
-    startup or wiring bug — since every operator brings their own agent(s)
+    startup or wiring bug — since every operator brings their own crew
     rather than sharing one configured for the whole app.
     """
 
     def __init__(self) -> None:
         super().__init__(
-            "agent not configured — set a host via PUT /api/auth/agent-host "
-            "and add at least one agent via POST /api/auth/agents first"
+            "crew not configured — set a host via PUT /api/crew/host "
+            "and add at least one crew member via POST /api/crew first"
         )

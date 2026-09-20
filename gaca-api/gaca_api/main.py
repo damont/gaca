@@ -14,10 +14,10 @@ from fastapi.responses import JSONResponse
 from .agent import runtime as agent_runtime
 from .bus import event_bus
 from .db import client
-from .routers import alerts, auth, push, sessions
+from .routers import agent, alerts, auth, crew, push, sessions
 from .services import push as push_service
 from .services.exceptions import (
-    AgentNotConfigured,
+    CrewNotConfigured,
     InvalidRequest,
     InvalidTransition,
     NotFound,
@@ -83,11 +83,11 @@ async def handle_invalid_request(
     return JSONResponse(status_code=422, content={"detail": str(exc)})
 
 
-@app.exception_handler(AgentNotConfigured)
-async def handle_agent_not_configured(
-    request: Request, exc: AgentNotConfigured
+@app.exception_handler(CrewNotConfigured)
+async def handle_crew_not_configured(
+    request: Request, exc: CrewNotConfigured
 ) -> JSONResponse:
-    """Map a missing per-user agent config to HTTP 400, in one place."""
+    """Map a missing per-user crew config to HTTP 400, in one place."""
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
@@ -116,6 +116,8 @@ async def get_schema():
 # Routers carry their resource prefix ("/auth", "/sessions"); the "/api" mount
 # point is applied here, matching how calendarapp and toolshed mount theirs.
 app.include_router(auth.router, prefix="/api")
+app.include_router(agent.router, prefix="/api")
+app.include_router(crew.router, prefix="/api")
 app.include_router(alerts.router, prefix="/api")
 app.include_router(push.router, prefix="/api")
 app.include_router(sessions.router, prefix="/api")

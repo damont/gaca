@@ -25,17 +25,20 @@ export interface AgentTokenResponse extends TokenResponse {
 }
 
 /**
- * GET /api/auth/agents — this user's own agents (never shared, app-wide
- * ones), all sharing one host. `api_key` never round-trips back from the
- * API, same rule as a password — these two shapes just don't have the field.
+ * GET /api/crew — this user's own crew (never shared, app-wide agents), all
+ * sharing one host. `api_key` never round-trips back from the API, same
+ * rule as a password — these two shapes just don't have the field. `color`
+ * is a hex string, auto-assigned server-side unless the caller picks one —
+ * render it consistently wherever this crew member shows up.
  */
-export interface AgentProfile {
+export interface CrewMember {
   name: string;
   port: number;
+  color: string;
   is_default: boolean;
 }
 
-export interface AgentsConfig {
+export interface CrewConfig {
   host: string | null;
-  agents: AgentProfile[];
+  crew: CrewMember[];
 }
