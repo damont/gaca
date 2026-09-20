@@ -5,7 +5,7 @@ a client written against one app reads the same on this one.
 """
 from __future__ import annotations
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, model_validator
 
 
 class RegisterRequest(BaseModel):
@@ -115,12 +115,25 @@ _HEX_COLOR = Field(
 
 
 class CrewMemberCreate(BaseModel):
-    """Body for POST /crew — register a new named crew member."""
+    """Body for POST /crew — register a new named crew member.
+
+    Give `port` + `api_key` to register one you already set up by hand.
+    Omit both to have gaca-api create a brand new one on the box directly
+    instead — it picks the port and generates the key; requires
+    provisioning access already granted (PUT /agent/provisioning)."""
 
     name: str = Field(..., min_length=1, max_length=50)
-    port: int = Field(..., ge=1, le=65535)
-    api_key: str = Field(..., min_length=1, max_length=500)
+    port: int | None = Field(default=None, ge=1, le=65535)
+    api_key: str | None = Field(default=None, min_length=1, max_length=500)
     color: str | None = _HEX_COLOR
+
+    @model_validator(mode="after")
+    def _port_and_key_together(self) -> "CrewMemberCreate":
+        if (self.port is None) != (self.api_key is None):
+            raise ValueError(
+                "port and api_key must be given together, or both omitted"
+            )
+        return self
 
 
 class CrewMemberUpdate(BaseModel):

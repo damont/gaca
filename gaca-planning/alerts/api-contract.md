@@ -105,12 +105,14 @@ requires it.
 | `GET /api/agent/provisioning` | `{ "enabled": bool, "host": string \| null, "username": string \| null }` — never the credential |
 | `PUT /api/agent/provisioning` | body `{ "host", "port"? (default 22), "username", "private_key" }` → same shape as GET. Not verified here |
 | `POST /api/agent/provisioning/test` | confirms the stored access actually works → `{ "ok": bool, "message": string }` — `200` either way; check `ok`, don't rely on the status code |
+| `POST /api/agent/discover` | finds crew members already running on the box but never registered through gaca-api, and adds them → the full crew picture, same shape `GET /crew` does. Read-only against the box; never overwrites a crew member already known by that name. `400` (`CrewNotConfigured`) if provisioning access isn't enabled |
 
-**Not yet true, don't build against it:** `POST /crew` does not yet use this
-to actually create a profile on the box — that (Slice B) needs the box's
-real Hermes CLI syntax confirmed first. Today, enabling provisioning only
-gets you `provisioning/test`; `POST /crew` still requires `port`/`api_key`
-exactly as before.
+Once provisioning is enabled, **`POST /crew` can create a profile for you**:
+omit both `port` and `api_key` in the request body (§ below) and gaca-api
+picks the port and generates the key, instead of you setting one up by hand
+and typing the result in. `502` if that fails (the box was unreachable, the
+name already exists as a Hermes profile, etc.) — the response body's
+`detail` carries the real underlying error.
 
 ### The CrewMember object
 
@@ -141,7 +143,7 @@ about the palette itself is part of this contract, just the field.
 | | |
 |---|---|
 | `GET /api/crew` | `{ "host": "http://david-claw", "crew": [CrewMember, …] }` |
-| `POST /api/crew` | body `{ "name", "port", "api_key", "color"? }` → `201` + the full picture. Adds *another* profile — the first one is created by `/agent/connect`, not here |
+| `POST /api/crew` | body `{ "name", "port"?, "api_key"?, "color"? }` → `201` + the full picture. Give `port`+`api_key` together to register one you set up by hand; omit both to have gaca-api create it (needs provisioning enabled, see above) — `422` if only one of the two is given. Adds *another* profile — the first one is created by `/agent/connect`, not here |
 | `PUT /api/crew/{name}` | body `{ "port", "api_key", "color"? }` — port+key required together (no partial update); color alone can't change without them |
 | `DELETE /api/crew/{name}` | `422` if it's the current default and others remain — set a different default first |
 | `POST /api/crew/{name}/default` | make this the fallback for a chat/delegation that doesn't name one |
@@ -575,6 +577,7 @@ it a reason to do that sooner than the next foreground/pull-to-refresh.
 | `403` | Authenticated but forbidden | Show the body. Don't retry |
 | `404` | Doesn't exist or isn't yours | Drop it from the list; the id is stale |
 | `409` | Illegal state transition | Refetch the resource — someone else moved it |
+| `502` | A provisioning call (`POST /crew` creating one, `POST /agent/discover`) reached the user's own box on their behalf and that failed | Show the body's `detail` (the real underlying error) — don't retry blindly, the box may need attention |
 | `5xx` | Server error | Backoff with jitter |
 
 `409` is the one worth handling well: it means the resource moved underneath

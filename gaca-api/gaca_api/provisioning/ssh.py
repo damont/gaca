@@ -100,3 +100,102 @@ async def discover_profiles(conn: SSHConnection) -> dict[str, dict]:
     """
     stdout = await run(conn, f"python3 -c {shlex.quote(_DISCOVER_SCRIPT)}")
     return json.loads(stdout)
+
+
+async def next_free_port(conn: SSHConnection, *, base: int = 8642) -> int:
+    """One past the highest API_SERVER_PORT already in use across every
+    profile on the box (default, toolshed, trading = 8642/8643/8644 on
+    david-claw, 2026-09-20 — this generalizes that pattern), or `base` if
+    none are configured yet. Reads the box's real state via
+    `discover_profiles` rather than gaca-api's own database, which can be
+    stale or simply not know about a profile someone set up by hand.
+    """
+    found = await discover_profiles(conn)
+    ports = [info["port"] for info in found.values()]
+    return max(ports, default=base - 1) + 1
+
+
+# Runs ON the box, over the connection above — the confirmed-live command
+# sequence (david-claw, 2026-09-20, `hermes --help`/`profile --help`/
+# `gateway --help`/`config --help`, cross-checked against real behavior):
+#   1. `hermes profile create <name> --no-alias` — no --port flag exists;
+#      profile create never touches API_SERVER_*.
+#   2. Upsert (never blind-append — a fresh profile's .env may already have
+#      unrelated content) the four API_SERVER_* keys into that profile's own
+#      .env (`hermes config set` only touches config.yaml-style keys, not
+#      .env — confirmed via `hermes config --help`; env vars need a direct
+#      file edit).
+#   3. `hermes --profile <name> gateway install --start-now` — `--profile`
+#      is a real global flag (confirmed: `hermes --profile toolshed config
+#      env-path` correctly resolved that profile's own .env; also the
+#      literal fix Hermes' own error log suggests: "hermes --profile default
+#      gateway stop"). Installs the systemd/launchd service and starts it,
+#      which then reads the .env we just wrote.
+# Wrapped in `bash -lc` by create_profile below because `hermes` lives in
+# ~/.local/bin, only on PATH in a login shell (confirmed: a plain non-login
+# `ssh host hermes --version` fails with "not found"; `bash -lc` finds it).
+_CREATE_PROFILE_SCRIPT = r"""
+import json, pathlib, subprocess, sys
+
+name, port, api_key = sys.argv[1], sys.argv[2], sys.argv[3]
+
+created = subprocess.run(
+    ["hermes", "profile", "create", name, "--no-alias"],
+    capture_output=True, text=True,
+)
+if created.returncode != 0:
+    print(json.dumps({"ok": False, "stage": "create", "error": created.stderr.strip()}))
+    sys.exit(0)
+
+env_path = pathlib.Path.home() / ".hermes" / "profiles" / name / ".env"
+lines = env_path.read_text().splitlines() if env_path.is_file() else []
+wanted = {
+    "API_SERVER_ENABLED": "true",
+    "API_SERVER_HOST": "0.0.0.0",
+    "API_SERVER_PORT": port,
+    "API_SERVER_KEY": api_key,
+}
+seen, out = set(), []
+for line in lines:
+    key = line.split("=", 1)[0] if "=" in line else None
+    if key in wanted:
+        out.append(f"{key}={wanted[key]}")
+        seen.add(key)
+    else:
+        out.append(line)
+for key, value in wanted.items():
+    if key not in seen:
+        out.append(f"{key}={value}")
+env_path.parent.mkdir(parents=True, exist_ok=True)
+env_path.write_text("\n".join(out) + "\n")
+
+installed = subprocess.run(
+    ["hermes", "--profile", name, "gateway", "install", "--start-now"],
+    capture_output=True, text=True,
+)
+if installed.returncode != 0:
+    print(json.dumps({"ok": False, "stage": "install", "error": installed.stderr.strip()}))
+    sys.exit(0)
+
+print(json.dumps({"ok": True}))
+"""
+
+
+async def create_profile(conn: SSHConnection, name: str, port: int, api_key: str) -> None:
+    """Create a brand new Hermes profile, enable its HTTP gateway on `port`
+    with `api_key`, and install+start its gateway service. Raises SSHError
+    (with the real Hermes stderr) if any stage fails — most commonly the
+    name already exists as a profile on the box.
+    """
+    inner = (
+        f"python3 -c {shlex.quote(_CREATE_PROFILE_SCRIPT)} "
+        f"{shlex.quote(name)} {port} {shlex.quote(api_key)}"
+    )
+    # 60s, not the default 20s — profile create bootstraps bundled skills,
+    # which is slower than the one-liners every other command here runs.
+    stdout = await run(conn, f"bash -lc {shlex.quote(inner)}", timeout=60.0)
+    result = json.loads(stdout)
+    if not result.get("ok"):
+        raise SSHError(
+            f"provisioning {name!r} failed at {result.get('stage')}: {result.get('error')}"
+        )

@@ -1,6 +1,6 @@
 # 0003 — gaca-api may hold SSH access to provision crew members directly
 
-**Status:** Accepted (Slice A only — see Consequences) · **Date:** 2026-09-20 · **Area:** gaca-api ↔ Hermes box, crew provisioning
+**Status:** Accepted, fully built (Slices A and B) · **Date:** 2026-09-20 · **Area:** gaca-api ↔ Hermes box, crew provisioning
 
 ## Context
 
@@ -64,31 +64,51 @@ public ones.
 
 ## Consequences
 
-- **This ADR covers Slice A only**: storing the access credential
-  (`PUT /api/agent/provisioning`) and proving it works
-  (`POST /api/agent/provisioning/test`, which runs a harmless command and
-  reports pass/fail). Tested against a real local SSH server (`asyncssh`'s
-  own), not mocks.
-- **Slice B — actually running `hermes profile create` / `gateway install`
-  to provision a crew member — is deliberately NOT built yet.** The exact
-  command syntax (flags for naming a profile, setting its port, installing
-  the gateway service) needs verifying against the user's *live* Hermes CLI
-  before anything executes real commands against a real box — the nix-store
-  pin has already been wrong once for this project (see
-  gaca-nix-hermes-progress memory / README). Guessing flags for a command
-  that mutates a personal server is a different risk class than guessing an
-  HTTP response shape.
-- **Port selection** (once Slice B exists): the plan is to ask the box what
-  it already has running (via SSH, `list_profile_gateways()` or equivalent)
-  rather than just incrementing from what gaca-api's own database happens
-  to know — the database can be wrong or stale, the box is the actual truth.
-- **Discovery** (reading pre-existing profiles the user set up by hand, not
-  through GACA) becomes straightforward once Slice B's SSH access exists —
-  same mechanism, read-only. Not built yet either.
-- If option (2) — the companion service — ever looks more attractive later
-  (e.g. after seeing how much surface Slice B actually needs), that's a
-  reasonable reason to revisit this ADR, not a sign it was wrong to start
-  with (1).
+- **Slice A**: storing the access credential (`PUT /api/agent/provisioning`)
+  and proving it works (`POST /api/agent/provisioning/test`, which runs a
+  harmless command and reports pass/fail). Tested against a real local SSH
+  server (`asyncssh`'s own), not mocks.
+- **Discovery** (reading pre-existing profiles set up by hand, not through
+  GACA): `GET`-style read via `POST /api/agent/discover`, reading each
+  profile's own `.env` for its `API_SERVER_*` keys. Confirmed live against
+  `david-claw`, 2026-09-20 — found the real `default`/`toolshed`/`trading`,
+  each already running.
+- **Slice B — `POST /api/crew` with `port`/`api_key` omitted now actually
+  provisions a new profile.** The command sequence was verified against the
+  *live* Hermes CLI on `david-claw` before writing any code against it —
+  `hermes --help`/`profile --help`/`gateway --help`/`config --help`, then
+  the real three-step sequence: `hermes profile create <name> --no-alias`
+  (no `--port` flag exists — profile create never touches `API_SERVER_*`),
+  upsert `API_SERVER_ENABLED`/`HOST`/`PORT`/`KEY` directly into that
+  profile's own `.env` (`hermes config set` only touches `config.yaml`-style
+  keys, confirmed via `--help`, not `.env`), then
+  `hermes --profile <name> gateway install --start-now` (`--profile` is a
+  real global flag, confirmed both by testing it directly and by Hermes' own
+  error-log text suggesting it as the fix for a different problem). Every
+  command wrapped in `bash -lc` because `hermes` lives in `~/.local/bin`,
+  only on `PATH` in a login shell.
+- **Validated for real, not just in tests**: ran `create_profile` against
+  `david-claw` with an obviously-named throwaway profile
+  (`gaca-validation-test`), confirmed it appeared in `hermes profile list`
+  running, its `.env` had the exact values sent, and its HTTP gateway
+  answered a real request on the assigned port (8645) — then deleted it
+  (`hermes profile delete -y`) and confirmed full cleanup (service removed,
+  directory gone, port stopped responding). The unit tests use a fake
+  `hermes` CLI script (the real one isn't available in a sandbox) that
+  mimics this exact sequence, not a stand-in for arbitrary behavior.
+- **Port selection**: `next_free_port` asks the box what's already running
+  (via the same mechanism `discover_profiles` uses) and picks one past the
+  highest, rather than trusting gaca-api's own database, which can be stale
+  or simply not know about a profile someone set up by hand.
+- **Not addressed here**: a genuine port or profile-name race between two
+  concurrent provisioning calls for the same account (unlikely — this is a
+  personal app, one user at a time provisioning their own box — but a real
+  gap, not silently handled). Revisit if this ever needs to be safe under
+  concurrency.
+- If the companion-service alternative from Context ever looks more
+  attractive later (e.g. wanting a narrower blast radius than full SSH),
+  that's a reasonable reason to revisit this ADR, not a sign it was wrong to
+  start with SSH.
 
 ## Related
 

@@ -943,3 +943,47 @@ handed off as `gaca-android/BUILD_NEXT.md`.
 - Gating registration — anyone can still create an account (§10) and use it
   for free with their own agent; that's a cost/abuse question left open, not
   a security one — the actual security gap (unauthenticated sessions) is closed
+
+---
+
+## 13. §11 shipped for real, then provisioning grew a create step — 2026-09-20
+
+**§11 actually shipped**, same day it was written: merged to `main` via PR
+#11, then deployed to the real `gaca-api` box (`git pull --ff-only` +
+`docker compose build` + `up -d`, both containers healthy). Verified against
+the real public domain, not just `localhost` — and the whole point of the
+migration shims held up against real data: the production account's
+pre-existing `default`/`toolshed`/`trading` crew (configured back in August,
+under the old field names) loaded correctly through the new code, unchanged.
+
+Also surfaced, and worth recording precisely because it wasted real effort:
+this laptop is not a deployment of anything. Two different local SQLite
+files on it (`gaca-api/gaca.db` from a bare `uv run uvicorn`,
+`/home/david/gaca-data/gaca.db` from a local `docker compose up`) both
+looked plausible and neither was real. The actual backend lives at
+`david@gaca-api`, named explicitly in this repo's own
+`compose.production.yml` header comment the whole time. Fixed the local
+half of the confusion by repointing `gaca-api/.env`'s `GACA_DB_PATH` at the
+same file `docker compose up` already uses, so a bare `uv run uvicorn` on
+this laptop stops silently diverging from it. See the
+`gaca-deployment-topology` memory for the durable version of this lesson.
+
+**Provisioning's Slice B shipped too** (ADR
+`gaca-planning/hermes/0003-ssh-provisioning.md`, updated to match): `POST
+/crew` with `port`/`api_key` omitted now actually creates a new Hermes
+profile on the box — picks the port (one past whatever's really running,
+via the same read used for discovery), generates the key, runs the real
+confirmed-live command sequence (`profile create` → upsert `API_SERVER_*`
+into that profile's own `.env` → `--profile <name> gateway install
+--start-now`), and registers the result as a crew member. The exact command
+syntax was verified against the *live* Hermes CLI on `david-claw` (`--help`
+on every subcommand involved) before any code was written against it, then
+the whole path was validated for real — created an obviously-named
+throwaway profile, confirmed it was actually running and reachable over
+HTTP on its assigned port, then deleted it and confirmed full cleanup —
+not just covered by tests with a faked `hermes` CLI (also written, since
+the real binary isn't available in a test sandbox).
+
+**Also fixed along the way**: discovery
+(`POST /agent/discover`, from earlier in the day) was never actually added
+to `api-contract.md` — an oversight, caught while documenting Slice B.
