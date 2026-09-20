@@ -21,6 +21,7 @@ from ...config import settings
 from ...schemas.event import GacaEvent, RunFailed
 from ...schemas.message import MessageOut
 from ...schemas.model import ModelConfig, ModelInfo, ProviderCredential
+from ...schemas.skill import SkillInfo
 from .translate import translate
 
 
@@ -138,6 +139,21 @@ class HermesAdapter:
 
     async def get_model_info(self, model_id: str) -> ModelInfo:
         raise NotImplementedError("model info lands in a later slice (ADR 0001)")
+
+    # ── Skills ─────────────────────────────────────────────────────────
+    async def list_skills(self) -> list[SkillInfo]:
+        """GET /v1/skills on this crew member's own Hermes gateway.
+
+        Live every time — never cached here — so the app can't show a skill
+        Hermes no longer has installed. Hermes returns
+        `{"object": "list", "data": [{"name", "description", "category"}, …]}`,
+        already sorted by category then name.
+        """
+        resp = await self._client.get(
+            f"{self._base_url}/v1/skills", headers=self._headers
+        )
+        resp.raise_for_status()
+        return [SkillInfo.model_validate(s) for s in resp.json().get("data", [])]
 
 
 def create(base_url: str, api_key: str) -> HermesAdapter:

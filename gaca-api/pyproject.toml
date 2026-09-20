@@ -19,6 +19,7 @@ dependencies = [
     "google-auth[requests]>=2.29.0",
     # Sends push notifications via Firebase Cloud Messaging (services/push.py).
     "firebase-admin>=6.5",
+    "asyncssh>=2.24.0",
 ]
 
 # Console entry point. `gaca-api` on PATH starts the server via main:run().

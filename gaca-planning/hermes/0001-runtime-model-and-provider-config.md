@@ -111,3 +111,7 @@ and hitting the api_server by hand:
 - `../hermes-plan.html` — ports & adapters seam, locked decisions, leak-point
   checklist (this decision extends the "capabilities, not hardcoded features" and
   "neutral event schema" points to model/provider config).
+- `0002-storage-boundary.md` — generalizes this ADR's storage split (runtime
+  config through the API, never baked in) into the standing rule for every
+  crew member fact: gaca-api owns identity/config, Hermes is always asked
+  live for capability (skills now; models, once built, under this same ADR).

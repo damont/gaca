@@ -6,11 +6,12 @@ engine-quarantine grep stays empty). Each engine package exposes
 `agent/<engine>/adapter.py:create(base_url, api_key) -> AgentBackend`.
 
 What is no longer global is *which* agent: every operator brings their own
-Hermes box, so `base_url`/`api_key` are per-user (UserDoc.agent_base_url /
-agent_api_key), not a single app-wide setting. `backend_for()` replaces the
-old single-instance `backend()` with a small cache keyed by credentials, so
-two calls for the same user's agent reuse one adapter (and its HTTP client)
-instead of opening a new one per request.
+Hermes box, so `base_url`/`api_key` are per-user, per-crew-member (from
+UserDoc.agent_host and a UserDoc.crew entry's own port/api_key), not a single
+app-wide setting. `backend_for()` replaces the old single-instance
+`backend()` with a small cache keyed by credentials, so two calls for the
+same crew member reuse one adapter (and its HTTP client) instead of opening
+a new one per request.
 """
 from __future__ import annotations
 
@@ -18,7 +19,7 @@ import importlib
 from types import ModuleType
 
 from ..config import settings
-from ..services.exceptions import AgentNotConfigured
+from ..services.exceptions import CrewNotConfigured
 from .base import AgentBackend
 
 _module: ModuleType | None = None
@@ -49,17 +50,17 @@ async def close() -> None:
 
 
 def backend_for(base_url: str | None, api_key: str | None) -> AgentBackend:
-    """The adapter for one user's agent — built once per (base_url, api_key),
+    """The adapter for one crew member — built once per (base_url, api_key),
     reused after.
 
-    Raises AgentNotConfigured if either is missing — a normal state for a
-    user who hasn't submitted their agent yet, not a startup/wiring bug (that
-    case is `_module is None`, below, and stays a RuntimeError).
+    Raises CrewNotConfigured if either is missing — a normal state for a user
+    who hasn't set one up yet, not a startup/wiring bug (that case is
+    `_module is None`, below, and stays a RuntimeError).
     """
     if _module is None:
         raise RuntimeError("agent runtime not initialized — is the lifespan running?")
     if not base_url or not api_key:
-        raise AgentNotConfigured()
+        raise CrewNotConfigured()
     key = (base_url, api_key)
     if key not in _cache:
         _cache[key] = _module.create(base_url, api_key)

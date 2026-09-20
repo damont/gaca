@@ -1,4 +1,4 @@
-import type { AgentsConfig, AgentTokenResponse, TokenResponse, User } from "../types";
+import type { CrewConfig, AgentTokenResponse, TokenResponse, User } from "../types";
 
 /**
  * The one place the app talks to the API.
@@ -93,7 +93,10 @@ class ApiClient {
   }
 
   /**
-   * Mint a long-lived token for an agent.
+   * Mint a long-lived token for an external agent (Hermes, a script, an AI
+   * coding tool) to call this API with — unrelated to the user's own crew
+   * below: this is a credential for something to reach *gaca-api*, not for
+   * gaca-api to reach a Hermes box.
    *
    * Authenticated by the session token already on this client — the API takes
    * no password here, because the caller is signed in and a stolen session can
@@ -106,40 +109,59 @@ class ApiClient {
   }
 
   /**
-   * This user's own agents — there is no shared, app-wide agent. Every
-   * mutation below returns the full AgentsConfig, so the caller can just
-   * replace its state wholesale after any change.
+   * This user's own crew — there is no shared, app-wide one. Every mutation
+   * below returns the full CrewConfig, so the caller can just replace its
+   * state wholesale after any change.
    */
-  agents() {
-    return this.get<AgentsConfig>("/auth/agents");
+  crew() {
+    return this.get<CrewConfig>("/crew");
   }
 
-  setAgentHost(host: string) {
-    return this.put<AgentsConfig>("/auth/agent-host", { host });
+  /**
+   * First-time setup: connect this account to its one Hermes agent. Creates
+   * `name` (default "default") as the first crew member from `port`/
+   * `apiKey`, so there's already someone to chat with. Only valid once —
+   * the API 422s a second call; use `updateAgentHost` to move to a new box.
+   */
+  connectAgent(host: string, port: number, apiKey: string, name?: string) {
+    return this.post<CrewConfig>("/agent/connect", {
+      host,
+      port,
+      api_key: apiKey,
+      name,
+    });
   }
 
-  addAgent(name: string, port: number, apiKey: string) {
-    return this.post<AgentsConfig>("/auth/agents", {
+  /** Move the already-connected agent (and every crew member under it) to a
+   * new host. Leaves the crew list itself untouched. */
+  updateAgentHost(host: string) {
+    return this.put<CrewConfig>("/agent", { host });
+  }
+
+  addCrewMember(name: string, port: number, apiKey: string, color?: string) {
+    return this.post<CrewConfig>("/crew", {
       name,
       port,
       api_key: apiKey,
+      color,
     });
   }
 
-  updateAgent(name: string, port: number, apiKey: string) {
-    return this.put<AgentsConfig>(`/auth/agents/${encodeURIComponent(name)}`, {
+  updateCrewMember(name: string, port: number, apiKey: string, color?: string) {
+    return this.put<CrewConfig>(`/crew/${encodeURIComponent(name)}`, {
       port,
       api_key: apiKey,
+      color,
     });
   }
 
-  removeAgent(name: string) {
-    return this.delete<AgentsConfig>(`/auth/agents/${encodeURIComponent(name)}`);
+  removeCrewMember(name: string) {
+    return this.delete<CrewConfig>(`/crew/${encodeURIComponent(name)}`);
   }
 
-  setDefaultAgent(name: string) {
-    return this.post<AgentsConfig>(
-      `/auth/agents/${encodeURIComponent(name)}/default`,
+  setDefaultCrewMember(name: string) {
+    return this.post<CrewConfig>(
+      `/crew/${encodeURIComponent(name)}/default`,
     );
   }
 }

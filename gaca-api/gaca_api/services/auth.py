@@ -10,9 +10,10 @@ from __future__ import annotations
 from ..agent import runtime as agent_runtime
 from ..agent.base import AgentBackend
 from ..db import users as users_db
-from ..models.user import AgentProfile, UserDoc
+from ..models.user import CREW_COLOR_PALETTE, CrewMember, SSHConnection, UserDoc
+from ..provisioning import ssh as ssh_provisioning
 from ..utils.auth import hash_password
-from .exceptions import AgentNotConfigured, InvalidRequest, NotFound
+from .exceptions import CrewNotConfigured, InvalidRequest, NotFound
 
 
 async def find_by_id(user_id: str) -> UserDoc | None:
@@ -79,126 +80,287 @@ async def create_user(name: str, email: str, password: str) -> UserDoc:
 
 
 async def set_agent_host(user: UserDoc, host: str) -> UserDoc:
-    """Set the scheme+host shared by every one of this user's agents."""
+    """Update the scheme+host the connected agent (and every crew member
+    under it) lives on — e.g. the box moved to a new address. Does not touch
+    `crew`; see `connect_agent` for first-time setup, which does."""
     updated = user.model_copy(update={"agent_host": host})
     await users_db.replace(updated)
     return updated
 
 
-def find_agent(user: UserDoc, name: str) -> AgentProfile | None:
-    """Plain lookup by name — no error if it isn't there."""
-    return next((a for a in user.agents if a.name == name), None)
+def find_crew_member(user: UserDoc, name: str | None) -> CrewMember | None:
+    """Plain lookup by name — no error if it isn't there (or `name` is None)."""
+    if name is None:
+        return None
+    return next((c for c in user.crew if c.name == name), None)
 
 
-async def add_agent(user: UserDoc, name: str, port: int, api_key: str) -> UserDoc:
-    """Register a new named agent.
+def _next_color(user: UserDoc) -> str:
+    """The first palette color not already in use, cycling once exhausted."""
+    used = {c.color for c in user.crew}
+    for color in CREW_COLOR_PALETTE:
+        if color not in used:
+            return color
+    return CREW_COLOR_PALETTE[len(user.crew) % len(CREW_COLOR_PALETTE)]
 
-    The first agent a user adds becomes their default automatically — there's
-    no separate onboarding step for that, and a user with exactly one agent
-    obviously means for it to be used.
+
+async def connect_agent(
+    user: UserDoc, host: str, port: int, api_key: str, name: str = "default"
+) -> UserDoc:
+    """First-time setup: connect this account to its one Hermes agent.
+
+    Sets `agent_host` and creates `name` as the first crew member (using
+    `port`/`api_key`) in one step, so the user gets a working default without
+    a separate "now add a crew member" action — the account has something to
+    chat with and delegate to the instant this call returns. Adding more
+    crew members afterward is `add_crew_member`, unchanged.
+
+    Only valid once: an account with an agent already connected (`agent_host`
+    set, or a non-empty `crew`) rejects a second connect — to move to a
+    different box, update the host with `set_agent_host`; to run another
+    profile on the same box, add a crew member. Re-running "connect" isn't
+    either of those.
     """
-    if find_agent(user, name) is not None:
-        raise InvalidRequest(f"agent {name!r} already exists")
+    if user.agent_host is not None or user.crew:
+        raise InvalidRequest(
+            "an agent is already connected — update the host to move it, or "
+            "add a crew member to run another profile on it"
+        )
 
-    profile = AgentProfile(name=name, port=port, api_key=api_key)
+    member = CrewMember(name=name, port=port, api_key=api_key, color=_next_color(user))
+    updated = user.model_copy(
+        update={"agent_host": host, "crew": [member], "default_crew": name}
+    )
+    await users_db.replace(updated)
+    return updated
+
+
+async def add_crew_member(
+    user: UserDoc, name: str, port: int, api_key: str, color: str | None = None
+) -> UserDoc:
+    """Register a new named crew member.
+
+    The first one a user adds becomes their default automatically — there's
+    no separate onboarding step for that, and a user with exactly one crew
+    member obviously means for it to be used. `color` is auto-assigned from
+    the palette (first unused swatch) unless the caller picked one.
+    """
+    if find_crew_member(user, name) is not None:
+        raise InvalidRequest(f"crew member {name!r} already exists")
+
+    member = CrewMember(
+        name=name, port=port, api_key=api_key, color=color or _next_color(user)
+    )
     updated = user.model_copy(
         update={
-            "agents": [*user.agents, profile],
-            "default_agent": user.default_agent or name,
+            "crew": [*user.crew, member],
+            "default_crew": user.default_crew or name,
         }
     )
     await users_db.replace(updated)
     return updated
 
 
-async def update_agent(user: UserDoc, name: str, port: int, api_key: str) -> UserDoc:
-    """Replace an existing agent's port and key. Both required together, same
-    no-partial-update rule the single-agent config used to have."""
-    if find_agent(user, name) is None:
-        raise NotFound("agent", name)
+async def update_crew_member(
+    user: UserDoc, name: str, port: int, api_key: str, color: str | None = None
+) -> UserDoc:
+    """Replace an existing crew member's port and key (and color, if given).
 
-    agents = [
-        AgentProfile(name=name, port=port, api_key=api_key) if a.name == name else a
-        for a in user.agents
+    Port and key are required together, same no-partial-update rule the
+    single-agent config used to have; color alone can't be changed this way
+    without also resupplying both — keeps one call shape for the whole row.
+    """
+    existing = find_crew_member(user, name)
+    if existing is None:
+        raise NotFound("crew member", name)
+
+    crew = [
+        CrewMember(name=name, port=port, api_key=api_key, color=color or c.color)
+        if c.name == name
+        else c
+        for c in user.crew
     ]
-    updated = user.model_copy(update={"agents": agents})
+    updated = user.model_copy(update={"crew": crew})
     await users_db.replace(updated)
     return updated
 
 
-async def remove_agent(user: UserDoc, name: str) -> UserDoc:
-    """Delete a named agent.
+async def remove_crew_member(user: UserDoc, name: str) -> UserDoc:
+    """Delete a named crew member.
 
     Deleting the current default while others remain is rejected rather than
     silently picking a new default — that's a real decision the user should
-    make explicitly via set_default_agent. Deleting the last agent clears the
-    default too, since there's nothing left for it to name.
+    make explicitly via set_default_crew_member. Deleting the last one clears
+    the default too, since there's nothing left for it to name.
     """
-    if find_agent(user, name) is None:
-        raise NotFound("agent", name)
+    if find_crew_member(user, name) is None:
+        raise NotFound("crew member", name)
 
-    remaining = [a for a in user.agents if a.name != name]
-    if name == user.default_agent and remaining:
+    remaining = [c for c in user.crew if c.name != name]
+    if name == user.default_crew and remaining:
         raise InvalidRequest(
-            f"{name!r} is the default agent — set a different default before "
-            "deleting it"
+            f"{name!r} is the default crew member — set a different default "
+            "before removing it"
         )
 
     updated = user.model_copy(
         update={
-            "agents": remaining,
-            "default_agent": user.default_agent if remaining else None,
+            "crew": remaining,
+            "default_crew": user.default_crew if remaining else None,
         }
     )
     await users_db.replace(updated)
     return updated
 
 
-async def set_default_agent(user: UserDoc, name: str) -> UserDoc:
-    if find_agent(user, name) is None:
-        raise NotFound("agent", name)
-    updated = user.model_copy(update={"default_agent": name})
+async def set_default_crew_member(user: UserDoc, name: str) -> UserDoc:
+    if find_crew_member(user, name) is None:
+        raise NotFound("crew member", name)
+    updated = user.model_copy(update={"default_crew": name})
     await users_db.replace(updated)
     return updated
 
 
-def resolve_agent_for_delegate(
-    user: UserDoc, requested: str | None, alert_agent: str | None
-) -> AgentProfile:
-    """Which agent handles a delegation, in priority order:
+def resolve_crew_member(user: UserDoc, requested: str | None) -> CrewMember:
+    """Which crew member handles a plain session: `requested` if given (a
+    real error if it doesn't exist), else the account's `default_crew`.
+
+    Raises CrewNotConfigured if neither resolves to a real crew member.
+    """
+    if requested is not None:
+        member = find_crew_member(user, requested)
+        if member is None:
+            raise InvalidRequest(f"crew member {requested!r} is not configured")
+        return member
+
+    member = find_crew_member(user, user.default_crew)
+    if member is not None:
+        return member
+
+    raise CrewNotConfigured()
+
+
+def resolve_crew_for_delegate(
+    user: UserDoc, requested: str | None, alert_crew: str | None
+) -> CrewMember:
+    """Which crew member handles a delegation, in priority order:
 
     1. `requested` — an explicit, deliberate choice from the caller. Naming
        one that doesn't exist is a real error, not something to paper over.
-    2. `alert_agent` — the alert's own `agent` field, soft-matched: it's
+    2. `alert_crew` — the alert's own `crew` field, soft-matched: it's
        advisory metadata (same trust level as `source`), so a stale or
        unmatched value just falls through to the next step rather than
        erroring.
-    3. The account's `default_agent`.
+    3. The account's `default_crew`.
 
-    Raises AgentNotConfigured if none of the above resolves to a real agent.
+    Raises CrewNotConfigured if none of the above resolves to a real member.
     """
     if requested is not None:
-        profile = find_agent(user, requested)
-        if profile is None:
-            raise InvalidRequest(f"agent {requested!r} is not configured")
-        return profile
+        return resolve_crew_member(user, requested)
 
-    if alert_agent is not None:
-        profile = find_agent(user, alert_agent)
-        if profile is not None:
-            return profile
+    if alert_crew is not None:
+        member = find_crew_member(user, alert_crew)
+        if member is not None:
+            return member
 
-    if user.default_agent is not None:
-        profile = find_agent(user, user.default_agent)
-        if profile is not None:
-            return profile
-
-    raise AgentNotConfigured()
+    return resolve_crew_member(user, None)
 
 
-def backend_for_agent(user: UserDoc, agent: AgentProfile) -> AgentBackend:
-    """The AgentBackend for one of this user's agents."""
+def backend_for_crew(user: UserDoc, crew_member: CrewMember) -> AgentBackend:
+    """The AgentBackend for one of this user's crew members."""
     if not user.agent_host:
-        raise AgentNotConfigured()
-    base_url = f"{user.agent_host}:{agent.port}"
-    return agent_runtime.backend_for(base_url, agent.api_key)
+        raise CrewNotConfigured()
+    base_url = f"{user.agent_host}:{crew_member.port}"
+    return agent_runtime.backend_for(base_url, crew_member.api_key)
+
+
+async def list_skills(user: UserDoc, name: str):
+    """The named crew member's skills, straight from its own Hermes gateway."""
+    member = find_crew_member(user, name)
+    if member is None:
+        raise NotFound("crew member", name)
+    backend = backend_for_crew(user, member)
+    return await backend.list_skills()
+
+
+# ── SSH provisioning ─────────────────────────────────────────────────
+
+async def set_ssh_connection(
+    user: UserDoc, host: str, port: int, username: str, private_key: str
+) -> UserDoc:
+    """Store how gaca-api should reach this user's Hermes box over SSH.
+
+    Not validated here — a bad key/host is only discoverable by actually
+    connecting, which `test_ssh_connection` does. Storing first and testing
+    second (rather than requiring a successful test to save) means a
+    temporarily-unreachable box doesn't block recording credentials meant
+    for it.
+    """
+    updated = user.model_copy(
+        update={
+            "ssh": SSHConnection(
+                host=host, port=port, username=username, private_key=private_key
+            )
+        }
+    )
+    await users_db.replace(updated)
+    return updated
+
+
+async def test_ssh_connection(user: UserDoc) -> str:
+    """Actually connect and run a harmless command, returning its output.
+
+    Raises CrewNotConfigured if no SSH connection is stored yet (same
+    "nothing to reach" shape as a crew call with no agent connected), or
+    SSHError if the stored credentials don't work.
+    """
+    if user.ssh is None:
+        raise CrewNotConfigured()
+    return await ssh_provisioning.run(user.ssh, "echo ok")
+
+
+async def discover_crew(user: UserDoc) -> UserDoc:
+    """Find crew members that already exist on the box — set up by hand, or
+    by any means other than this account's own POST /crew — and register
+    them, so pre-existing infrastructure isn't invisible to gaca-api just
+    because gaca-api didn't create it.
+
+    Read-only against the box (see ssh.discover_profiles); the only writes
+    are to this account's own row. Never overwrites a crew member gaca-api
+    already knows by that name — a name collision keeps the existing entry
+    as-is rather than silently replacing its port/key with whatever the box
+    currently reports. Sets `agent_host` from the SSH host if unset (a
+    discovery with nothing connected yet doubles as first-time connect),
+    and `default_crew` to "default" if that name was found and nothing was
+    already the default.
+
+    Raises CrewNotConfigured if no SSH access is stored yet.
+    """
+    if user.ssh is None:
+        raise CrewNotConfigured()
+
+    found = await ssh_provisioning.discover_profiles(user.ssh)
+
+    updated = user
+    for name, info in found.items():
+        if find_crew_member(updated, name) is not None:
+            continue  # already known — never overwrite an existing entry
+        # _next_color reads `updated.crew`, so two newly-discovered profiles
+        # in the same call still get distinct colors, not both the same one.
+        member = CrewMember(
+            name=name, port=info["port"], api_key=info["api_key"],
+            color=_next_color(updated),
+        )
+        updated = updated.model_copy(update={"crew": [*updated.crew, member]})
+
+    update_fields: dict = {}
+    if updated.agent_host is None:
+        update_fields["agent_host"] = f"http://{user.ssh.host}"
+    if updated.default_crew is None and find_crew_member(updated, "default") is not None:
+        update_fields["default_crew"] = "default"
+    if update_fields:
+        updated = updated.model_copy(update=update_fields)
+
+    if updated is not user:
+        await users_db.replace(updated)
+    return updated

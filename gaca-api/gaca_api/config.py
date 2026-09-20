@@ -49,10 +49,10 @@ class Settings(BaseSettings):
     # Which engine adapter to load (agent/<engine>/adapter.py). Set via
     # GACA_AGENT_ENGINE — kept out of code so the core names no specific engine.
     # This is the only agent setting that's still app-wide: *which kind* of
-    # engine gaca-api knows how to speak to. The gateway URL and bearer for a
-    # given engine are per-user (UserDoc.agent_base_url / agent_api_key,
-    # submitted via PUT /api/auth/agent-config) — every operator brings their
-    # own agent rather than sharing one configured for the whole app.
+    # engine gaca-api knows how to speak to. The host and per-member port/key
+    # for a given engine are per-user (UserDoc.agent_host / UserDoc.crew,
+    # managed via /api/crew) — every operator brings their own crew rather
+    # than sharing one configured for the whole app.
     agent_engine: str = ""
 
     # Idle timeout (seconds) for the run event stream: if the engine sends no

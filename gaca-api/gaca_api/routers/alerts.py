@@ -56,12 +56,12 @@ async def list_alerts(
     # an elapsed snooze shows up under `new`.
     status: Annotated[list[str] | None, Query()] = None,
     severity: Annotated[list[str] | None, Query()] = None,
-    agent: Annotated[list[str] | None, Query()] = None,
+    crew: Annotated[list[str] | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ):
     """The inbox: this user's alerts, newest first."""
     alerts = await alert_service.list_for_user(
-        user.id, statuses=status, severities=severity, agents=agent, limit=limit
+        user.id, statuses=status, severities=severity, crews=crew, limit=limit
     )
     return AlertList(alerts=[_out(a) for a in alerts])
 
@@ -117,6 +117,6 @@ async def delegate_alert(
             alert_id,
             instruction=b.instruction,
             suggested_action_index=b.suggested_action_index,
-            agent=b.agent,
+            crew=b.crew,
         )
     )
