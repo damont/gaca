@@ -401,9 +401,13 @@ back to.
 { "sessions": [ { /* Session, no messages */ }, … ] }
 ```
 
-Newest first. The Chat tab's list. Always scoped to the authenticated user.
-No filtering or pagination yet — revisit if a single user's chat list ever
-gets big enough to need it, same as the alert list (§5).
+**Most recently active first** — the newest message in a session, not when
+the session itself was created, so a months-old session that just got a
+reply jumps back to the top. A session with no messages yet sorts by its
+own creation time instead, since there's no message to go by. The Chat
+tab's list. Always scoped to the authenticated user. No filtering or
+pagination yet — revisit if a single user's chat list ever gets big enough
+to need it, same as the alert list (§5).
 
 ### `POST /api/sessions`
 

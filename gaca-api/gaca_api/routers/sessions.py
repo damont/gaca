@@ -35,7 +35,7 @@ async def create_session(
 
 @router.get("")
 async def list_sessions(user: UserDoc = Depends(get_current_user)) -> SessionList:
-    """The Chat tab: this user's sessions, newest first."""
+    """The Chat tab: this user's sessions, most recently active first."""
     sessions = await session_service.list_for_user(user.id)
     return SessionList(sessions=[SessionOut.model_validate(s) for s in sessions])
 
