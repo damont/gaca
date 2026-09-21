@@ -12,8 +12,14 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, status
 
-from ..models.user import UserDoc
-from ..schemas.auth import CrewMemberCreate, CrewMemberOut, CrewMemberUpdate, CrewOut
+from ..models.user import SSHConnection, UserDoc
+from ..schemas.auth import (
+    CrewDiscover,
+    CrewMemberCreate,
+    CrewMemberOut,
+    CrewMemberUpdate,
+    CrewOut,
+)
 from ..schemas.skill import SkillInfo
 from ..services import auth as auth_service
 from ..utils.auth import get_current_user
@@ -36,6 +42,7 @@ def crew_out(user: UserDoc) -> CrewOut:
             )
             for c in user.crew
         ],
+        can_create=user.ssh is not None,
     )
 
 
@@ -48,24 +55,68 @@ async def list_crew(user: UserDoc = Depends(get_current_user)):
     return crew_out(user)
 
 
+def _as_connection(access) -> SSHConnection | None:
+    return (
+        SSHConnection(
+            host=access.host,
+            port=access.port,
+            username=access.username,
+            private_key=access.private_key,
+        )
+        if access is not None
+        else None
+    )
+
+
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=CrewOut)
 async def add_crew_member(
     data: CrewMemberCreate,
     user: UserDoc = Depends(get_current_user),
 ):
     """Register another named crew member on the already-connected agent.
+
     Given `port`/`api_key`, registers one already set up by hand. Given
     neither, has gaca-api create a brand new Hermes profile on the box
-    directly — it picks the port and generates the key (needs provisioning
-    access already granted, see /agent/provisioning); `502` if that fails.
-    Its color is auto-assigned from the palette unless given. (The *first*
-    crew member is created by POST /agent/connect, not here.)"""
+    directly instead — it picks the port and generates the key. That needs
+    access to the box: give it via `access` the first time you do this
+    (gaca-api remembers it for every call after, whether creating or
+    registering); `400` (`CrewNotConfigured`) if it's never been given.
+    `502` if reaching the box fails. Its color is auto-assigned from the
+    palette unless given. (The *first* crew member is created by
+    POST /agent/connect, not here.)
+    """
+    access = _as_connection(data.access)
     if data.port is not None:
+        if access is not None:
+            user = await auth_service.set_ssh_connection(
+                user, access.host, access.port, access.username, access.private_key
+            )
         updated = await auth_service.add_crew_member(
             user, data.name, data.port, data.api_key, data.color
         )
     else:
-        updated = await auth_service.provision_crew_member(user, data.name, data.color)
+        updated = await auth_service.provision_crew_member(
+            user, data.name, data.color, access
+        )
+    return crew_out(updated)
+
+
+@router.post("/discover", response_model=CrewOut)
+async def discover_crew(
+    data: CrewDiscover | None = None,
+    user: UserDoc = Depends(get_current_user),
+):
+    """Find crew members that already exist on the box — set up by hand, or
+    by anything other than this account's own POST /crew — and add them, so
+    pre-existing infrastructure doesn't have to be re-entered one field at a
+    time. Read-only against the box; never overwrites a crew member already
+    known by that name. Needs access to the box, same as creating one does:
+    give it via `access` the first time (or omit the body entirely once
+    gaca-api already has it from an earlier call) — `400`
+    (`CrewNotConfigured`) if it's never been given.
+    """
+    access = _as_connection(data.access if data else None)
+    updated = await auth_service.discover_crew(user, access)
     return crew_out(updated)
 
 

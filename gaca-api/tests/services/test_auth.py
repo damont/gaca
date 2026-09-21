@@ -1,59 +1,16 @@
 """Tests for the auth service: create a user, find one by email."""
 import asyncio
 import sqlite3
-from contextlib import asynccontextmanager
 
-import asyncssh
 import pytest
 
 from gaca_api.config import settings
 from gaca_api.db import client
 from gaca_api.db import users as users_db
-from gaca_api.models.user import UserDoc
-from gaca_api.provisioning.ssh import SSHError
+from gaca_api.models.user import SSHConnection, UserDoc
 from gaca_api.services import auth as auth_service
 from gaca_api.services.exceptions import CrewNotConfigured, InvalidRequest, NotFound
 from gaca_api.utils.auth import hash_password, verify_password
-
-
-class _AcceptingServer(asyncssh.SSHServer):
-    """Minimal SSH server accepting one client key — see
-    tests/provisioning/test_ssh.py for the fuller version this mirrors."""
-
-    def __init__(self, authorized_key: asyncssh.SSHKey) -> None:
-        self._authorized_key = authorized_key
-
-    def begin_auth(self, username: str) -> bool:
-        return True
-
-    def public_key_auth_supported(self) -> bool:
-        return True
-
-    def validate_public_key(self, username: str, key: asyncssh.SSHKey) -> bool:
-        return key == self._authorized_key
-
-
-async def _echo_ok(process: asyncssh.SSHServerProcess) -> None:
-    process.stdout.write("ok\n")
-    process.exit(0)
-
-
-@asynccontextmanager
-async def _local_ssh_server():
-    server_key = asyncssh.generate_private_key("ssh-ed25519")
-    client_key = asyncssh.generate_private_key("ssh-ed25519")
-    server = await asyncssh.create_server(
-        lambda: _AcceptingServer(client_key.convert_to_public()),
-        host="127.0.0.1",
-        port=0,
-        server_host_keys=[server_key],
-        process_factory=_echo_ok,
-    )
-    try:
-        yield server.sockets[0].getsockname()[1], client_key
-    finally:
-        server.close()
-        await server.wait_closed()
 
 
 def _run(factory):
@@ -696,52 +653,8 @@ def test_set_ssh_connection_persists(tmp_path):
         assert user.ssh.username == "david"
 
 
-def test_test_ssh_connection_raises_crew_not_configured_when_unset(tmp_path):
-    settings.db_path = str(tmp_path / "t.db")
-
-    async def go():
-        user = await _new_user()
-        with pytest.raises(CrewNotConfigured):
-            await auth_service.test_ssh_connection(user)
-
-    _run(go)
 
 
-def test_test_ssh_connection_succeeds_against_a_real_server(tmp_path):
-    settings.db_path = str(tmp_path / "t.db")
-
-    async def go():
-        async with _local_ssh_server() as (port, client_key):
-            user = await _new_user()
-            user = await auth_service.set_ssh_connection(
-                user,
-                "127.0.0.1",
-                port,
-                "david",
-                client_key.export_private_key().decode(),
-            )
-            return await auth_service.test_ssh_connection(user)
-
-    assert _run(go) == "ok\n"
-
-
-def test_test_ssh_connection_raises_ssh_error_on_bad_credentials(tmp_path):
-    settings.db_path = str(tmp_path / "t.db")
-
-    async def go():
-        user = await _new_user()
-        # Nothing listens on port 1 in a test sandbox — a fast, reliable failure.
-        user = await auth_service.set_ssh_connection(
-            user,
-            "127.0.0.1",
-            1,
-            "david",
-            asyncssh.generate_private_key("ssh-ed25519").export_private_key().decode(),
-        )
-        await auth_service.test_ssh_connection(user)
-
-    with pytest.raises(SSHError):
-        _run(go)
 
 
 # ── discovery ────────────────────────────────────────────────────────
@@ -950,3 +863,60 @@ def test_provision_crew_member_honors_a_given_color(tmp_path, monkeypatch):
 
     updated = _run(go)
     assert updated.crew[0].color == "#8A6A9E"
+
+
+# ── granting access inline, on the same call, instead of a separate step ──
+
+def test_provision_crew_member_accepts_access_inline_on_a_fresh_account(
+    tmp_path, monkeypatch
+):
+    """No prior "grant access" call needed — a brand-new, never-connected
+    account can create its first crew member in one call."""
+    settings.db_path = str(tmp_path / "t.db")
+    _install_fake_provisioning(monkeypatch, port=8642)
+
+    async def go():
+        user = await _new_user()
+        assert user.ssh is None
+        access = SSHConnection(
+            host="david-claw.lan", port=22, username="david", private_key="k"
+        )
+        return await auth_service.provision_crew_member(user, "default", access=access)
+
+    updated = _run(go)
+    assert updated.ssh.host == "david-claw.lan"
+    assert updated.crew[0].name == "default"
+
+
+def test_provision_crew_member_remembers_access_for_next_time(tmp_path, monkeypatch):
+    settings.db_path = str(tmp_path / "t.db")
+    _install_fake_provisioning(monkeypatch, port=8642)
+
+    async def go():
+        user = await _new_user()
+        access = SSHConnection(
+            host="david-claw.lan", port=22, username="david", private_key="k"
+        )
+        user = await auth_service.provision_crew_member(user, "default", access=access)
+        # Second call gives no access at all — it should still work, using
+        # what the first call stored.
+        return await auth_service.provision_crew_member(user, "toolshed")
+
+    updated = _run(go)
+    assert {c.name for c in updated.crew} == {"default", "toolshed"}
+
+
+def test_discover_crew_accepts_access_inline_on_a_fresh_account(tmp_path, monkeypatch):
+    settings.db_path = str(tmp_path / "t.db")
+    _install_fake_discovery(monkeypatch, {"default": {"port": 8642, "api_key": "k"}})
+
+    async def go():
+        user = await _new_user()
+        access = SSHConnection(
+            host="david-claw.lan", port=22, username="david", private_key="k"
+        )
+        return await auth_service.discover_crew(user, access=access)
+
+    updated = _run(go)
+    assert updated.ssh.host == "david-claw.lan"
+    assert updated.crew[0].name == "default"

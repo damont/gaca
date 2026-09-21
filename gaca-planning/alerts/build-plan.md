@@ -987,3 +987,45 @@ the real binary isn't available in a test sandbox).
 **Also fixed along the way**: discovery
 (`POST /agent/discover`, from earlier in the day) was never actually added
 to `api-contract.md` — an oversight, caught while documenting Slice B.
+
+---
+
+## 14. `/agent/provisioning` removed entirely — 2026-09-20, still the same day
+
+The user pushed back, directly: "all I want the app to do is call create on
+the /crew API. And the API should handle all the comms with hermes to make
+that happen... the android app is confused that API exists and so am I."
+
+§13's Slice B had already made `POST /crew` create a real profile when
+`port`/`api_key` are omitted — but it still required a separate prior step,
+`PUT /api/agent/provisioning`, to grant the access that needs. Renaming that
+endpoint away from "ssh" wording (§13) fixed the *naming* leak but not the
+*shape* leak: it was still its own resource with a `GET` status, a `PUT` to
+set it, and a `POST .../test` to verify it — three endpoints and a whole
+concept the caller had to reason about before ever calling create.
+
+Removed all three. `access` (host/port/username/private_key — the same
+shape `ProvisioningAccess` was) is now just an optional field on
+`POST /crew` and the newly-relocated `POST /crew/discover` (moved from
+`/agent/discover` for the same reason — it's a crew operation). Give it
+once, on whichever of those two calls comes first; gaca-api stores it and
+never asks again. `CrewOut` gained `can_create: bool` so a client can still
+tell whether its next create call needs `access` or just a name, without a
+dedicated status endpoint to check first. No more "test" call either — a
+bad credential now just fails the real create/discover attempt with `502`
+and the real error in the body, which was always going to be at least as
+informative as a synthetic pass/fail.
+
+Net effect: from the outside, there is exactly one thing to learn — `POST
+/crew`. Everything about *how* gaca-api reaches the box collapsed into one
+optional field on the calls that actually need it, instead of a resource of
+its own. `gaca-planning/hermes/0003-ssh-provisioning.md` updated with the
+full before/after and the lesson: renaming an endpoint to stop naming the
+mechanism, and asking whether it needs to be a separate resource at all,
+are two different questions — this took two passes because only the first
+one got asked the first time.
+
+Own PR, same day as §13. Tests updated — dead SSH-test scaffolding removed
+from `tests/services/test_auth.py` along with the endpoints it existed to
+test, new tests added proving `access` works inline on a never-connected
+account. 229 passing.
