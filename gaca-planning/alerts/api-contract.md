@@ -87,32 +87,37 @@ back, not something to build UI copy around.
 | `POST /api/agent/connect` | body `{ "host", "port", "api_key", "name"? }` (`name` defaults `"default"`) → `201` + the full crew picture (below). `422` if already connected — this account gets one agent; use `PUT /agent` to move it, `POST /crew` to add another profile on it |
 | `PUT /api/agent` | body `{ "host" }` — move the connected agent to a new host. Leaves the crew list untouched |
 
-### `/agent/provisioning` — optional, lets gaca-api set up crew members for you
+### Having gaca-api create a crew member for you — no separate setup call
 
-A second, materially bigger grant than anything above: access to the box
-itself, so gaca-api can create a new crew member directly (choosing its
-port) instead of the user doing that by hand and re-entering the result.
-**How gaca-api actually reaches the box is not part of this contract** —
-today that's SSH (see `gaca-planning/hermes/0003-ssh-provisioning.md`), but
-nothing here should be built assuming that; treat `/provisioning`'s request
-body as an opaque access credential shaped the way this kind of access
-needs, the same way `CrewMember.port` is an opaque addressing detail (§2).
-Entirely optional — nothing about connecting the agent or managing crew
-requires it.
+**There is no dedicated "enable this" resource or endpoint.** Earlier drafts
+had one (`/agent/provisioning`) and it was the wrong shape — it made a
+one-time implementation detail (does gaca-api have a way to reach the box
+directly) into a whole separate thing the caller had to set up, check the
+status of, and test before it could ever call create. Corrected the same
+day: it's just one more optional field on the calls that actually need it.
 
-| | |
-|---|---|
-| `GET /api/agent/provisioning` | `{ "enabled": bool, "host": string \| null, "username": string \| null }` — never the credential |
-| `PUT /api/agent/provisioning` | body `{ "host", "port"? (default 22), "username", "private_key" }` → same shape as GET. Not verified here |
-| `POST /api/agent/provisioning/test` | confirms the stored access actually works → `{ "ok": bool, "message": string }` — `200` either way; check `ok`, don't rely on the status code |
-| `POST /api/agent/discover` | finds crew members already running on the box but never registered through gaca-api, and adds them → the full crew picture, same shape `GET /crew` does. Read-only against the box; never overwrites a crew member already known by that name. `400` (`CrewNotConfigured`) if provisioning access isn't enabled |
+`POST /crew` and `POST /crew/discover` (below) both take an optional
+`access` field:
 
-Once provisioning is enabled, **`POST /crew` can create a profile for you**:
-omit both `port` and `api_key` in the request body (§ below) and gaca-api
-picks the port and generates the key, instead of you setting one up by hand
-and typing the result in. `502` if that fails (the box was unreachable, the
-name already exists as a Hermes profile, etc.) — the response body's
-`detail` carries the real underlying error.
+```jsonc
+"access": { "host": "david-claw.lan", "port": 22, "username": "david", "private_key": "…" }
+```
+
+Give it once, on whichever of those two calls you make first — gaca-api
+stores it and remembers it for every call after, so you never have to send
+it again. Omit it once gaca-api already has it. **How gaca-api actually
+uses this (SSH, today) is not part of this contract** — treat it as an
+opaque access credential for the box, the same way `CrewMember.port` is an
+opaque addressing detail (§2), not something to build UI copy or a
+dedicated settings screen around. `GET`/`POST`/etc. on `/crew` all return
+`can_create` (see the CrewOut shape below) so a client can tell, from data
+it's already fetching, whether its "add crew member" form needs to ask for
+`access` or can just ask for a name.
+
+A failed provisioning call (bad credential, unreachable box, name already
+exists as a Hermes profile) is `502`, with the real underlying error in the
+response body's `detail` — there's no separate "test" call; attempting the
+real action *is* the test.
 
 ### The CrewMember object
 
@@ -138,20 +143,34 @@ at a glance without reading its name every time. It's a plain hex string the
 client renders as-is; the server is the one source of truth for it; nothing
 about the palette itself is part of this contract, just the field.
 
+### The CrewOut shape — what every `/agent` and `/crew` call returns
+
+```jsonc
+{
+  "host": "http://david-claw",
+  "crew": [ { /* CrewMember */ }, … ],
+  "can_create": true   // does gaca-api already have what it needs to
+                        // create a new one for you (§ above) — lets an
+                        // "add crew member" form decide whether it needs
+                        // to ask for `access` or just a name
+}
+```
+
+Every mutating `/agent` or `/crew` endpoint returns this same shape, so the
+client can just replace its whole local state after any change rather than
+patching it.
+
 ### `/crew` endpoints
 
 | | |
 |---|---|
-| `GET /api/crew` | `{ "host": "http://david-claw", "crew": [CrewMember, …] }` |
-| `POST /api/crew` | body `{ "name", "port"?, "api_key"?, "color"? }` → `201` + the full picture. Give `port`+`api_key` together to register one you set up by hand; omit both to have gaca-api create it (needs provisioning enabled, see above) — `422` if only one of the two is given. Adds *another* profile — the first one is created by `/agent/connect`, not here |
+| `GET /api/crew` | the CrewOut shape above |
+| `POST /api/crew` | body `{ "name", "port"?, "api_key"?, "color"?, "access"? }` → `201` + CrewOut. Give `port`+`api_key` together to register one you set up by hand (`422` if only one of the two is given); omit both to have gaca-api create it — needs `access` (see above), given on this call or a prior one, else `400`. Adds *another* profile — the first one is created by `/agent/connect`, not here |
+| `POST /api/crew/discover` | body `{ "access"? }`, or no body at all → CrewOut. Finds crew members already running on the box but never registered through gaca-api, and adds them. Read-only against the box; never overwrites one already known by that name. Same `access` rule as create — `400` if gaca-api has never been given it |
 | `PUT /api/crew/{name}` | body `{ "port", "api_key", "color"? }` — port+key required together (no partial update); color alone can't change without them |
 | `DELETE /api/crew/{name}` | `422` if it's the current default and others remain — set a different default first |
 | `POST /api/crew/{name}/default` | make this the fallback for a chat/delegation that doesn't name one |
 | `GET /api/crew/{name}/skills` | see §5 |
-
-Every mutating `/agent` or `/crew` endpoint returns the same
-`{ host, crew: [...] }` shape, so the client can just replace its whole
-local state after any change rather than patching it.
 
 ---
 
@@ -581,7 +600,7 @@ it a reason to do that sooner than the next foreground/pull-to-refresh.
 | `403` | Authenticated but forbidden | Show the body. Don't retry |
 | `404` | Doesn't exist or isn't yours | Drop it from the list; the id is stale |
 | `409` | Illegal state transition | Refetch the resource — someone else moved it |
-| `502` | A provisioning call (`POST /crew` creating one, `POST /agent/discover`) reached the user's own box on their behalf and that failed | Show the body's `detail` (the real underlying error) — don't retry blindly, the box may need attention |
+| `502` | A provisioning call (`POST /crew` creating one, `POST /crew/discover`) reached the user's own box on their behalf and that failed | Show the body's `detail` (the real underlying error) — don't retry blindly, the box may need attention |
 | `5xx` | Server error | Backoff with jitter |
 
 `409` is the one worth handling well: it means the resource moved underneath

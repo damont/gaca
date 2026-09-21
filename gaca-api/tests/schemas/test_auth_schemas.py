@@ -11,9 +11,9 @@ from gaca_api.schemas.auth import (
     AgentConnect,
     AgentHostUpdate,
     AgentTokenRequest,
+    CrewAccess,
     CrewMemberCreate,
     CrewMemberUpdate,
-    ProvisioningAccess,
 )
 
 
@@ -52,18 +52,18 @@ def test_agent_host_update_requires_a_non_empty_value():
         AgentHostUpdate(host="")
 
 
-def test_provisioning_access_defaults_port_to_22():
-    conn = ProvisioningAccess(host="david-claw.lan", username="david", private_key="k")
+def test_crew_access_defaults_port_to_22():
+    conn = CrewAccess(host="david-claw.lan", username="david", private_key="k")
     assert conn.port == 22
 
 
-def test_provisioning_access_requires_host_username_and_key():
+def test_crew_access_requires_host_username_and_key():
     with pytest.raises(ValidationError):
-        ProvisioningAccess(host="", username="david", private_key="k")
+        CrewAccess(host="", username="david", private_key="k")
     with pytest.raises(ValidationError):
-        ProvisioningAccess(host="david-claw.lan", username="", private_key="k")
+        CrewAccess(host="david-claw.lan", username="", private_key="k")
     with pytest.raises(ValidationError):
-        ProvisioningAccess(host="david-claw.lan", username="david", private_key="")
+        CrewAccess(host="david-claw.lan", username="david", private_key="")
 
 
 # ── CrewMemberCreate / CrewMemberUpdate ───────────────────────────────
@@ -109,6 +109,21 @@ def test_crew_member_create_rejects_only_one_of_port_or_key():
         CrewMemberCreate(name="toolshed", port=8643)
     with pytest.raises(ValidationError):
         CrewMemberCreate(name="toolshed", api_key="k")
+
+
+def test_crew_member_create_access_defaults_to_none():
+    """No separate setup call needed just to check whether it's there —
+    omitting it means "use whatever gaca-api already has, if anything.\""""
+    assert CrewMemberCreate(name="toolshed").access is None
+
+
+def test_crew_member_create_accepts_inline_access():
+    created = CrewMemberCreate(
+        name="toolshed",
+        access={"host": "david-claw.lan", "username": "david", "private_key": "k"},
+    )
+    assert created.access.host == "david-claw.lan"
+    assert created.access.port == 22
 
 
 def test_crew_member_update_has_no_name_field():

@@ -76,35 +76,21 @@ class AgentStatus(BaseModel):
     host: str | None
 
 
-class ProvisioningAccess(BaseModel):
-    """Body for PUT /agent/provisioning — lets gaca-api set up new crew
-    members on your Hermes box directly (choosing a port, creating the
-    profile) instead of you creating one by hand and re-entering the
-    result. A materially bigger grant than a crew member's `api_key`: this
-    reaches the box itself, not one scoped Hermes gateway. How gaca-api
-    actually uses this (SSH, today) is not part of this contract — only
-    that it's an access credential for the box, shaped like one."""
+class CrewAccess(BaseModel):
+    """What gaca-api needs to set up a crew member on the box directly,
+    instead of the caller doing it by hand — a materially bigger grant than
+    a crew member's own `api_key`, since this reaches the box itself, not
+    one scoped Hermes gateway. Supply it once, on any call that creates or
+    discovers crew members (`CrewMemberCreate.access`,
+    `CrewDiscover.access`) — gaca-api remembers it for next time, so it
+    only has to be given the first time. How gaca-api actually uses this
+    (SSH, today) is not part of this contract — only that it's an access
+    credential for the box, shaped like one."""
 
     host: str = Field(..., min_length=1, max_length=300)
     port: int = Field(default=22, ge=1, le=65535)
     username: str = Field(..., min_length=1, max_length=100)
     private_key: str = Field(..., min_length=1)
-
-
-class ProvisioningStatus(BaseModel):
-    """GET /agent/provisioning — never echoes the credential, same rule as
-    a password."""
-
-    enabled: bool
-    host: str | None
-    username: str | None
-
-
-class ProvisioningTestResult(BaseModel):
-    """POST /agent/provisioning/test — did the stored access actually work."""
-
-    ok: bool
-    message: str
 
 
 _HEX_COLOR = Field(
@@ -119,13 +105,17 @@ class CrewMemberCreate(BaseModel):
 
     Give `port` + `api_key` to register one you already set up by hand.
     Omit both to have gaca-api create a brand new one on the box directly
-    instead — it picks the port and generates the key; requires
-    provisioning access already granted (PUT /agent/provisioning)."""
+    instead — it picks the port and generates the key. That needs access to
+    the box: give it via `access` the first time (gaca-api remembers it for
+    every call after), or omit `access` too if you already have on a prior
+    call — `400` (`CrewNotConfigured`) if neither this call nor a prior one
+    ever supplied it."""
 
     name: str = Field(..., min_length=1, max_length=50)
     port: int | None = Field(default=None, ge=1, le=65535)
     api_key: str | None = Field(default=None, min_length=1, max_length=500)
     color: str | None = _HEX_COLOR
+    access: CrewAccess | None = None
 
     @model_validator(mode="after")
     def _port_and_key_together(self) -> "CrewMemberCreate":
@@ -134,6 +124,14 @@ class CrewMemberCreate(BaseModel):
                 "port and api_key must be given together, or both omitted"
             )
         return self
+
+
+class CrewDiscover(BaseModel):
+    """Body for POST /crew/discover — entirely optional. Give `access` the
+    first time (or if you haven't via a create call either); omit it once
+    gaca-api already has it from a prior call."""
+
+    access: CrewAccess | None = None
 
 
 class CrewMemberUpdate(BaseModel):
@@ -156,9 +154,13 @@ class CrewMemberOut(BaseModel):
 
 
 class CrewOut(BaseModel):
-    """The full picture: shared host plus every configured crew member. Every
-    mutating crew endpoint returns this, so the client can just replace its
-    state wholesale after any change."""
+    """The full picture: shared host, every configured crew member, and
+    whether creating one can skip `port`/`api_key` (i.e. whether gaca-api
+    already has access to the box) — so a client can decide whether its
+    "add crew member" form needs to ask for `access` before deciding a
+    plain name is enough. Every mutating crew endpoint returns this, so the
+    client can just replace its state wholesale after any change."""
 
     host: str | None
     crew: list[CrewMemberOut]
+    can_create: bool

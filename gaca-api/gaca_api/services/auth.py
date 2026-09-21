@@ -164,20 +164,29 @@ async def add_crew_member(
 
 
 async def provision_crew_member(
-    user: UserDoc, name: str, color: str | None = None
+    user: UserDoc,
+    name: str,
+    color: str | None = None,
+    access: SSHConnection | None = None,
 ) -> UserDoc:
     """Create a brand new Hermes profile on the box and register it as a
     crew member in one step — the caller only ever names it; gaca-api picks
     the port (one past whatever's already running on the box, not just what
     it happens to already know about) and generates the key.
 
-    Requires provisioning access already granted (PUT /agent/provisioning);
-    raises CrewNotConfigured if none is stored, same as testing it would.
-    Checked against gaca-api's own crew list before ever touching the box —
-    a duplicate name is a 422 regardless of whether the box is reachable;
-    Hermes' own `profile create` is the authority on whether the name
-    collides there too, surfaced as SSHError (mapped to 502) if so.
+    `access` is optional: pass it the first time (POST /crew's `access`
+    field) and it's stored for every call after, so it only has to be given
+    once. Raises CrewNotConfigured if neither this call nor an earlier one
+    ever supplied it. Checked against gaca-api's own crew list before ever
+    touching the box — a duplicate name is a 422 regardless of whether the
+    box is reachable; Hermes' own `profile create` is the authority on
+    whether the name collides there too, surfaced as SSHError (mapped to
+    502) if so.
     """
+    if access is not None:
+        user = await set_ssh_connection(
+            user, access.host, access.port, access.username, access.private_key
+        )
     if user.ssh is None:
         raise CrewNotConfigured()
     if find_crew_member(user, name) is not None:
@@ -311,18 +320,19 @@ async def list_skills(user: UserDoc, name: str):
     return await backend.list_skills()
 
 
-# ── SSH provisioning ─────────────────────────────────────────────────
+# ── Reaching the box directly (creation, discovery) ──────────────────
+# Internally SSH (gaca_api/provisioning/ssh.py) — deliberately not named
+# that here or in anything a router returns. See CrewAccess's docstring.
 
 async def set_ssh_connection(
     user: UserDoc, host: str, port: int, username: str, private_key: str
 ) -> UserDoc:
-    """Store how gaca-api should reach this user's Hermes box over SSH.
+    """Store how gaca-api should reach this user's Hermes box directly.
 
-    Not validated here — a bad key/host is only discoverable by actually
-    connecting, which `test_ssh_connection` does. Storing first and testing
-    second (rather than requiring a successful test to save) means a
-    temporarily-unreachable box doesn't block recording credentials meant
-    for it.
+    Not validated here — a bad credential is only discoverable by actually
+    using it, which the first real `provision_crew_member`/`discover_crew`
+    call does. Called by both, when their caller supplies `access`, rather
+    than exposed as its own endpoint — see CrewAccess's docstring for why.
     """
     updated = user.model_copy(
         update={
@@ -335,23 +345,18 @@ async def set_ssh_connection(
     return updated
 
 
-async def test_ssh_connection(user: UserDoc) -> str:
-    """Actually connect and run a harmless command, returning its output.
-
-    Raises CrewNotConfigured if no SSH connection is stored yet (same
-    "nothing to reach" shape as a crew call with no agent connected), or
-    SSHError if the stored credentials don't work.
-    """
-    if user.ssh is None:
-        raise CrewNotConfigured()
-    return await ssh_provisioning.run(user.ssh, "echo ok")
-
-
-async def discover_crew(user: UserDoc) -> UserDoc:
+async def discover_crew(
+    user: UserDoc, access: SSHConnection | None = None
+) -> UserDoc:
     """Find crew members that already exist on the box — set up by hand, or
     by any means other than this account's own POST /crew — and register
     them, so pre-existing infrastructure isn't invisible to gaca-api just
     because gaca-api didn't create it.
+
+    `access` is optional: pass it the first time (POST /crew/discover's
+    `access` field) and it's stored for every call after. Raises
+    CrewNotConfigured if neither this call nor an earlier one ever supplied
+    it.
 
     Read-only against the box (see ssh.discover_profiles); the only writes
     are to this account's own row. Never overwrites a crew member gaca-api
@@ -361,9 +366,11 @@ async def discover_crew(user: UserDoc) -> UserDoc:
     discovery with nothing connected yet doubles as first-time connect),
     and `default_crew` to "default" if that name was found and nothing was
     already the default.
-
-    Raises CrewNotConfigured if no SSH access is stored yet.
     """
+    if access is not None:
+        user = await set_ssh_connection(
+            user, access.host, access.port, access.username, access.private_key
+        )
     if user.ssh is None:
         raise CrewNotConfigured()
 

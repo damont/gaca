@@ -1,6 +1,6 @@
 # 0003 — gaca-api may hold SSH access to provision crew members directly
 
-**Status:** Accepted, fully built (Slices A and B) · **Date:** 2026-09-20 · **Area:** gaca-api ↔ Hermes box, crew provisioning
+**Status:** Accepted, fully built, contract simplified after a second correction · **Date:** 2026-09-20 · **Area:** gaca-api ↔ Hermes box, crew provisioning
 
 ## Context
 
@@ -48,31 +48,44 @@ trust-on-first-use store to pin a box's key against yet. Accepted as a known
 gap for a personal box on a private network; revisit before this reaches
 anything less trusted.
 
-**SSH is internal, not part of the API contract.** First pass exposed
-`/agent/ssh`, `SSHConnectionSet`, etc. directly — wrong, caught immediately:
-"ssh is just the implementation detail, the caller should have zero idea
-we're using it," same rule already applied to `port`/`process` in
-`models/user.py`'s `CrewMember` docstring, just not applied to myself here.
-Corrected to `/agent/provisioning`, `ProvisioningAccess`,
-`ProvisioningStatus`, `ProvisioningTestResult` — the wire contract says only
-"gaca-api can set up crew members on this box for you," never "ssh." Only
+**SSH is internal, not part of the API contract — took two corrections to
+actually get right.** First pass exposed `/agent/ssh`, `SSHConnectionSet`,
+etc. directly — wrong, caught immediately: "ssh is just the implementation
+detail, the caller should have zero idea we're using it," same rule already
+applied to `port`/`process` in `models/user.py`'s `CrewMember` docstring,
+just not applied to myself here. First fix renamed it to
+`/agent/provisioning`, `ProvisioningAccess`, `ProvisioningStatus`,
+`ProvisioningTestResult` — better wording, same underlying mistake: it was
+*still* a whole separate resource the caller had to set up, check the
+`enabled` status of, and test before it could call create. The user's own
+framing caught this: "all I want the app to do is call create on the /crew
+API... the API should handle all the comms with Hermes." **Second
+correction, same day: removed `/agent/provisioning` entirely.** `access` is
+now just an optional field on `POST /crew` and `POST /crew/discover`
+themselves — give it once, gaca-api remembers it, no separate resource, no
+status to check up front, no test endpoint (a failed create already reports
+the real error via 502; attempting the action *is* the test). `CrewOut`
+gained `can_create: bool` so a client still knows whether it needs to ask
+for `access`, without a dedicated call to find out. Only
 `models/user.py`'s `SSHConnection` and `gaca_api/provisioning/ssh.py` stay
 honestly SSH-named, because that layer — like `agent/hermes/adapter.py` — is
 genuinely, permanently about one specific mechanism; the boundary is the
 router, same place `crew_out()` already translates internal field names to
-public ones.
+public ones. **Lesson for next time**: "rename it so it doesn't say the
+mechanism" and "does this need to be its own resource at all" are two
+different questions — answering the first one isn't a substitute for asking
+the second.
 
 ## Consequences
 
-- **Slice A**: storing the access credential (`PUT /api/agent/provisioning`)
-  and proving it works (`POST /api/agent/provisioning/test`, which runs a
-  harmless command and reports pass/fail). Tested against a real local SSH
-  server (`asyncssh`'s own), not mocks.
+- **Slice A**: storing the access credential — now via the `access` field on
+  `POST /crew`/`POST /crew/discover` rather than a dedicated endpoint (see
+  the correction above). Tested against a real local SSH server
+  (`asyncssh`'s own), not mocks.
 - **Discovery** (reading pre-existing profiles set up by hand, not through
-  GACA): `GET`-style read via `POST /api/agent/discover`, reading each
-  profile's own `.env` for its `API_SERVER_*` keys. Confirmed live against
-  `david-claw`, 2026-09-20 — found the real `default`/`toolshed`/`trading`,
-  each already running.
+  GACA): `POST /crew/discover`, reading each profile's own `.env` for its
+  `API_SERVER_*` keys. Confirmed live against `david-claw`, 2026-09-20 —
+  found the real `default`/`toolshed`/`trading`, each already running.
 - **Slice B — `POST /api/crew` with `port`/`api_key` omitted now actually
   provisions a new profile.** The command sequence was verified against the
   *live* Hermes CLI on `david-claw` before writing any code against it —
