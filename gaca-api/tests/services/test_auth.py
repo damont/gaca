@@ -563,7 +563,7 @@ def test_resolve_crew_member_raises_when_nothing_resolves(tmp_path):
 
     async def go():
         user = await _new_user()
-        with pytest.raises(CrewNotConfigured):
+        with pytest.raises(CrewNotConfigured, match="POST /api/agent/connect"):
             auth_service.resolve_crew_member(user, None)
 
     _run(go)
@@ -626,7 +626,7 @@ def test_resolve_crew_for_delegate_raises_when_nothing_resolves(tmp_path):
 
     async def go():
         user = await _new_user()
-        with pytest.raises(CrewNotConfigured):
+        with pytest.raises(CrewNotConfigured, match="POST /api/agent/connect"):
             auth_service.resolve_crew_for_delegate(user, None, None)
 
     _run(go)
@@ -682,7 +682,7 @@ def test_discover_crew_raises_crew_not_configured_without_ssh(tmp_path):
 
     async def go():
         user = await _new_user()
-        with pytest.raises(CrewNotConfigured):
+        with pytest.raises(CrewNotConfigured, match="discover crew members"):
             await auth_service.discover_crew(user)
 
     _run(go)
@@ -807,7 +807,7 @@ def test_provision_crew_member_raises_crew_not_configured_without_ssh(tmp_path):
 
     async def go():
         user = await _new_user()
-        with pytest.raises(CrewNotConfigured):
+        with pytest.raises(CrewNotConfigured, match="create a crew member"):
             await auth_service.provision_crew_member(user, "toolshed")
 
     _run(go)

@@ -1029,3 +1029,24 @@ Own PR, same day as §13. Tests updated — dead SSH-test scaffolding removed
 from `tests/services/test_auth.py` along with the endpoints it existed to
 test, new tests added proving `access` works inline on a never-connected
 account. 229 passing.
+
+## 15. `CrewNotConfigured` message accuracy — 2026-09-20
+
+Reported by the gaca-android session: a real user hit `CrewNotConfigured`
+and got back "crew not configured — set a host via `PUT /api/crew/host`
+and add at least one crew member via `POST /api/crew` first" — an endpoint
+that hadn't existed since §14, hours earlier the same day. Root cause: one
+generic message hardcoded into the exception's `__init__`, shared across
+four call sites that fail for different reasons (no agent connected at
+all; connected but no crew member picked; connected but gaca-api has no
+box access to create one; connected but no box access to discover). A
+caller had no way to tell which of those it actually hit.
+
+`CrewNotConfigured.__init__` now takes an optional `message`; each raise
+site (`resolve_crew_member`, `backend_for_crew`, `provision_crew_member`,
+`discover_crew` in `services/auth.py`) passes its own accurate one, naming
+the actual next step (`POST /api/agent/connect`, or include `access` on
+the call). The no-argument default covers only a generic low-level caller
+with nothing more specific to say. Tests updated with `match=` assertions
+locking in the real message text so a future edit can't quietly go stale
+the same way again. 229 passing.

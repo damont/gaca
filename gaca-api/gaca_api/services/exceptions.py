@@ -47,16 +47,26 @@ class InvalidRequest(Exception):
 
 
 class CrewNotConfigured(Exception):
-    """The caller has no usable crew member to reach yet: no host, no crew,
-    or no default among the crew they do have.
+    """The caller has no usable crew member — or box access — to reach yet.
 
     Mapped to HTTP 400. A normal, expected state for a new user — not a
     startup or wiring bug — since every operator brings their own crew
     rather than sharing one configured for the whole app.
+
+    Every raise site passes its own accurate `message`: "no agent connected
+    at all" and "connected, but gaca-api has no access to create a new
+    crew member" are different problems with different fixes, and a single
+    generic string for both once hid the real cause from a caller entirely
+    (it also went stale after the agent/crew split — it named
+    `PUT /api/crew/host`, an endpoint that hadn't existed for hours — see
+    build-plan.md §15). `message` is optional only so a low-level caller
+    with no more specific context than "nothing to reach" still gets a
+    reasonable default.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, message: str | None = None) -> None:
         super().__init__(
-            "crew not configured — set a host via PUT /api/crew/host "
-            "and add at least one crew member via POST /api/crew first"
+            message
+            or "no agent connected yet — connect one first via "
+            "POST /api/agent/connect"
         )
