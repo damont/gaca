@@ -188,7 +188,10 @@ async def provision_crew_member(
             user, access.host, access.port, access.username, access.private_key
         )
     if user.ssh is None:
-        raise CrewNotConfigured()
+        raise CrewNotConfigured(
+            "gaca-api has no access to create a crew member on this box yet "
+            "— include `access` on this call"
+        )
     if find_crew_member(user, name) is not None:
         raise InvalidRequest(f"crew member {name!r} already exists")
 
@@ -274,7 +277,10 @@ def resolve_crew_member(user: UserDoc, requested: str | None) -> CrewMember:
     if member is not None:
         return member
 
-    raise CrewNotConfigured()
+    raise CrewNotConfigured(
+        "no crew member to use — connect your agent first via "
+        "POST /api/agent/connect, or name one explicitly"
+    )
 
 
 def resolve_crew_for_delegate(
@@ -306,7 +312,10 @@ def resolve_crew_for_delegate(
 def backend_for_crew(user: UserDoc, crew_member: CrewMember) -> AgentBackend:
     """The AgentBackend for one of this user's crew members."""
     if not user.agent_host:
-        raise CrewNotConfigured()
+        raise CrewNotConfigured(
+            "no agent connected yet — connect one first via "
+            "POST /api/agent/connect"
+        )
     base_url = f"{user.agent_host}:{crew_member.port}"
     return agent_runtime.backend_for(base_url, crew_member.api_key)
 
@@ -372,7 +381,10 @@ async def discover_crew(
             user, access.host, access.port, access.username, access.private_key
         )
     if user.ssh is None:
-        raise CrewNotConfigured()
+        raise CrewNotConfigured(
+            "gaca-api has no access to discover crew members on this box "
+            "yet — include `access` on this call"
+        )
 
     found = await ssh_provisioning.discover_profiles(user.ssh)
 
