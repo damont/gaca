@@ -52,7 +52,7 @@ services:
       - GACA_API_PORT=41700
       - GACA_DB_PATH=/var/lib/gaca/gaca.db
       - GACA_AGENT_ENGINE=${GACA_AGENT_ENGINE:-hermes}
-      - GACA_AGENT_STREAM_IDLE_TIMEOUT=${GACA_AGENT_STREAM_IDLE_TIMEOUT:-30}
+      - GACA_AGENT_STREAM_IDLE_TIMEOUT=${GACA_AGENT_STREAM_IDLE_TIMEOUT:-180}
       - GACA_FCM_CREDENTIALS_PATH=${GACA_FCM_CREDENTIALS_HOST_PATH:+/run/secrets/fcm-service-account.json}
     restart: unless-stopped
 

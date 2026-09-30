@@ -13,6 +13,7 @@ port ever sees them.
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import AsyncIterator, Sequence
 
 import httpx
@@ -25,6 +26,9 @@ from ...schemas.skill import SkillInfo
 from .translate import translate
 
 
+logger = logging.getLogger(__name__)
+
+
 class HermesAdapter:
     """Drives a Hermes api_server gateway over HTTP. Structurally an AgentBackend."""
 
@@ -33,7 +37,7 @@ class HermesAdapter:
         base_url: str,
         api_key: str,
         *,
-        stream_idle_timeout: float = 30.0,
+        stream_idle_timeout: float = 180.0,
         client: httpx.AsyncClient | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
@@ -113,16 +117,38 @@ class HermesAdapter:
                         yield event
         except httpx.TimeoutException:
             # Stream went silent past the idle window — surface a neutral failure
-            # so read_run finalizes and the client sees why it stopped.
-            yield RunFailed(
-                session_id=session_id,
-                run_id=run_id,
-                error=f"engine event stream idle for over {self._stream_idle_timeout:.0f}s",
-            )
+            # so read_run finalizes and the client sees why it stopped. Ask the
+            # engine what it thinks the run is doing, for the log and the error.
+            detail = await self._peek_status(run_id)
+            error = f"engine event stream idle for over {self._stream_idle_timeout:.0f}s"
+            if detail:
+                error += f" ({detail})"
+            logger.warning("engine stream idle: run=%s %s", run_id, error)
+            yield RunFailed(session_id=session_id, run_id=run_id, error=error)
         except httpx.HTTPError as exc:
+            logger.warning("engine stream error: run=%s %s", run_id, exc)
             yield RunFailed(
                 session_id=session_id, run_id=run_id, error=f"engine stream error: {exc}"
             )
+
+    async def _peek_status(self, run_id: str) -> str | None:
+        """Best-effort GET /v1/runs/{id}: a short "status=…, last_event=…" string.
+
+        Purely diagnostic — never raises, and the caller fails the run either way
+        (the events stream can't be resumed once it has dropped).
+        """
+        try:
+            resp = await self._client.get(
+                f"{self._base_url}/v1/runs/{run_id}",
+                headers=self._headers,
+                timeout=httpx.Timeout(5.0),
+            )
+            if resp.status_code != 200:
+                return f"engine status lookup returned {resp.status_code}"
+            body = resp.json()
+            return f"engine reports status={body.get('status')}, last_event={body.get('last_event')}"
+        except (httpx.HTTPError, ValueError):
+            return None
 
     # ── Reserved — not wired in this slice ────────────────────────────
     async def submit_approval(self, *, run_id: str, decision: str) -> None:

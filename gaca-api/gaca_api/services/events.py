@@ -19,12 +19,15 @@ from ..schemas.event import GacaEvent, GacaEventAdapter
 
 
 def _sse_event(event: GacaEvent) -> dict:
-    """Frame one GacaEvent for SSE: type -> event, seq -> id, model JSON -> data."""
-    return {
-        "event": event.type,
-        "id": "" if event.seq is None else str(event.seq),
-        "data": event.model_dump_json(),
-    }
+    """Frame one GacaEvent for SSE: type -> event, seq -> id, model JSON -> data.
+
+    Unsequenced (ephemeral) events like run.heartbeat carry NO id field: an empty
+    `id:` line would reset the client's Last-Event-ID and break resume.
+    """
+    frame = {"event": event.type, "data": event.model_dump_json()}
+    if event.seq is not None:
+        frame["id"] = str(event.seq)
+    return frame
 
 
 async def stream(session_id: str, last_event_id: int = 0) -> AsyncIterator[dict]:

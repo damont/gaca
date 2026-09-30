@@ -58,7 +58,7 @@ class Settings(BaseSettings):
     # Idle timeout (seconds) for the run event stream: if the engine sends no
     # event for this long, the run is treated as failed. Per-event, NOT total —
     # a long but active run won't trip it.
-    agent_stream_idle_timeout: float = 30.0
+    agent_stream_idle_timeout: float = 180.0
 
     # --- Push notifications --------------------------------------------
     # Path to a Firebase service-account JSON key (Firebase console → Project

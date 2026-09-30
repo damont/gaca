@@ -164,3 +164,35 @@ def test_list_skills_maps_hermes_v1_skills():
     skills = asyncio.run(adapter.list_skills())
     assert [s.name for s in skills] == ["email", "research"]
     assert skills[0].category == "productivity"
+
+
+def test_idle_timeout_error_includes_engine_status():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/runs/run_abc/events":
+            raise httpx.ReadTimeout("idle", request=request)
+        if request.url.path == "/v1/runs/run_abc":
+            return httpx.Response(200, json={"status": "running", "last_event": "tool.started"})
+        return httpx.Response(404)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = HermesAdapter("http://engine:8642", "k" * 16, stream_idle_timeout=30.0, client=client)
+
+    async def collect():
+        return [e async for e in adapter.stream_events("run_abc", session_id="s")]
+
+    events = asyncio.run(collect())
+    assert "status=running" in events[0].error and "tool.started" in events[0].error
+
+
+def test_idle_timeout_survives_failed_status_lookup():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("idle", request=request)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = HermesAdapter("http://engine:8642", "k" * 16, stream_idle_timeout=30.0, client=client)
+
+    async def collect():
+        return [e async for e in adapter.stream_events("run_abc", session_id="s")]
+
+    events = asyncio.run(collect())
+    assert [type(e).__name__ for e in events] == ["RunFailed"]

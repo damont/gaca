@@ -131,3 +131,38 @@ def test_start_turn_unknown_session_raises(tmp_path):
             await client.close()
 
     asyncio.run(main())
+
+
+class SlowBackend(StubBackend):
+    """Goes quiet for a while between events, like an engine mid model-call."""
+
+    async def stream_events(self, run_id, *, session_id):
+        yield AssistantDelta(session_id=session_id, run_id=run_id, text="Hi")
+        await asyncio.sleep(0.35)
+        yield RunCompleted(session_id=session_id, run_id=run_id, output="Hi there")
+
+
+def test_read_run_heartbeats_while_quiet_without_persisting_them(tmp_path, monkeypatch):
+    settings.db_path = str(tmp_path / "t.db")
+    recorder = RecorderBus()
+    monkeypatch.setattr(runs, "event_bus", recorder)
+    monkeypatch.setattr(runs, "HEARTBEAT_INTERVAL", 0.1)
+
+    async def main():
+        await client.connect()
+        try:
+            await sessions_db.insert(SessionDoc(id="s1", user_id="u1"))
+            await runs.read_run(SlowBackend(), "s1", "run_slow")
+            return await events_db.find_by_session("s1")
+        finally:
+            await client.close()
+
+    stored = asyncio.run(main())
+
+    types = [json.loads(m)["type"] for _, m in recorder.messages]
+    assert types[0] == "assistant.delta" and types[-1] == "run.completed"
+    assert types.count("run.heartbeat") >= 2  # ~0.35s quiet at 0.1s cadence
+    # ephemeral: not in the durable log, and the stream still ran to completion
+    assert [e.type for e in stored] == ["assistant.delta", "run.completed"]
+    beat = next(json.loads(m) for _, m in recorder.messages if '"run.heartbeat"' in m)
+    assert beat["seq"] is None and beat["idle_seconds"] >= 0

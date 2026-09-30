@@ -92,3 +92,11 @@ def test_live_event_deduped_against_replay(tmp_path):
     replayed, live = asyncio.run(main())
     assert replayed["id"] == "1"
     assert live["id"] == "2"  # the duplicate seq-1 was dropped, not re-yielded
+
+
+def test_sse_frame_omits_id_for_unsequenced_events():
+    from gaca_api.schemas.event import RunHeartbeat
+    from gaca_api.services.events import _sse_event
+
+    frame = _sse_event(RunHeartbeat(session_id="s", run_id="r", idle_seconds=15.0))
+    assert frame["event"] == "run.heartbeat" and "id" not in frame

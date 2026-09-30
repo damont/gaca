@@ -119,6 +119,19 @@ class RunFailed(_EventBase):
     error: str
 
 
+class RunHeartbeat(_EventBase):
+    """The run is still in flight but has been quiet for a while.
+
+    Synthesized by the core (read_run), never by an engine, and EPHEMERAL: it is
+    published to open streams but not persisted, so it takes no seq, is not
+    replayed on reconnect, and never grows the durable log. Clients that don't
+    know it can ignore it. `idle_seconds` is how long the run has gone without a
+    real event.
+    """
+    type: Literal["run.heartbeat"] = "run.heartbeat"
+    idle_seconds: float
+
+
 # The neutral contract the app and services code against. Switch on `.type`.
 #
 # Reserved for later slices (define when we build them, not before):
@@ -133,6 +146,7 @@ GacaEvent = Annotated[
         ToolCompleted,
         RunCompleted,
         RunFailed,
+        RunHeartbeat,
     ],
     Field(discriminator="type"),
 ]

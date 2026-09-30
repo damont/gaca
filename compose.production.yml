@@ -30,7 +30,7 @@ services:
       # now (UserDoc.agent_base_url / agent_api_key), submitted via
       # PUT /api/auth/agent-config after signing in, not app-wide config.
       GACA_AGENT_ENGINE: ${GACA_AGENT_ENGINE:-hermes}
-      GACA_AGENT_STREAM_IDLE_TIMEOUT: ${GACA_AGENT_STREAM_IDLE_TIMEOUT:-30}
+      GACA_AGENT_STREAM_IDLE_TIMEOUT: ${GACA_AGENT_STREAM_IDLE_TIMEOUT:-180}
       # Push is optional: GACA_FCM_CREDENTIALS_PATH only resolves to the
       # mounted file when GACA_FCM_CREDENTIALS_HOST_PATH is actually set
       # (":+" substitutes iff the var is set, unlike ":-"'s "iff unset").
