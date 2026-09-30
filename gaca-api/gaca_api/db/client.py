@@ -86,6 +86,24 @@ CREATE INDEX IF NOT EXISTS ix_push_tokens_user
 -- rather than accumulating duplicates that would each get their own push.
 CREATE UNIQUE INDEX IF NOT EXISTS ux_push_tokens_token
     ON push_tokens (token);
+-- The daily briefing: one overall row per (user, day) plus one row per section.
+-- Sections are keyed so each source (calendar, weather, news...) can replace
+-- just its own section, idempotently, without touching the others.
+CREATE TABLE IF NOT EXISTS briefings (
+    user_id       TEXT NOT NULL,
+    briefing_date TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    doc           TEXT NOT NULL,
+    PRIMARY KEY (user_id, briefing_date)
+);
+CREATE TABLE IF NOT EXISTS briefing_sections (
+    user_id       TEXT NOT NULL,
+    briefing_date TEXT NOT NULL,
+    section_key   TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    doc           TEXT NOT NULL,
+    PRIMARY KEY (user_id, briefing_date, section_key)
+);
 """
 
 # Columns added to a table AFTER it first shipped. `CREATE TABLE IF NOT EXISTS`
