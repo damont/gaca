@@ -35,18 +35,30 @@ async def create_session(
 
 @router.get("")
 async def list_sessions(user: UserDoc = Depends(get_current_user)) -> SessionList:
-    """The Chat tab: this user's sessions, most recently active first."""
-    sessions = await session_service.list_for_user(user.id)
-    return SessionList(sessions=[SessionOut.model_validate(s) for s in sessions])
+    """The Chat tab: this user's sessions, most recently active first, each labeled
+    with a summary and last-message preview (see services/sessions.py:labels_for)."""
+    rows = await session_service.list_for_user(user.id)
+    return SessionList(
+        sessions=[
+            SessionOut.model_validate(s).model_copy(
+                update={"summary": labels.summary, "preview": labels.preview}
+            )
+            for s, labels in rows
+        ]
+    )
 
 
 @router.get("/{session_id}")
 async def get_session(
     session_id: str, user: UserDoc = Depends(get_current_user)
 ) -> SessionDetail:
-    session, messages = await session_service.get_with_messages(user.id, session_id)
+    session, messages, labels = await session_service.get_with_messages(
+        user.id, session_id
+    )
     return SessionDetail(
-        **SessionOut.model_validate(session).model_dump(),
+        **SessionOut.model_validate(session).model_dump(exclude={"summary", "preview"}),
+        summary=labels.summary,
+        preview=labels.preview,
         messages=[MessageOut.model_validate(m) for m in messages],
     )
 

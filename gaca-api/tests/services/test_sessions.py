@@ -95,7 +95,7 @@ def test_list_for_user_orders_by_creation_when_nothing_has_messages_yet(tmp_path
         return await session_service.list_for_user("u1")
 
     sessions = _run(go)
-    assert [s.title for s in sessions] == ["second", "first"]
+    assert [s.title for s, _ in sessions] == ["second", "first"]
 
 
 def test_list_for_user_orders_by_most_recent_message_not_creation(tmp_path):
@@ -120,7 +120,7 @@ def test_list_for_user_orders_by_most_recent_message_not_creation(tmp_path):
         return await session_service.list_for_user("u1")
 
     sessions = _run(go)
-    assert [s.title for s in sessions] == ["old but active", "new but quiet"]
+    assert [s.title for s, _ in sessions] == ["old but active", "new but quiet"]
 
 
 def test_list_for_user_uses_the_latest_message_when_there_are_several(tmp_path):
@@ -143,7 +143,7 @@ def test_list_for_user_uses_the_latest_message_when_there_are_several(tmp_path):
         return await session_service.list_for_user("u1")
 
     sessions = _run(go)
-    assert [s.title for s in sessions] == ["active", "quiet"]
+    assert [s.title for s, _ in sessions] == ["active", "quiet"]
 
 
 def test_get_with_messages_is_scoped_to_the_owner(tmp_path):
@@ -153,9 +153,69 @@ def test_get_with_messages_is_scoped_to_the_owner(tmp_path):
         created = await session_service.create("u1", None, "hermes")
         with pytest.raises(NotFound):
             await session_service.get_with_messages("u2", created.id)
-        session, messages = await session_service.get_with_messages("u1", created.id)
+        session, messages, _ = await session_service.get_with_messages("u1", created.id)
         return session, messages
 
     session, messages = _run(go)
     assert session.user_id == "u1"
     assert messages == []
+
+
+def _msg(session_id, role, content, minutes=0):
+    return MessageDoc(
+        session_id=session_id, role=role, content=content,
+        created_at=datetime.now(timezone.utc) + timedelta(minutes=minutes),
+    )
+
+
+def test_untitled_session_is_labeled_from_its_opening_and_latest_messages(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        s = await session_service.create("u1", None, "hermes")
+        await messages_db.insert(_msg(s.id, "user", "Can you **move** the dentist\nappointment to Friday?", 0))
+        await messages_db.insert(_msg(s.id, "assistant", "Done - it's now Friday at 9.", 1))
+        await session_service.create("u1", None, "hermes")  # no messages yet
+        return await session_service.list_for_user("u1")
+
+    rows = {s.id: labels for s, labels in _run(go)}
+    labeled = next(l for l in rows.values() if l.summary)
+    assert labeled.summary == "Can you move the dentist appointment to Friday?"
+    assert labeled.preview == "Done - it's now Friday at 9."
+    empty = next(l for l in rows.values() if not l.summary)
+    assert empty.preview is None
+
+
+def test_explicit_title_wins_and_user_preview_is_prefixed(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        s = await session_service.create("u1", "Trip planning", "hermes")
+        await messages_db.insert(_msg(s.id, "user", "something else entirely", 0))
+        return await session_service.list_for_user("u1")
+
+    [(_, labels)] = _run(go)
+    assert labels.summary == "Trip planning"
+    assert labels.preview == "You: something else entirely"
+
+
+def test_long_text_is_cut_at_a_word_boundary():
+    from gaca_api.services.sessions import SUMMARY_MAX, labels_for
+
+    text = "word " * 40
+    labels = labels_for(None, _msg("s", "user", text), None)
+    assert labels.summary.endswith("…") and len(labels.summary) <= SUMMARY_MAX + 1
+    assert not labels.summary[:-1].endswith("wor")
+
+
+def test_get_with_messages_returns_labels(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        s = await session_service.create("u1", None, "hermes")
+        await messages_db.insert(_msg(s.id, "user", "hello there", 0))
+        await messages_db.insert(_msg(s.id, "assistant", "hi!", 1))
+        return await session_service.get_with_messages("u1", s.id)
+
+    _, _, labels = _run(go)
+    assert (labels.summary, labels.preview) == ("hello there", "hi!")

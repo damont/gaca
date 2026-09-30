@@ -33,6 +33,13 @@ class SessionOut(BaseModel):
     # a "from alert" pill and link straight back. None for a session started
     # directly from the Chat tab.
     alert_id: str | None = None
+    # What to show in the Chat list instead of the crew member's name: a short
+    # headline (the title if one was set, else derived from the opening
+    # message) and a one-line preview of the latest message. Computed by the
+    # API so every client labels a chat the same way; null while a session has
+    # no messages yet.
+    summary: str | None = None
+    preview: str | None = None
 
 
 class SessionDetail(SessionOut):

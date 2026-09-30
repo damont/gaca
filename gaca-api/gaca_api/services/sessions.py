@@ -1,6 +1,9 @@
 """Session business logic. No FastAPI, no HTTP — just orchestration."""
 from __future__ import annotations
 
+import re
+from dataclasses import dataclass
+
 from ..db import messages as messages_db
 from ..db import sessions as sessions_db
 from ..models.message import MessageDoc
@@ -16,10 +19,57 @@ async def create(
     return session
 
 
-async def list_for_user(user_id: str) -> list[SessionDoc]:
+SUMMARY_MAX = 60
+PREVIEW_MAX = 100
+
+
+@dataclass(frozen=True)
+class Labels:
+    """How a client should label a session: a headline and a last-message line."""
+    summary: str | None
+    preview: str | None
+
+
+def _tidy(text: str, limit: int) -> str | None:
+    """One line, markdown noise dropped, cut at a word boundary with an ellipsis."""
+    text = re.sub(r"```.*?```", " ", text, flags=re.S)
+    text = re.sub(r"[*_`#>]+", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        return None
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rsplit(" ", 1)[0] or text[:limit]
+    return cut.rstrip(" ,.;:-") + "…"
+
+
+def labels_for(
+    title: str | None,
+    first_user: MessageDoc | None,
+    last: MessageDoc | None,
+) -> Labels:
+    """The headline and preview for a session. All labeling rules live here so
+    every client shows the same thing: an explicit title wins; otherwise the
+    opening question; the preview is the latest message, prefixed "You: " when
+    it's the user's."""
+    summary = _tidy(title, SUMMARY_MAX) if title else None
+    if summary is None and first_user is not None:
+        summary = _tidy(first_user.content, SUMMARY_MAX)
+    preview = None
+    if last is not None:
+        preview = _tidy(last.content, PREVIEW_MAX)
+        if preview and last.role == "user":
+            preview = f"You: {preview}"
+    return Labels(summary, preview)
+
+
+async def list_for_user(user_id: str) -> list[tuple[SessionDoc, Labels]]:
     """This user's sessions, most recently active first — the Chat tab's
-    list. See db/sessions.py:find_by_user for what "active" means."""
-    return await sessions_db.find_by_user(user_id)
+    list — each with its labels. See db/sessions.py:find_by_user for what
+    "active" means."""
+    sessions = await sessions_db.find_by_user(user_id)
+    edges = await messages_db.find_edges_by_user(user_id)
+    return [(s, labels_for(s.title, *edges.get(s.id, (None, None)))) for s in sessions]
 
 
 async def ensure_owned(user_id: str, session_id: str) -> SessionDoc:
@@ -36,6 +86,9 @@ async def ensure_owned(user_id: str, session_id: str) -> SessionDoc:
 
 async def get_with_messages(
     user_id: str, session_id: str
-) -> tuple[SessionDoc, list[MessageDoc]]:
+) -> tuple[SessionDoc, list[MessageDoc], Labels]:
     session = await ensure_owned(user_id, session_id)
-    return session, await messages_db.find_by_session(session_id)
+    messages = await messages_db.find_by_session(session_id)
+    first_user = next((m for m in messages if m.role == "user"), None)
+    last = messages[-1] if messages else None
+    return session, messages, labels_for(session.title, first_user, last)
