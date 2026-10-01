@@ -402,6 +402,9 @@ same endpoints from here on.
   "alert_id": "01JX8K2M4P7QRSTVWXYZ", // set only if this session was opened by
                                        // a delegation — null for a session
                                        // started directly from the Chat tab
+  "summary": "Can you move the dentist appointment to Friday?", // headline for the Chat list:
+                                       // the title if set, else the opening message; null if empty
+  "preview": "You: Done - it's now Friday at 9.",  // latest message, one line; "You: " if yours
   "messages": [ { /* Message, GET only */ } ]
 }
 ```
@@ -447,12 +450,40 @@ The Session plus every message in it, oldest first.
 ### `POST /api/sessions/{id}/messages`
 
 ```jsonc
-{ "content": "What's using all the disk space?" }
+{ "content": "What's using all the disk space?",
+  "attachment_ids": ["…"] }   // optional, up to 4 photos uploaded below
 ```
 
+A message needs text, at least one photo, or both (`422` otherwise).
 `202` immediately (`{ "turn_id": "…" }`) — this does not wait for a reply.
 The user message is persisted right away; the reply streams in on the events
 endpoint below and lands in the transcript when the run completes.
+
+When the run finishes (or fails) the API pushes a notification — see §8a.
+
+### Photos — `POST /api/sessions/{id}/attachments`
+
+Upload each photo first, then reference the returned `id` in
+`attachment_ids`. The body is the **raw image bytes** (not multipart);
+JPEG, PNG, WebP or GIF, **max 2 MB** (`413` over that — the nginx layers in
+front of the API enforce the same cap, so the app downscales first). The type
+is sniffed from the bytes, never trusted from the header (`422` if it isn't
+an image).
+
+```jsonc
+// 201
+{ "id": "…", "content_type": "image/jpeg", "size": 412000,
+  "url": "sessions/01JX9…/attachments/…" }   // relative to the API base
+```
+
+`GET /api/sessions/{id}/attachments/{attachment_id}` returns the bytes with
+the normal bearer token (photos are private to the account; `404` for anyone
+else's). Uploads that never get sent are purged after a day. A photo can be
+attached to one message only.
+
+Messages carry them back as `attachments: [{ id, content_type, size, url }]`.
+Hermes sees a photo only on the turn it's sent; earlier turns' photos appear
+in its history as a "[N photos attached]" note.
 
 ### `GET /api/sessions/{id}/events`
 
@@ -500,6 +531,34 @@ gateway, so it can never show a skill Hermes no longer has installed.
 
 Sorted by category then name. `category` may be `null` for an uncategorized
 skill. `404` if `name` isn't one of this account's configured crew members.
+
+### `GET /api/crew/{name}/profile` — how a crew member is set up
+
+GACA's own picture of a profile, in GACA's terms — not Hermes' (each engine's
+adapter translates; see `gaca_api/schemas/crew_profile.py`). Read live, never
+cached. **Read-only: to change a profile, talk to it in chat.**
+
+```jsonc
+{
+  "name": "default", "color": "blue", "is_default": true,   // GACA's identity for it
+  "status": "online",                                       // online | offline
+  "engine": "Hermes 0.20.5",
+  "model": { "provider": "ChatGPT or Codex Subscription", "name": "gpt-6-luna" },
+  "channels": [ { "name": "Telegram", "state": "connected", "needs_attention": false } ],
+  "skill_count": 74,
+  "skill_categories": [ { "name": "creative", "count": 16 } ],   // most first
+  "toolsets": [ { "name": "web", "label": "Web Search & Scraping", "description": "…" } ],
+  "jobs": [ { "id": "…", "name": "daily-briefing",
+              "schedule": "Every day at 7:00 AM",              // already plain English
+              "enabled": true, "next_run": "2026-10-01T07:00:00-04:00",
+              "last_run": "…", "last_status": "ok", "kind": "agent" } ],  // agent | script
+  "unavailable": []   // pieces it couldn't read, e.g. ["scheduled jobs"]
+}
+```
+
+Always `200` for an existing member: an unreachable engine is
+`status: "offline"` (everything else empty), and one failing piece only
+appears in `unavailable`. `404` if `name` isn't one of this account's crew.
 
 ---
 
@@ -621,3 +680,8 @@ Refetch and re-render rather than showing an error.
 **The app does not compute state.** Don't locally derive whether a snooze has
 expired or whether a transition is legal — send the request and honour the
 response. The server owns the rules; a client that duplicates them will drift.
+
+### What gets pushed
+
+- **Alerts** (new/delegation settled): `data` has `alert_id` and `severity`; channels `alerts_urgent` / `alerts_standard`.
+- **Chat replies** — when a normal chat turn completes the notification is the crew member's name and the reply tidied to one line; if the run fails it's "<crew> couldn't finish" with the error. `data` is `{ "session_id": "…", "kind": "chat" }`; channel `chat_replies`. The app opens that thread on tap and suppresses the notification when that thread is already on screen. Alert-delegated runs push through the alert instead, not this.
