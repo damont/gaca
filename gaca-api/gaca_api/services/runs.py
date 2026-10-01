@@ -11,16 +11,18 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING
+from collections.abc import Awaitable, Callable, Sequence
 
 from ..agent.base import AgentBackend
 from ..bus import event_bus
 from ..db import events as events_db
 from ..db import messages as messages_db
 from ..db import sessions as sessions_db
-from ..models.message import MessageDoc
+from ..db import attachments as attachments_db
+from ..models.message import AttachmentMeta, MessageDoc
 from ..schemas.event import GacaEvent, RunCompleted, RunFailed, RunHeartbeat
-from ..schemas.message import MessageOut
+from ..schemas.message import ImageInput, MessageOut
 from .exceptions import NotFound
 
 logger = logging.getLogger(__name__)
@@ -34,6 +36,9 @@ _background: set[asyncio.Task] = set()
 
 OnSettled = Callable[[GacaEvent], Awaitable[None]]
 
+if TYPE_CHECKING:
+    from .attachments import StoredAttachment
+
 
 async def start_turn(
     backend: AgentBackend,
@@ -41,6 +46,7 @@ async def start_turn(
     content: str,
     *,
     on_settled: OnSettled | None = None,
+    attachments: Sequence["StoredAttachment"] = (),
 ) -> MessageDoc:
     """Persist the user message, start a run, spawn its reader. Non-blocking.
 
@@ -62,12 +68,25 @@ async def start_turn(
         raise NotFound("session", session_id)
 
     prior = await messages_db.find_by_session(session_id)  # history = turns so far
-    user_message = MessageDoc(session_id=session_id, role="user", content=content)
+    user_message = MessageDoc(
+        session_id=session_id,
+        role="user",
+        content=content,
+        attachments=[
+            AttachmentMeta(id=a.doc.id, content_type=a.doc.content_type, size=a.doc.size)
+            for a in attachments
+        ],
+    )
     await messages_db.insert(user_message)
+    if attachments:
+        await attachments_db.attach([a.doc.id for a in attachments], user_message.id)
 
     history = [MessageOut.model_validate(m) for m in prior]
     run_id = await backend.start_run(
-        session_id=session_id, history=history, user_message=content
+        session_id=session_id,
+        history=history,
+        user_message=content,
+        images=[ImageInput(a.doc.content_type, a.data) for a in attachments],
     )
 
     task = asyncio.create_task(

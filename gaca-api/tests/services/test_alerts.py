@@ -570,7 +570,7 @@ class _StubBackend:
         self._error = error
         self.user_message: str | None = None
 
-    async def start_run(self, *, session_id, history, user_message):
+    async def start_run(self, *, session_id, history, user_message, images=()):
         self.user_message = user_message
         return "run_stub"
 

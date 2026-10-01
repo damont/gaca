@@ -22,6 +22,7 @@ from .services.exceptions import (
     InvalidRequest,
     InvalidTransition,
     NotFound,
+    PayloadTooLarge,
 )
 
 
@@ -82,6 +83,12 @@ async def handle_invalid_request(
 ) -> JSONResponse:
     """Map a semantically-invalid request body to HTTP 422, in one place."""
     return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+
+@app.exception_handler(PayloadTooLarge)
+async def handle_payload_too_large(request: Request, exc: PayloadTooLarge) -> JSONResponse:
+    """Map an oversized upload to HTTP 413, in one place."""
+    return JSONResponse(status_code=413, content={"detail": str(exc)})
 
 
 @app.exception_handler(CrewNotConfigured)

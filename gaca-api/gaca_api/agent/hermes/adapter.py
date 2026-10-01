@@ -12,6 +12,7 @@ port ever sees them.
 """
 from __future__ import annotations
 
+import base64
 import json
 import logging
 from collections.abc import AsyncIterator, Sequence
@@ -20,13 +21,38 @@ import httpx
 
 from ...config import settings
 from ...schemas.event import GacaEvent, RunFailed
-from ...schemas.message import MessageOut
+from ...schemas.message import ImageInput, MessageOut
 from ...schemas.model import ModelConfig, ModelInfo, ProviderCredential
 from ...schemas.skill import SkillInfo
 from .translate import translate
 
 
 logger = logging.getLogger(__name__)
+
+
+def _history_text(message: MessageOut) -> str:
+    """A past turn as text. Hermes only sees photos on the turn they're sent, so a
+    past photo becomes a short note rather than vanishing without a trace."""
+    if not message.attachments:
+        return message.content
+    n = len(message.attachments)
+    note = f"[{n} photo{'s' if n != 1 else ''} attached]"
+    return f"{message.content}\n{note}" if message.content.strip() else note
+
+
+def _turn_input(user_message: str, images: Sequence[ImageInput]):
+    """The new turn: plain text, or multimodal parts when photos ride along."""
+    if not images:
+        return user_message
+    parts: list[dict] = []
+    if user_message.strip():
+        parts.append({"type": "text", "text": user_message})
+    for image in images:
+        encoded = base64.b64encode(image.data).decode("ascii")
+        parts.append(
+            {"type": "image_url", "image_url": {"url": f"data:{image.content_type};base64,{encoded}"}}
+        )
+    return [{"role": "user", "content": parts}]
 
 
 class HermesAdapter:
@@ -62,19 +88,25 @@ class HermesAdapter:
         session_id: str,
         history: Sequence[MessageOut],
         user_message: str,
+        images: Sequence[ImageInput] = (),
     ) -> str:
         """POST /v1/runs and return Hermes' run_id immediately (non-blocking).
 
         Option A — gaca-api owns the transcript: we send the prior turns as
         `conversation_history` and the new turn as `input`. Hermes holds no
         durable memory of its own; it gets the full context each run.
+
+        Photos on the new turn go as OpenAI-style multimodal `input` parts
+        (`image_url` with a base64 `data:` URL), which /v1/runs accepts — confirmed
+        live against Hermes. Earlier turns' photos are not re-sent; the history
+        text just notes that they existed.
         """
         payload = {
             "session_id": session_id,
             "conversation_history": [
-                {"role": m.role, "content": m.content} for m in history
+                {"role": m.role, "content": _history_text(m)} for m in history
             ],
-            "input": user_message,
+            "input": _turn_input(user_message, images),
         }
         resp = await self._client.post(
             f"{self._base_url}/v1/runs", headers=self._headers, json=payload

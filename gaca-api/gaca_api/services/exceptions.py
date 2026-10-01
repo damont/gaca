@@ -70,3 +70,7 @@ class CrewNotConfigured(Exception):
             or "no agent connected yet — connect one first via "
             "POST /api/agent/connect"
         )
+
+
+class PayloadTooLarge(Exception):
+    """An upload is bigger than the API accepts. Mapped to HTTP 413."""

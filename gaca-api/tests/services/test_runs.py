@@ -28,7 +28,8 @@ class StubBackend:
         self.last_history = None
         self.last_user = None
 
-    async def start_run(self, *, session_id, history, user_message) -> str:
+    async def start_run(self, *, session_id, history, user_message, images=()) -> str:
+        self.last_images = list(images)
         self.last_history = [m.content for m in history]
         self.last_user = user_message
         return "run_stub"

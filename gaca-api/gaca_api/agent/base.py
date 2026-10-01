@@ -15,7 +15,7 @@ from collections.abc import AsyncIterator, Sequence
 from typing import Protocol, runtime_checkable
 
 from ..schemas.event import GacaEvent
-from ..schemas.message import MessageOut
+from ..schemas.message import ImageInput, MessageOut
 from ..schemas.model import ModelConfig, ModelInfo, ProviderCredential
 from ..schemas.skill import SkillInfo
 
@@ -31,8 +31,12 @@ class AgentBackend(Protocol):
         session_id: str,
         history: Sequence[MessageOut],
         user_message: str,
+        images: Sequence[ImageInput] = (),
     ) -> str:
         """Begin a run; return its engine run_id immediately (non-blocking).
+
+        `images` are photos attached to THIS turn (history carries only text, plus
+        a note from the adapter that earlier turns had photos).
 
         `history` is the prior conversation for this session and `user_message`
         the new user turn — gaca-api owns the transcript and replays it each run

@@ -196,3 +196,54 @@ def test_idle_timeout_survives_failed_status_lookup():
 
     events = asyncio.run(collect())
     assert [type(e).__name__ for e in events] == ["RunFailed"]
+
+
+def test_start_run_sends_photos_as_multimodal_input_and_notes_past_ones():
+    import base64
+    import json
+
+    from gaca_api.models.message import AttachmentMeta, MessageDoc
+    from gaca_api.schemas.message import ImageInput, MessageOut
+
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(202, json={"run_id": "run_abc", "status": "started"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = HermesAdapter("http://engine:8642", "k" * 16, client=client)
+    earlier = MessageOut.model_validate(MessageDoc(
+        session_id="s", role="user", content="",
+        attachments=[AttachmentMeta(id="a", content_type="image/png", size=3)]))
+
+    async def run():
+        return await adapter.start_run(
+            session_id="s", history=[earlier], user_message="what is this?",
+            images=[ImageInput("image/png", b"\x89PNG")],
+        )
+
+    assert asyncio.run(run()) == "run_abc"
+    body = captured["body"]
+    assert body["conversation_history"] == [{"role": "user", "content": "[1 photo attached]"}]
+    [turn] = body["input"]
+    assert turn["role"] == "user"
+    text, image = turn["content"]
+    assert text == {"type": "text", "text": "what is this?"}
+    assert image["type"] == "image_url"
+    assert image["image_url"]["url"] == "data:image/png;base64," + base64.b64encode(b"\x89PNG").decode()
+
+
+def test_start_run_without_photos_keeps_plain_text_input():
+    import json
+
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(202, json={"run_id": "run_abc"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = HermesAdapter("http://engine:8642", "k" * 16, client=client)
+    asyncio.run(adapter.start_run(session_id="s", history=[], user_message="hi"))
+    assert captured["body"]["input"] == "hi"

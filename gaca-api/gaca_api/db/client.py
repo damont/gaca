@@ -89,6 +89,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_push_tokens_token
 -- The daily briefing: one overall row per (user, day) plus one row per section.
 -- Sections are keyed so each source (calendar, weather, news...) can replace
 -- just its own section, idempotently, without touching the others.
+-- Photos attached to chat messages. Uploaded first (message_id NULL), then claimed
+-- by the message that references them. Bytes live in `data`; `doc` is metadata only.
+CREATE TABLE IF NOT EXISTS attachments (
+    id         TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    message_id TEXT,
+    created_at TEXT NOT NULL,
+    doc        TEXT NOT NULL,
+    data       BLOB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_attachments_session
+    ON attachments (session_id, created_at);
 CREATE TABLE IF NOT EXISTS briefings (
     user_id       TEXT NOT NULL,
     briefing_date TEXT NOT NULL,

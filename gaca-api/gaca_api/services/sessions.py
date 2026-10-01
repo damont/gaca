@@ -43,6 +43,12 @@ def tidy(text: str, limit: int) -> str | None:
     return cut.rstrip(" ,.;:-") + "…"
 
 
+def _photo_label(message: MessageDoc) -> str | None:
+    """A message with no text but photos still deserves a label."""
+    n = len(message.attachments)
+    return None if n == 0 else ("Photo" if n == 1 else f"{n} photos")
+
+
 def labels_for(
     title: str | None,
     first_user: MessageDoc | None,
@@ -54,10 +60,10 @@ def labels_for(
     it's the user's."""
     summary = tidy(title, SUMMARY_MAX) if title else None
     if summary is None and first_user is not None:
-        summary = tidy(first_user.content, SUMMARY_MAX)
+        summary = tidy(first_user.content, SUMMARY_MAX) or _photo_label(first_user)
     preview = None
     if last is not None:
-        preview = tidy(last.content, PREVIEW_MAX)
+        preview = tidy(last.content, PREVIEW_MAX) or _photo_label(last)
         if preview and last.role == "user":
             preview = f"You: {preview}"
     return Labels(summary, preview)
