@@ -2,7 +2,7 @@
 """Helper for the david-email-calendar-suggestions skill. Standard library only.
 
   fetch [--days N] [--max N]   new inbox mail (read-only) + what was already suggested, as JSON
-  finish --date D              read the agent's suggestions JSON on stdin, post ONE GACA alert
+  finish [--file PATH]         read the agent's suggestions JSON (file, else stdin), post ONE GACA alert
 
 Email is only ever READ (Gmail search/get through the google-workspace skill's
 script); nothing is sent, labeled, moved or deleted. State lives in
@@ -156,7 +156,15 @@ def cmd_finish(args) -> None:
     token = os.environ.get("GACA_API_TOKEN", "").strip()
     if not token:
         die("GACA_API_TOKEN is not configured")
-    payload = json.load(sys.stdin)
+    if args.file:
+        path = Path(args.file).expanduser()
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            die(f"Cannot read {path}: {error}")
+        path.unlink(missing_ok=True)  # one-shot hand-off; don't leave it lying around
+    else:
+        payload = json.load(sys.stdin)
     if not isinstance(payload, dict):
         die("Expected a JSON object with 'suggestions' and 'processed_ids'")
     state = load_state()
@@ -223,7 +231,7 @@ def main() -> None:
     sub = parser.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("fetch"); p.add_argument("--days", type=int, default=2); p.add_argument("--max", type=int, default=40)
     p.set_defaults(fn=cmd_fetch)
-    p = sub.add_parser("finish"); p.add_argument("--date"); p.set_defaults(fn=cmd_finish)
+    p = sub.add_parser("finish"); p.add_argument("--file"); p.set_defaults(fn=cmd_finish)
     args = parser.parse_args()
     args.fn(args)
 
