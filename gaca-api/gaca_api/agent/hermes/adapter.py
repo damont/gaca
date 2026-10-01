@@ -12,6 +12,7 @@ port ever sees them.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -24,6 +25,8 @@ from ...schemas.event import GacaEvent, RunFailed
 from ...schemas.message import ImageInput, MessageOut
 from ...schemas.model import ModelConfig, ModelInfo, ProviderCredential
 from ...schemas.skill import SkillInfo
+from ...schemas.crew_profile import ProfileInfo
+from . import translate_profile as tp
 from .translate import translate
 
 
@@ -212,6 +215,58 @@ class HermesAdapter:
         )
         resp.raise_for_status()
         return [SkillInfo.model_validate(s) for s in resp.json().get("data", [])]
+
+    # ── Profile ────────────────────────────────────────────────────────
+    async def describe_profile(self) -> ProfileInfo:
+        """Assemble this crew member's picture from five read-only Hermes endpoints,
+        fetched together. One failing endpoint only blanks its own section (named in
+        `unavailable`); if Hermes itself is unreachable the profile is "offline"."""
+
+        async def fetch(path: str):
+            resp = await self._client.get(
+                f"{self._base_url}{path}", headers=self._headers, timeout=httpx.Timeout(8.0)
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+        results = await asyncio.gather(
+            *(fetch(path) for path, _ in _PROFILE_SOURCES.values()), return_exceptions=True
+        )
+        got = dict(zip(_PROFILE_SOURCES, results))
+
+        if all(isinstance(r, Exception) for r in results):
+            return ProfileInfo(status="offline", unavailable=[label for _, label in _PROFILE_SOURCES.values()])
+
+        info = ProfileInfo(status="online")
+        for key, (_, label) in _PROFILE_SOURCES.items():
+            if isinstance(got[key], Exception):
+                info.unavailable.append(label)
+        if not isinstance(got["health"], Exception):
+            info.engine = tp.engine_label(got["health"])
+            info.channels = tp.channels(got["health"])
+            if not tp.is_online(got["health"]):
+                info.status = "offline"
+        else:
+            info.engine = "Hermes"
+        if not isinstance(got["options"], Exception):
+            info.model = tp.model(got["options"])
+        if not isinstance(got["skills"], Exception):
+            info.skill_count, info.skill_categories = tp.skill_summary(got["skills"])
+        if not isinstance(got["toolsets"], Exception):
+            info.toolsets = tp.toolsets(got["toolsets"])
+        if not isinstance(got["jobs"], Exception):
+            info.jobs = tp.jobs(got["jobs"])
+        return info
+
+
+# What each piece of a profile is read from, and what to call it if it can't be read.
+_PROFILE_SOURCES = {
+    "health": ("/health/detailed", "status"),
+    "options": ("/api/model/options", "model"),
+    "skills": ("/v1/skills", "skills"),
+    "toolsets": ("/v1/toolsets", "tools"),
+    "jobs": ("/api/jobs", "scheduled jobs"),
+}
 
 
 def create(base_url: str, api_key: str) -> HermesAdapter:

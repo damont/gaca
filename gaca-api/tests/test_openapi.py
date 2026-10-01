@@ -31,6 +31,7 @@ def test_schema_lists_the_auth_and_session_paths():
         "/api/crew/{name}",
         "/api/crew/{name}/default",
         "/api/crew/{name}/skills",
+        "/api/crew/{name}/profile",
         "/api/alerts",
         "/api/alerts/{alert_id}",
         "/api/alerts/{alert_id}/act",

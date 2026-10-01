@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Sequence
 from typing import Protocol, runtime_checkable
 
+from ..schemas.crew_profile import ProfileInfo
 from ..schemas.event import GacaEvent
 from ..schemas.message import ImageInput, MessageOut
 from ..schemas.model import ModelConfig, ModelInfo, ProviderCredential
@@ -94,5 +95,16 @@ class AgentBackend(Protocol):
         Read-only insight, not control — skills load however the engine
         loads them; the app just shows what's there. Never cached by
         gaca-api: each call reflects whatever the engine currently has.
+        """
+        ...
+
+    # ── Profile (read-only picture of how this crew member is set up) ──
+    async def describe_profile(self) -> ProfileInfo:
+        """What the engine can tell us about this profile, in GACA's neutral terms
+        (schemas/crew_profile.py): status, model, channels, skills, tools, schedule.
+
+        Never raises for an unreachable or partly-broken engine: it returns
+        `status="offline"` or lists what it couldn't read in `unavailable`, so a
+        client can show the rest instead of an error page.
         """
         ...

@@ -20,8 +20,10 @@ from ..schemas.auth import (
     CrewMemberUpdate,
     CrewOut,
 )
+from ..schemas.crew_profile import CrewProfile
 from ..schemas.skill import SkillInfo
 from ..services import auth as auth_service
+from ..services import crew_profile as crew_profile_service
 from ..utils.auth import get_current_user
 
 router = APIRouter(prefix="/crew", tags=["crew"])
@@ -157,3 +159,15 @@ async def list_crew_member_skills(name: str, user: UserDoc = Depends(get_current
     never show up here.
     """
     return await auth_service.list_skills(user, name)
+
+
+@router.get("/{name}/profile", response_model=CrewProfile)
+async def get_crew_member_profile(name: str, user: UserDoc = Depends(get_current_user)):
+    """How this crew member is set up: model, channels, skills, tools, schedule.
+
+    Read live from its own engine every time (never cached), in GACA's own terms —
+    see schemas/crew_profile.py. A profile that is down or partly unreadable still
+    returns 200, with `status: "offline"` or the missing pieces in `unavailable`.
+    Read-only: to change anything, talk to the crew member in chat.
+    """
+    return await crew_profile_service.get(user, name)
