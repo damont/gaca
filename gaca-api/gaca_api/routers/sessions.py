@@ -77,7 +77,12 @@ async def post_message(
     if crew_member is None:
         crew_member = auth_service.resolve_crew_member(user, None)
     backend = auth_service.backend_for_crew(user, crew_member)
-    message = await run_service.start_turn(backend, session_id, body.content)
+    message = await run_service.start_turn(
+        backend,
+        session_id,
+        body.content,
+        on_settled=run_service.chat_reply_notifier(user.id, session_id, crew_member.name),
+    )
     return MessageAccepted(turn_id=message.id)
 
 

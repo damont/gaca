@@ -166,3 +166,27 @@ def test_read_run_heartbeats_while_quiet_without_persisting_them(tmp_path, monke
     assert [e.type for e in stored] == ["assistant.delta", "run.completed"]
     beat = next(json.loads(m) for _, m in recorder.messages if '"run.heartbeat"' in m)
     assert beat["seq"] is None and beat["idle_seconds"] >= 0
+
+
+def test_chat_reply_notifier_pushes_reply_and_failure(monkeypatch):
+    from gaca_api.schemas.event import RunFailed
+    from gaca_api.services import push as push_service
+
+    pushed = []
+
+    async def fake_notify_chat(user_id, *, title, body, session_id):
+        pushed.append((user_id, title, body, session_id))
+
+    monkeypatch.setattr(push_service, "notify_chat", fake_notify_chat)
+    notify = runs.chat_reply_notifier("u1", "s1", "Hermes")
+
+    async def main():
+        await notify(RunCompleted(session_id="s1", run_id="r", output="**Done** — moved it to Friday.\n\nAnything else?"))
+        await notify(RunFailed(session_id="s1", run_id="r", error="engine event stream idle for over 180s"))
+        await notify(AssistantDelta(session_id="s1", run_id="r", text="ignored"))
+
+    asyncio.run(main())
+    assert pushed == [
+        ("u1", "Hermes", "Done — moved it to Friday. Anything else?", "s1"),
+        ("u1", "Hermes couldn't finish", "engine event stream idle for over 180s", "s1"),
+    ]

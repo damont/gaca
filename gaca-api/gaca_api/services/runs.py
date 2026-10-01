@@ -143,3 +143,36 @@ async def _handle_event(
 
     if on_settled is not None and isinstance(event, (RunCompleted, RunFailed)):
         await on_settled(event)
+
+
+def chat_reply_notifier(
+    user_id: str, session_id: str, crew_name: str | None
+) -> OnSettled:
+    """An `on_settled` hook that pushes "your agent replied" (or couldn't) for a
+    normal chat turn. Alert delegation brings its own hook, which pushes through
+    the alert instead — so this is only attached to turns the user typed.
+
+    The body is the reply tidied to one line, same rules as the Chat list
+    preview, so what the notification shows matches what the app shows. Push is
+    best effort: a failure here never touches the run.
+    """
+    from . import push as push_service
+    from .sessions import PREVIEW_MAX, tidy
+
+    title = crew_name or "Your agent"
+
+    async def notify(event: GacaEvent) -> None:
+        if isinstance(event, RunCompleted):
+            body = tidy(event.output, PREVIEW_MAX) or "Replied."
+            await push_service.notify_chat(
+                user_id, title=title, body=body, session_id=session_id
+            )
+        elif isinstance(event, RunFailed):
+            await push_service.notify_chat(
+                user_id,
+                title=f"{title} couldn't finish",
+                body=tidy(event.error, PREVIEW_MAX) or "Something went wrong.",
+                session_id=session_id,
+            )
+
+    return notify

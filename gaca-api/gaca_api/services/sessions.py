@@ -30,7 +30,7 @@ class Labels:
     preview: str | None
 
 
-def _tidy(text: str, limit: int) -> str | None:
+def tidy(text: str, limit: int) -> str | None:
     """One line, markdown noise dropped, cut at a word boundary with an ellipsis."""
     text = re.sub(r"```.*?```", " ", text, flags=re.S)
     text = re.sub(r"[*_`#>]+", "", text)
@@ -52,12 +52,12 @@ def labels_for(
     every client shows the same thing: an explicit title wins; otherwise the
     opening question; the preview is the latest message, prefixed "You: " when
     it's the user's."""
-    summary = _tidy(title, SUMMARY_MAX) if title else None
+    summary = tidy(title, SUMMARY_MAX) if title else None
     if summary is None and first_user is not None:
-        summary = _tidy(first_user.content, SUMMARY_MAX)
+        summary = tidy(first_user.content, SUMMARY_MAX)
     preview = None
     if last is not None:
-        preview = _tidy(last.content, PREVIEW_MAX)
+        preview = tidy(last.content, PREVIEW_MAX)
         if preview and last.role == "user":
             preview = f"You: {preview}"
     return Labels(summary, preview)

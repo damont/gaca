@@ -111,3 +111,27 @@ def test_notify_is_a_noop_when_fcm_is_not_configured(tmp_path):
             await client.close()
 
     asyncio.run(main())  # no exception is the assertion
+
+
+def test_notify_chat_sends_session_id_on_the_chat_channel(tmp_path, monkeypatch):
+    settings.db_path = str(tmp_path / "t.db")
+    sent = []
+    monkeypatch.setattr(push_service, "_app", object())
+    monkeypatch.setattr(push_service.messaging, "send", lambda message, app=None: sent.append(message))
+
+    async def main():
+        await client.connect()
+        try:
+            await push_service.register_token("user-1", "tok-1", "android")
+            await push_service.register_token("user-2", "tok-2", "android")
+            await push_service.notify_chat("user-1", title="Hermes", body="Hi!", session_id="s1")
+        finally:
+            await client.close()
+
+    asyncio.run(main())
+    assert len(sent) == 1  # only user-1's device
+    msg = sent[0]
+    assert msg.token == "tok-1"
+    assert msg.data == {"session_id": "s1", "kind": "chat"}
+    assert msg.android.notification.channel_id == "chat_replies"
+    assert (msg.notification.title, msg.notification.body) == ("Hermes", "Hi!")

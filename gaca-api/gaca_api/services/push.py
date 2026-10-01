@@ -30,6 +30,7 @@ _CHANNEL_BY_SEVERITY = {
     "urgent": "alerts_urgent",
 }
 _DEFAULT_CHANNEL = "alerts_standard"
+CHAT_CHANNEL = "chat_replies"
 
 
 async def register_token(user_id: str, token: str, platform: str) -> None:
@@ -61,25 +62,19 @@ def close() -> None:
         _app = None
 
 
-async def notify(user_id: str, *, title: str, body: str, alert_id: str, severity: str) -> None:
-    """Push `title`/`body` to every device this user has registered.
-
-    `alert_id` and `severity` ride along as data-only fields (not part of the
-    visible notification) so the Android app can deep-link to the right alert
-    and pick a notification channel (urgent vs. everything else) on arrival.
-    Per-token failures never raise: an unregistered/invalid token is deleted
-    so it stops being tried, anything else is swallowed — this function's
-    contract is "best effort," not "delivered."
-    """
+async def _send_to_user(
+    user_id: str, *, title: str, body: str, data: dict[str, str], channel_id: str
+) -> None:
+    """Push to every device this user has registered. Best effort, never raises:
+    an unregistered/invalid token is deleted so it stops being tried, anything
+    else is swallowed — the contract is "tell me sooner," not "delivered"."""
     if _app is None:
         return
-    channel_id = _CHANNEL_BY_SEVERITY.get(severity, _DEFAULT_CHANNEL)
-    tokens = await push_tokens_db.find_by_user(user_id)
-    for push_token in tokens:
+    for push_token in await push_tokens_db.find_by_user(user_id):
         message = messaging.Message(
             token=push_token.token,
             notification=messaging.Notification(title=title, body=body),
-            data={"alert_id": alert_id, "severity": severity},
+            data=data,
             android=messaging.AndroidConfig(
                 priority="high",
                 notification=messaging.AndroidNotification(channel_id=channel_id),
@@ -91,3 +86,35 @@ async def notify(user_id: str, *, title: str, body: str, alert_id: str, severity
             await push_tokens_db.delete_by_token(push_token.token)
         except Exception:
             pass
+
+
+async def notify(user_id: str, *, title: str, body: str, alert_id: str, severity: str) -> None:
+    """Push an alert to this user's devices.
+
+    `alert_id` and `severity` ride along as data-only fields (not part of the
+    visible notification) so the Android app can deep-link to the right alert
+    and pick a notification channel (urgent vs. everything else) on arrival.
+    """
+    await _send_to_user(
+        user_id,
+        title=title,
+        body=body,
+        data={"alert_id": alert_id, "severity": severity},
+        channel_id=_CHANNEL_BY_SEVERITY.get(severity, _DEFAULT_CHANNEL),
+    )
+
+
+async def notify_chat(user_id: str, *, title: str, body: str, session_id: str) -> None:
+    """Push "your agent replied" for a normal chat.
+
+    `session_id` rides along as data so the app can open that thread on tap, and
+    skip showing the notification when you're already looking at it. Uses its own
+    channel so chat can be muted separately from alerts.
+    """
+    await _send_to_user(
+        user_id,
+        title=title,
+        body=body,
+        data={"session_id": session_id, "kind": "chat"},
+        channel_id=CHAT_CHANNEL,
+    )
