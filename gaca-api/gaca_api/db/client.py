@@ -102,6 +102,31 @@ CREATE TABLE IF NOT EXISTS attachments (
 );
 CREATE INDEX IF NOT EXISTS ix_attachments_session
     ON attachments (session_id, created_at);
+-- Lists (shopping, gifts, to-dos...). Items are their own rows, not part of the list's
+-- JSON, so two writers (the app and an agent) adding at once can't overwrite each other.
+-- `name_key` / `item_key` are normalized forms (see services/lists.py:key); the unique
+-- indexes make a duplicate list name or duplicate item impossible at the database level.
+CREATE TABLE IF NOT EXISTS lists (
+    id         TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL,
+    name_key   TEXT NOT NULL,
+    archived   INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    doc        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_lists_user ON lists (user_id, archived, updated_at);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_lists_name ON lists (user_id, name_key) WHERE archived = 0;
+CREATE TABLE IF NOT EXISTS list_items (
+    id         TEXT PRIMARY KEY,
+    list_id    TEXT NOT NULL,
+    user_id    TEXT NOT NULL,
+    item_key   TEXT NOT NULL,
+    done       INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    doc        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_list_items_list ON list_items (list_id, done, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_list_items_key ON list_items (list_id, item_key);
 CREATE TABLE IF NOT EXISTS briefings (
     user_id       TEXT NOT NULL,
     briefing_date TEXT NOT NULL,

@@ -15,7 +15,7 @@ from .agent import runtime as agent_runtime
 from .bus import event_bus
 from .db import client
 from .provisioning.ssh import SSHError
-from .routers import agent, alerts, auth, briefings, crew, push, sessions
+from .routers import agent, alerts, auth, briefings, crew, lists, push, sessions
 from .services import push as push_service
 from .services.exceptions import (
     CrewNotConfigured,
@@ -138,6 +138,7 @@ app.include_router(alerts.router, prefix="/api")
 app.include_router(push.router, prefix="/api")
 app.include_router(sessions.router, prefix="/api")
 app.include_router(briefings.router, prefix="/api")
+app.include_router(lists.router, prefix="/api")
 
 
 def run() -> None:
