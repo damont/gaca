@@ -14,11 +14,13 @@ import gaca_api.services.runs as runs
 from gaca_api.config import settings
 from gaca_api.db import alerts as alerts_db
 from gaca_api.db import client
+from gaca_api.db import messages as messages_db
 from gaca_api.models.alert import AlertDoc
 from gaca_api.models.user import CrewMember, UserDoc
 from gaca_api.schemas.alert import AlertCreate
 from gaca_api.schemas.event import RunCompleted, RunFailed
 from gaca_api.services import alerts as alert_service
+from gaca_api.services import sessions as session_service
 from gaca_api.services.exceptions import (
     CrewNotConfigured,
     InvalidRequest,
@@ -859,3 +861,97 @@ def test_delegate_rejects_an_unknown_explicit_crew(tmp_path):
             )
 
     _run(go)
+
+
+# ── take to chat (open the chat with a draft; send nothing; mark handled) ────
+def test_take_to_chat_opens_a_session_with_a_draft_and_sends_nothing(tmp_path, monkeypatch):
+    settings.db_path = str(tmp_path / "t.db")
+    calls = _install_recording_backend(monkeypatch)
+
+    async def go():
+        alert, _ = await alert_service.create("u1", _payload(body="Only 9 GB free on /var"))
+        taken, session_id, draft = await alert_service.take_to_chat(_user(), alert.id)
+        session = await session_service.ensure_owned("u1", session_id)
+        messages = await messages_db.find_by_session(session_id)
+        await _drain_background()
+        return taken, session, messages, draft
+
+    taken, session, messages, draft = _run(go)
+    assert draft == "Disk is 91% full\n\nOnly 9 GB free on /var"
+    assert (session.alert_id, session.crew) == (taken.id, "default")  # same link + crew rules as delegate
+    assert messages == []                                             # nothing was sent, nothing stored
+    assert calls == []                                                # and no agent was even contacted
+    assert (taken.status, taken.session_id, taken.resolution_note) == ("acted", session.id, "Taken to chat")
+    assert taken.snooze_until is None
+
+
+def test_take_to_chat_with_a_suggested_action_drafts_that_actions_prompt(tmp_path, monkeypatch):
+    settings.db_path = str(tmp_path / "t.db")
+    _install_recording_backend(monkeypatch)
+
+    async def go():
+        alert, _ = await alert_service.create(
+            "u1", _payload(suggested_actions=[{"label": "Clean logs", "prompt": "Free space in /var/log"}])
+        )
+        _, _, draft = await alert_service.take_to_chat(_user(), alert.id, suggested_action_index=0)
+        with pytest.raises(InvalidRequest):
+            await alert_service.take_to_chat(_user(), alert.id, suggested_action_index=3)
+        return draft
+
+    assert _run(go) == "Free space in /var/log"
+
+
+def test_take_to_chat_handles_snoozed_and_completed_alerts_but_leaves_closed_ones(tmp_path, monkeypatch):
+    settings.db_path = str(tmp_path / "t.db")
+    _install_recording_backend(monkeypatch)
+
+    async def go():
+        snoozed, _ = await alert_service.create("u1", _payload(title="a"))
+        await alert_service.snooze("u1", snoozed.id, datetime.now(timezone.utc) + timedelta(hours=2))
+        dismissed, _ = await alert_service.create("u1", _payload(title="b"))
+        await alert_service.dismiss("u1", dismissed.id, "not needed")
+        return (
+            (await alert_service.take_to_chat(_user(), snoozed.id))[0],
+            (await alert_service.take_to_chat(_user(), dismissed.id))[0],
+        )
+
+    from_snoozed, from_dismissed = _run(go)
+    assert from_snoozed.status == "acted" and from_snoozed.snooze_until is None
+    # Already closed: the chat still opens, but the alert keeps its status and its own note.
+    assert (from_dismissed.status, from_dismissed.resolution_note) == ("dismissed", "not needed")
+    assert from_dismissed.session_id
+
+
+def test_take_to_chat_twice_reuses_the_conversation(tmp_path, monkeypatch):
+    settings.db_path = str(tmp_path / "t.db")
+    _install_recording_backend(monkeypatch)
+
+    async def go():
+        alert, _ = await alert_service.create(
+            "u1", _payload(suggested_actions=[{"label": "Clean logs", "prompt": "Free space"}])
+        )
+        _, first, first_draft = await alert_service.take_to_chat(_user(), alert.id)
+        _, second, second_draft = await alert_service.take_to_chat(_user(), alert.id)
+        _, third, third_draft = await alert_service.take_to_chat(_user(), alert.id, suggested_action_index=0)
+        return first, second, third, first_draft, second_draft, third_draft
+
+    first, second, third, d1, d2, d3 = _run(go)
+    assert first == second == third  # one conversation, not three
+    assert d1 and d2 is None and d3 == "Free space"  # reopening has no draft unless you pick a suggestion
+
+
+def test_take_to_chat_needs_a_crew_and_is_scoped_to_the_owner(tmp_path, monkeypatch):
+    settings.db_path = str(tmp_path / "t.db")
+    _install_recording_backend(monkeypatch)
+
+    async def go():
+        alert, _ = await alert_service.create("u1", _payload())
+        with pytest.raises(NotFound):
+            await alert_service.take_to_chat(_user("u2"), alert.id)
+        with pytest.raises(CrewNotConfigured):
+            await alert_service.take_to_chat(_user(crew_configured=False), alert.id)
+        # a failed attempt must not have half-handled the alert
+        return await alert_service.get("u1", alert.id)
+
+    still = _run(go)
+    assert still.status == "new" and still.session_id is None

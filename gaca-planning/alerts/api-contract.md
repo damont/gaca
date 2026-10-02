@@ -338,6 +338,35 @@ watches its outcome and moves the alert on its own: `run.completed` →
 silently vanish" rule §4 applies to every other terminal outcome). Poll
 `GET /api/alerts/{id}` — or the session's own stream, §6 — to see it land.
 
+### `POST /api/alerts/{id}/take-to-chat`
+
+"Talk to Hermes about this" — opens the chat **without sending anything**. Where `/delegate`
+starts a run immediately, this creates the session (same crew resolution, same `alert_id`
+link) and returns a `draft` for the person to read, edit and send themselves.
+
+```jsonc
+// body — all optional
+{ "suggested_action_index": 0,   // draft = that suggestion's text instead of the alert's own words
+  "crew": "toolshed" }           // explicit crew member; same rules as /delegate
+
+// 200
+{ "alert": { /* Alert, now status "acted" */ },
+  "session_id": "01JX9…",
+  "draft": "Disk is 91% full\n\nOnly 9 GB free on /var" }
+```
+
+* **Moving to the chat handles the alert**: a `new` / `snoozed` / `completed` alert becomes `acted`
+  immediately, with `resolution_note: "Taken to chat"` (unless it already had one). An alert that's
+  already `acted` / `dismissed` / `delegated` keeps its status.
+* `draft` is the chosen suggestion's prompt, else the alert's title and body. If the alert already
+  has a conversation, that session is **reused** (never a second one) and `draft` is `null` unless
+  you passed `suggested_action_index`.
+* The app puts `draft` in the chat's message box; nothing reaches the agent until the person sends it.
+* Errors: `404` unknown alert, `422` bad `suggested_action_index` / unknown `crew`, `400` no crew
+  configured. A failed call changes nothing.
+* `/delegate` is unchanged — still the right call when an instruction is already in hand
+  (e.g. the app's "New delegation" screen).
+
 ### `POST /api/alerts/{id}/act` · `/dismiss`
 
 ```jsonc

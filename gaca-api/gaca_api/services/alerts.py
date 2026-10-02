@@ -268,6 +268,57 @@ async def delegate(
     return updated
 
 
+async def take_to_chat(
+    user: UserDoc,
+    alert_id: str,
+    *,
+    suggested_action_index: int | None = None,
+    crew: str | None = None,
+) -> tuple[AlertDoc, str, str | None]:
+    """Move an alert into a chat WITHOUT sending anything to the agent.
+
+    Where delegate() opens a session and starts a run immediately, this opens the
+    session (same crew resolution, same `alert_id` link) and hands back a `draft`
+    — the text delegate() would have sent — for the person to read, edit and send
+    themselves. Nothing runs until they do.
+
+    Moving to the chat counts as handling the alert: a triageable alert (`new`,
+    `snoozed`, `completed`) becomes `acted` straight away, with a note saying so;
+    one that's already closed or mid-run keeps its status. If the alert already
+    has a conversation it is reused rather than opening a second, and `draft` is
+    only given when a suggested action was picked (the person is steering the
+    existing chat), else None.
+
+    Returns (alert, session_id, draft).
+    """
+    alert = await get(user.id, alert_id)
+    # Validate (and compose) first: a bad suggested_action_index is a 422 even
+    # before we look at crew.
+    wants_draft = suggested_action_index is not None or not alert.session_id
+    draft = _delegate_prompt(alert, None, suggested_action_index) if wants_draft else None
+
+    session_id = alert.session_id
+    if not session_id:
+        crew_member = auth_service.resolve_crew_for_delegate(user, crew, alert.crew)
+        session = await session_service.create(
+            user.id, alert.title, crew_member.name, alert_id=alert.id
+        )
+        session_id = session.id
+        alert = alert.model_copy(update={"session_id": session_id})
+
+    if alert.status in TRIAGEABLE:
+        alert = alert.model_copy(
+            update={
+                "status": "acted",
+                "status_changed_at": utcnow(),
+                "snooze_until": None,
+                "resolution_note": alert.resolution_note or "Taken to chat",
+            }
+        )
+    await alerts_db.replace(alert)
+    return alert, session_id, draft
+
+
 async def _settle_delegation(alert_id: str, event: GacaEvent) -> None:
     """Resolve a delegated alert once its run ends, one way or the other.
 

@@ -38,6 +38,7 @@ def test_schema_lists_the_auth_and_session_paths():
         "/api/alerts/{alert_id}/dismiss",
         "/api/alerts/{alert_id}/snooze",
         "/api/alerts/{alert_id}/delegate",
+        "/api/alerts/{alert_id}/take-to-chat",
         "/api/lists",
         "/api/lists/match",
         "/api/lists/{list_id}",

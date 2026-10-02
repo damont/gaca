@@ -18,6 +18,8 @@ from ..schemas.alert import (
     AlertOut,
     AlertResolve,
     AlertSnooze,
+    AlertTakeToChat,
+    TakeToChatOut,
 )
 from ..services import alerts as alert_service
 from ..utils.auth import get_current_user
@@ -101,6 +103,21 @@ async def snooze_alert(
 ):
     """"Not now." Reads as `new` again once `until` passes."""
     return _out(await alert_service.snooze(user.id, alert_id, body.until))
+
+
+@router.post("/{alert_id}/take-to-chat", response_model=TakeToChatOut)
+async def take_alert_to_chat(
+    alert_id: str,
+    body: AlertTakeToChat | None = None,
+    user: UserDoc = Depends(get_current_user),
+):
+    """"Talk to Hermes about this." Opens the chat and returns a `draft` to pre-fill —
+    nothing is sent until the person sends it — and marks the alert handled (`acted`)."""
+    b = body or AlertTakeToChat()
+    alert, session_id, draft = await alert_service.take_to_chat(
+        user, alert_id, suggested_action_index=b.suggested_action_index, crew=b.crew
+    )
+    return TakeToChatOut(alert=_out(alert), session_id=session_id, draft=draft)
 
 
 @router.post("/{alert_id}/delegate", response_model=AlertOut)

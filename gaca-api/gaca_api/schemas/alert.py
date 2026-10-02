@@ -91,6 +91,17 @@ class AlertDelegate(BaseModel):
     crew: str | None = Field(default=None, max_length=100)
 
 
+class AlertTakeToChat(BaseModel):
+    """Body for POST /{id}/take-to-chat — all fields optional.
+
+    `suggested_action_index` seeds the draft with one of the alert's own suggested
+    actions; `crew` is an explicit crew-member choice (same rules as delegate).
+    """
+
+    suggested_action_index: int | None = Field(default=None, ge=0)
+    crew: str | None = Field(default=None, max_length=100)
+
+
 class AlertSnooze(BaseModel):
     """Body for snooze."""
 
@@ -110,3 +121,13 @@ class AlertSnooze(BaseModel):
         if value <= datetime.now(timezone.utc):
             raise ValueError("snooze `until` must be in the future")
         return value
+
+
+class TakeToChatOut(BaseModel):
+    """Result of taking an alert to a chat: the (now handled) alert, the chat to open,
+    and the text to pre-fill in its message box. Nothing has been sent."""
+
+    alert: AlertOut
+    session_id: str
+    # None when reopening an existing conversation with no new suggestion to steer it.
+    draft: str | None = None
