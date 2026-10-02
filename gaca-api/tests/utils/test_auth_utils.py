@@ -89,8 +89,11 @@ def test_tampered_token_rejected(monkeypatch):
     monkeypatch.setattr(settings, "jwt_secret", SECRET)
     token = create_access_token("user-123")
     header, payload, signature = token.split(".")
-    # Re-sign nothing, just corrupt one character of the signature.
-    tampered = f"{header}.{payload}.{signature[:-1]}{'A' if signature[-1] != 'A' else 'B'}"
+    # Re-sign nothing, just corrupt one character of the signature. Not the LAST one: a
+    # 43-char base64url signature carries only 4 real bits there, so swapping it for a
+    # character with the same top bits decodes to identical bytes and still verifies —
+    # which made this test fail about one run in sixteen.
+    tampered = f"{header}.{payload}.{'A' if signature[0] != 'A' else 'B'}{signature[1:]}"
     assert decode_token(tampered) is None
 
 
