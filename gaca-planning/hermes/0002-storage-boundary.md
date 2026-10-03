@@ -118,3 +118,27 @@ to gaca-api. So the read goes over the SSH connection gaca-api already holds, wh
 **Still not allowed:** using this SSH credential on the chat or delegate paths, or caching what it
 returns. If purpose ever needs to be fast or available without SSH, the right fix is for Hermes to
 serve it from its gateway, not for gaca-api to keep a copy.
+
+## Addendum (2026-10-03): a crew member's address follows Hermes' gateway layout
+
+`CrewMember.port` used to be the whole address, because Hermes ran one gateway process per profile,
+each on its own port. Hermes v0.21 changed that — **one gateway per host now serves every profile**
+(its "multiplex-only" ruling; per-profile gateways survive only as a temporary
+`gateway.standalone: true` shim) — and removed the per-profile gateways. Every non-default crew member
+became unreachable until gaca-api learned the new layout.
+
+So the address is now `agent_host:port` **plus an optional `path`**: `""` for a gateway of its own
+(and for the default profile), `/p/<name>` for a profile on the shared gateway. It stays in the
+"owned by gaca-api — how to reach a crew member" category above: it is addressing, not capability.
+Each profile keeps its own `api_key` on the shared gateway.
+
+- **Hermes doesn't say which layout it's running**, so discovery asks: if the default gateway answers
+  `GET /p/<name>/health`, that profile is served there. (`provisioning/ssh.py`)
+- **`POST /crew/discover` repairs moved members**: a known member whose key matches what the box reports
+  but whose address differs is updated. A key mismatch is never touched, so it can't clobber a
+  hand-entered row. Re-running discovery after any Hermes upgrade is the recovery step.
+- **Provisioning follows the installed Hermes**: on a shared gateway there is nothing to install — it
+  waits for `/p/<name>` to come up (the gateway rescans about every 30s) and records that address; on an
+  older Hermes it installs a gateway of its own as before.
+- `path` is validated (every segment starts with a letter or digit, so `..` can't be written) at the
+  request layer and on the model.
