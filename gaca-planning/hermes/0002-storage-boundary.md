@@ -90,3 +90,31 @@ eventually reduce to "just ask Hermes" — so skip the cache and ask Hermes.
 - `../alerts/build-plan.md` §11 — the crew rename + skills build this ADR
   came out of.
 - `../hermes-plan.html` — "Locked decisions" carries a pointer back here.
+
+## Exception (2026-10-03): a crew member's purpose is read live over SSH
+
+**What:** `GET /api/crew/{name}/profile` includes `purpose` — what the crew member is
+dedicated to doing (Hermes: the `description` in `profile.yaml` and the persona in `SOUL.md`).
+
+**Why it's an exception, twice over.** It is a capability-style fact, so by the rule above it is a
+live read, never stored — and it is: no table, no cache, read fresh each time. But the rule's
+default transport is Hermes' HTTP gateway, and Hermes does not serve this there. The only HTTP
+route is the dashboard's `GET /api/profiles/{name}/soul`, and the dashboard is bound to
+`127.0.0.1` and authenticated, and it also fronts secrets and terminals — not something to expose
+to gaca-api. So the read goes over the SSH connection gaca-api already holds, which
+`provisioning/ssh.py` said was "only to provision or discover crew members".
+
+**How the exception is kept small:**
+- one fixed, read-only command (`ssh.read_profile_files`) — the profile name is the only input, it
+  is validated against a strict pattern on both ends, and it can only select a directory directly
+  under `~/.hermes/profiles/`;
+- it reads two small files (capped at 40 KB and 4 KB) and nothing else;
+- failure is soft: no SSH access configured, unreachable box, or a timeout leaves `purpose: null`
+  and lists `"purpose"` in `unavailable`; the rest of the profile still loads;
+- the shape of the answer is GACA's (`ProfilePurpose`, `schemas/crew_profile.py`); the Hermes
+  vocabulary and Hermes' stock "general assistant" text are confined to
+  `agent/hermes/translate_purpose.py`.
+
+**Still not allowed:** using this SSH credential on the chat or delegate paths, or caching what it
+returns. If purpose ever needs to be fast or available without SSH, the right fix is for Hermes to
+serve it from its gateway, not for gaca-api to keep a copy.

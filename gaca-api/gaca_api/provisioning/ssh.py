@@ -3,9 +3,13 @@
 This is a materially bigger grant than a `CrewMember.api_key`: that key
 reaches one scoped Hermes gateway over HTTP; an `SSHConnection` can run
 ANY command on the box as `username`. Never used to serve a chat/delegate
-call — only to provision or discover crew members. See
-gaca-planning/hermes/0002-storage-boundary.md for where this sits relative
-to everything else gaca-api stores.
+call — only to provision or discover crew members, plus ONE read-only,
+fixed-command exception: reading a profile's SOUL.md and profile.yaml so the
+app can show what a crew member is for (read_profile_files; Hermes serves
+that only from its loopback-only, authenticated dashboard, which gaca-api can't
+and shouldn't reach). See gaca-planning/hermes/0002-storage-boundary.md for
+where this sits relative to everything else gaca-api stores, and for that
+exception.
 
 Host key verification is deliberately off (`known_hosts=None`): there is no
 trust-on-first-use store yet to pin a box's host key against on first
@@ -16,6 +20,7 @@ network — revisit before this is ever used against something less trusted.
 from __future__ import annotations
 
 import json
+import re
 import shlex
 
 import asyncssh
@@ -100,6 +105,51 @@ async def discover_profiles(conn: SSHConnection) -> dict[str, dict]:
     """
     stdout = await run(conn, f"python3 -c {shlex.quote(_DISCOVER_SCRIPT)}")
     return json.loads(stdout)
+
+
+# Runs ON the box: reads (never writes) the two small files that say what a profile is for —
+# SOUL.md (its standing instructions) and profile.yaml (an optional one-line description).
+# `default` lives in ~/.hermes itself; every other profile in ~/.hermes/profiles/<name>.
+# The name is checked against a strict pattern here AND by the caller, so it can only ever
+# select a directory directly under profiles/, never a path.
+_READ_PROFILE_SCRIPT = r"""
+import json, pathlib, re, sys
+
+name = sys.argv[1]
+home = pathlib.Path.home() / ".hermes"
+if name == "default":
+    d = home
+elif re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", name):
+    d = home / "profiles" / name
+else:
+    d = None
+
+def read(path, limit):
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")[:limit] if path.is_file() else None
+    except OSError:
+        return None
+
+if d is None or not d.is_dir():
+    print(json.dumps({"found": False}))
+else:
+    print(json.dumps({"found": True, "soul": read(d / "SOUL.md", 40000),
+                      "profile_yaml": read(d / "profile.yaml", 4000)}))
+"""
+
+_PROFILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
+
+
+async def read_profile_files(conn: SSHConnection, name: str) -> dict | None:
+    """`{"soul": str|None, "profile_yaml": str|None}` for one profile, or None if no such
+    profile exists on the box. Read-only; the command is fixed and `name` is validated."""
+    if name != "default" and not _PROFILE_NAME.fullmatch(name):
+        raise SSHError(f"not a valid profile name: {name!r}")
+    stdout = await run(
+        conn, f"python3 -c {shlex.quote(_READ_PROFILE_SCRIPT)} {shlex.quote(name)}", timeout=10.0
+    )
+    data = json.loads(stdout)
+    return data if data.get("found") else None
 
 
 async def next_free_port(conn: SSHConnection, *, base: int = 8642) -> int:

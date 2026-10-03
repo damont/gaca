@@ -581,9 +581,23 @@ cached. **Read-only: to change a profile, talk to it in chat.**
               "schedule": "Every day at 7:00 AM",              // already plain English
               "enabled": true, "next_run": "2026-10-01T07:00:00-04:00",
               "last_run": "…", "last_status": "ok", "kind": "agent" } ],  // agent | script
-  "unavailable": []   // pieces it couldn't read, e.g. ["scheduled jobs"]
+  "purpose": {                                              // what it is DEDICATED to doing
+    "summary": "Toolshed software engineering, product strategy, and growth specialist",
+    "summary_source": "description",                        // description | instructions | null
+    "instructions": "# Toolshed Agent\n\nYou are the dedicated engineering…",  // full persona, or null
+    "is_generic": false                                     // true = a general assistant, nothing specific set
+  },
+  "unavailable": []   // pieces it couldn't read, e.g. ["scheduled jobs", "purpose"]
 }
 ```
+
+**`purpose`** is GACA's own shape: `summary` is the one-line version (a written description if the
+engine has one, otherwise the opening sentence of the instructions, rephrased to the third
+person), `instructions` is the full standing instructions with the engine's own boilerplate
+removed, and `is_generic` is true when nothing specific was ever set. **`null` means it couldn't
+be read** (and `"purpose"` is in `unavailable`) — different from a generic crew member. It is read
+live, never stored; for Hermes that happens over the account's direct (SSH) access to the box, so
+without that configured it is always `null`. See `hermes/0002-storage-boundary.md`.
 
 Always `200` for an existing member: an unreachable engine is
 `status: "offline"` (everything else empty), and one failing piece only

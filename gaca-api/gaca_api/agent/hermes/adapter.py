@@ -25,8 +25,12 @@ from ...schemas.event import GacaEvent, RunFailed
 from ...schemas.message import ImageInput, MessageOut
 from ...schemas.model import ModelConfig, ModelInfo, ProviderCredential
 from ...schemas.skill import SkillInfo
-from ...schemas.crew_profile import ProfileInfo
+from ...models.user import SSHConnection
+from ...provisioning import ssh
+from ...schemas.crew_profile import ProfileInfo, PurposeInfo
 from . import translate_profile as tp
+from . import translate_purpose as tpu
+from ..base import ProfileReadError
 from .translate import translate
 
 
@@ -257,6 +261,19 @@ class HermesAdapter:
         if not isinstance(got["jobs"], Exception):
             info.jobs = tp.jobs(got["jobs"])
         return info
+
+    async def describe_purpose(self, *, name: str, access: SSHConnection) -> PurposeInfo:
+        """What this profile is for: the `description` in its profile.yaml and the persona in
+        its SOUL.md. Hermes' API doesn't serve either (only its loopback-only, authenticated
+        dashboard does), so this reads the two small files over SSH — fixed command, read-only,
+        live every time."""
+        try:
+            files = await ssh.read_profile_files(access, name)
+        except (ssh.SSHError, ValueError) as error:
+            raise ProfileReadError(str(error)) from error
+        if files is None:
+            raise ProfileReadError(f"no profile called {name!r} on the engine's host")
+        return tpu.to_purpose_info(files)
 
 
 # What each piece of a profile is read from, and what to call it if it can't be read.

@@ -14,11 +14,17 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Sequence
 from typing import Protocol, runtime_checkable
 
-from ..schemas.crew_profile import ProfileInfo
+from ..models.user import SSHConnection
+from ..schemas.crew_profile import ProfileInfo, PurposeInfo
 from ..schemas.event import GacaEvent
 from ..schemas.message import ImageInput, MessageOut
 from ..schemas.model import ModelConfig, ModelInfo, ProviderCredential
 from ..schemas.skill import SkillInfo
+
+
+class ProfileReadError(Exception):
+    """The engine's host couldn't be asked what a profile is for (unreachable, no such
+    profile, unreadable). Callers show the rest of the profile without it."""
 
 
 @runtime_checkable
@@ -106,5 +112,16 @@ class AgentBackend(Protocol):
         Never raises for an unreachable or partly-broken engine: it returns
         `status="offline"` or lists what it couldn't read in `unavailable`, so a
         client can show the rest instead of an error page.
+        """
+        ...
+
+    async def describe_purpose(self, *, name: str, access: SSHConnection) -> PurposeInfo:
+        """What this profile is dedicated to doing, as the engine records it (its
+        description and standing instructions), in GACA's neutral terms.
+
+        Needs `access` — direct access to the machine the engine runs on — because an
+        engine may serve this only to local callers (Hermes does: its API doesn't expose
+        it, and its dashboard is loopback-only and authenticated). Read-only. Raises
+        ProfileReadError when it can't be read; callers treat that as "unavailable".
         """
         ...

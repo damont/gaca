@@ -69,8 +69,35 @@ class ProfileInfo(BaseModel):
     unavailable: list[str] = Field(default_factory=list)
 
 
+class PurposeInfo(BaseModel):
+    """What an engine reports about what a profile is for — raw material, not yet shaped
+    for clients (see utils/purpose.py:build_purpose). Each engine's adapter fills it in
+    from wherever that engine keeps this."""
+    # A short description the engine itself keeps for the profile, if anyone wrote one.
+    description: str | None = None
+    # The standing instructions (persona / "soul") with the engine's own boilerplate
+    # removed. None means nothing specific was ever written: a general assistant.
+    instructions: str | None = None
+
+
+class ProfilePurpose(BaseModel):
+    """What a crew member is dedicated to doing, as GACA presents it."""
+    # One line for a card or a list. None when the crew member is a general assistant.
+    summary: str | None = None
+    # Where `summary` came from: someone wrote a description, or it was taken from the
+    # opening of the instructions.
+    summary_source: Literal["description", "instructions"] | None = None
+    # The full standing instructions, for "show me everything".
+    instructions: str | None = None
+    # True when nothing specific has been set up: it's the engine's stock general assistant.
+    is_generic: bool = True
+
+
 class CrewProfile(ProfileInfo):
     """GET /crew/{name}/profile — GACA's identity for the member plus the engine's picture."""
     name: str
     color: str
     is_default: bool
+    # What this crew member is dedicated to doing. None = couldn't be read (it's then
+    # also listed in `unavailable`), which is different from a generic assistant.
+    purpose: ProfilePurpose | None = None
