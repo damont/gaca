@@ -186,6 +186,19 @@ def line_for(s: dict) -> str:
     return text
 
 
+def profile_name() -> str:
+    """The Hermes profile this runs as ("default", "toolshed"...): the `crew` GACA attributes the
+    alert to, so taking it to chat opens that crew member. Mirrors the david-alerts helper."""
+    explicit = os.environ.get("HERMES_PROFILE", "").strip()
+    if explicit:
+        return explicit
+    home = Path(os.environ.get("HERMES_HOME", "~/.hermes")).expanduser().resolve()
+    default = (Path.home() / ".hermes").resolve()
+    if home.parent == default / "profiles" and home.name:
+        return home.name
+    return "default"
+
+
 def cmd_finish(args) -> None:
     token = os.environ.get("GACA_API_TOKEN", "").strip()
     if not token:
@@ -241,6 +254,7 @@ def cmd_finish(args) -> None:
     n = len(fresh)
     alert = {
         "source": "email-calendar-suggestions",
+        "crew": profile_name(),
         "kind": "calendar.suggestions",
         "severity": "info",
         "title": f"{n} thing{'s' if n != 1 else ''} from your email to add to the calendar",

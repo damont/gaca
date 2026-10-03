@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..models.alert import AlertLink, SuggestedAction
 
@@ -64,8 +64,20 @@ class AlertCreate(BaseModel):
     source: str = "unknown"
     # Which of the user's crew members posted this. Optional and separate
     # from `source` — a Hermes box can run multiple named crew members, and
-    # this is what the client filters the inbox by.
-    crew: str | None = Field(default=None, max_length=100)
+    # this is what the client filters the inbox by, and what opens the right
+    # crew member's chat when the alert is taken to one.
+    #
+    # `agent` is accepted as an alias: the Hermes alerts helper has always sent
+    # the posting profile as `agent`, which this model silently ignored, so alerts
+    # from skills carried no crew at all. If both are given, `crew` wins.
+    crew: str | None = Field(
+        default=None, max_length=100, validation_alias=AliasChoices("crew", "agent")
+    )
+
+    @field_validator("crew")
+    @classmethod
+    def _blank_crew_is_none(cls, value: str | None) -> str | None:
+        return (value.strip() or None) if value else None
 
 
 class AlertOut(BaseModel):

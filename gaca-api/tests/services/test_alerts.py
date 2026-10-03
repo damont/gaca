@@ -955,3 +955,51 @@ def test_take_to_chat_needs_a_crew_and_is_scoped_to_the_owner(tmp_path, monkeypa
 
     still = _run(go)
     assert still.status == "new" and still.session_id is None
+
+
+# ── an alert carries who posted it, and its chat carries that over ──────────────────────────
+def test_the_poster_helpers_agent_field_counts_as_the_crew():
+    """The Hermes alerts helper has always sent the posting profile as `agent`; the model used
+    to ignore it, so skill-posted alerts had no crew."""
+    assert AlertCreate(kind="k", title="t", agent="trading").crew == "trading"
+    assert AlertCreate(kind="k", title="t", crew="toolshed").crew == "toolshed"
+    assert AlertCreate(kind="k", title="t", crew="toolshed", agent="trading").crew == "toolshed"  # crew wins
+    assert AlertCreate(kind="k", title="t").crew is None
+    assert AlertCreate(kind="k", title="t", agent="  ").crew is None  # blank means nobody
+
+
+def test_an_alert_posted_by_a_profile_opens_that_profiles_chat(tmp_path, monkeypatch):
+    settings.db_path = str(tmp_path / "t.db")
+    _install_recording_backend(monkeypatch)
+
+    async def go():
+        alert, _ = await alert_service.create("u1", AlertCreate(kind="k", title="from trading", agent="trading"))
+        elsewhere, _ = await alert_service.create("u1", AlertCreate(kind="k", title="no crew"))
+        stale, _ = await alert_service.create("u1", AlertCreate(kind="k", title="gone", agent="retired-profile"))
+        user = _multi_crew_user(default_crew="toolshed")
+        out = {}
+        for label, a, explicit in (("own", alert, None), ("override", alert, "toolshed"), ("none", elsewhere, None), ("stale", stale, None)):
+            _, session_id, _ = await alert_service.take_to_chat(user, a.id, crew=explicit)
+            out[label] = (await session_service.ensure_owned("u1", session_id)).crew
+        return alert, out
+
+    alert, crews = _run(go)
+    assert alert.crew == "trading"
+    assert crews == {
+        "own": "trading",         # the poster's profile, with nobody choosing anything
+        "override": "trading",    # (the alert already has its chat; asking again reuses it)
+        "none": "toolshed",       # no crew on the alert -> the account default
+        "stale": "toolshed",      # a crew name that no longer exists -> falls back, never errors
+    }
+
+
+def test_an_explicit_crew_choice_beats_the_alerts_own_crew(tmp_path, monkeypatch):
+    settings.db_path = str(tmp_path / "t.db")
+    _install_recording_backend(monkeypatch)
+
+    async def go():
+        alert, _ = await alert_service.create("u1", AlertCreate(kind="k", title="x", agent="trading"))
+        _, session_id, _ = await alert_service.take_to_chat(_multi_crew_user(), alert.id, crew="toolshed")
+        return (await session_service.ensure_owned("u1", session_id)).crew
+
+    assert _run(go) == "toolshed"

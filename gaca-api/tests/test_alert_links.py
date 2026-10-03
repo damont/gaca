@@ -145,3 +145,10 @@ def test_post_get_and_validation_over_http(http):
     assert http.post("/api/alerts", json={**body, "dedupe_key": "r2", "links": [{"url": "javascript:alert(1)"}]}).status_code == 422
     assert http.post("/api/alerts", json={**body, "dedupe_key": "r3", "links": [{"url": "https://x.example"}] * 11}).status_code == 422
     assert http.post("/api/alerts", json={"kind": "k", "title": "no links at all"}).json()["links"] == []
+
+
+def test_a_posted_agent_name_comes_back_as_the_alerts_crew_over_http(http):
+    posted = http.post("/api/alerts", json={"kind": "k", "title": "from a skill", "agent": "toolshed"})
+    assert posted.status_code == 201 and posted.json()["crew"] == "toolshed"
+    assert http.get("/api/alerts").json()["alerts"][0]["crew"] == "toolshed"
+    assert http.post("/api/alerts", json={"kind": "k", "title": "explicit", "crew": "trading", "agent": "x"}).json()["crew"] == "trading"

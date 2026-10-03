@@ -188,7 +188,10 @@ patching it.
                                     // real ownership boundary
   "crew": "toolshed",               // nullable. Which crew member posted this —
                                     // distinct from `source` (the channel).
-                                    // Same trust level: advisory, unauthenticated
+                                    // Same trust level: advisory, unauthenticated.
+                                    // When the alert is taken to a chat, THIS is whose
+                                    // chat opens (then the account default). `agent` is
+                                    // accepted on POST as an alias for `crew`
   "kind": "disk.low",               // free-form dotted string — do NOT switch on
                                     // an exhaustive list; new kinds appear without
                                     // an API release

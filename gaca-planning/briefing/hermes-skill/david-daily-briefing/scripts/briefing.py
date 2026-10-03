@@ -34,6 +34,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("America/New_York")
@@ -519,6 +520,19 @@ def cmd_summary(args) -> None:
     print("summary: posted")
 
 
+def profile_name() -> str:
+    """The Hermes profile this runs as ("default", "toolshed"...): the `crew` GACA attributes the
+    alert to, so taking it to chat opens that crew member. Mirrors the david-alerts helper."""
+    explicit = os.environ.get("HERMES_PROFILE", "").strip()
+    if explicit:
+        return explicit
+    home = Path(os.environ.get("HERMES_HOME", "~/.hermes")).expanduser().resolve()
+    default = (Path.home() / ".hermes").resolve()
+    if home.parent == default / "profiles" and home.name:
+        return home.name
+    return "default"
+
+
 def cmd_finish(args) -> None:
     day = parse_day_arg(args.date)
     token = env_token("GACA_API_TOKEN")
@@ -532,6 +546,7 @@ def cmd_finish(args) -> None:
         body += "\nProblems: " + "; ".join(args.problem)
     payload = {
         "source": "daily-briefing",
+        "crew": profile_name(),
         "kind": "briefing.posted",
         "severity": "warn" if args.problem else "info",
         "title": ("Daily briefing ready (with gaps)" if args.problem else "Daily briefing ready"),
