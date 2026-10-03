@@ -7,12 +7,43 @@ stored data stays permissive so an old row never fails to load.
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Literal
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from ..models.alert import SuggestedAction
+from ..models.alert import AlertLink, SuggestedAction
+
+
+MAX_LINKS = 10
+
+
+class AlertLinkIn(AlertLink):
+    """A link as posted: web addresses only (the app opens them on tap), with a short label."""
+
+    url: str = Field(..., min_length=1, max_length=1000)
+    label: str | None = Field(default=None, max_length=80)
+
+    @field_validator("url")
+    @classmethod
+    def _web_url(cls, value: str) -> str:
+        value = value.strip()
+        if not re.match(r"^https?://[^\s/]+", value, re.IGNORECASE):
+            raise ValueError("url must be an http:// or https:// address")
+        return value
+
+    @field_validator("label")
+    @classmethod
+    def _tidy_label(cls, value: str | None) -> str | None:
+        return (" ".join(value.split()) or None) if value else None
+
+
+def _host_label(url: str) -> str:
+    """What to call a link nobody labeled: its site, without "www."."""
+    host = urlsplit(url).hostname or url
+    return host[4:] if host.startswith("www.") else host
 
 
 class AlertCreate(BaseModel):
@@ -25,6 +56,9 @@ class AlertCreate(BaseModel):
     data: dict = Field(default_factory=dict)
     dedupe_key: str | None = Field(default=None, max_length=200)
     suggested_actions: list[SuggestedAction] = Field(default_factory=list)
+    # Pages that go with this alert (the calendar week, the source email...). Up to 10;
+    # an unlabeled one is shown under its site's name.
+    links: list[AlertLinkIn] = Field(default_factory=list, max_length=MAX_LINKS)
     # Advisory label for who posted this. Not authenticated — ownership comes
     # from the token, this is only for telling posters apart in the UI.
     source: str = "unknown"
@@ -51,6 +85,8 @@ class AlertOut(BaseModel):
     data: dict = {}
     dedupe_key: str | None = None
     suggested_actions: list[SuggestedAction] = []
+    # Every link has a label here, even if the poster didn't give one.
+    links: list[AlertLink] = []
 
     status: str
     # What the client should display and filter on. Differs from `status` when a
@@ -61,6 +97,13 @@ class AlertOut(BaseModel):
     session_id: str | None = None
     resolution_note: str | None = None
     parent_alert_id: str | None = None
+
+    @model_validator(mode="after")
+    def _label_every_link(self) -> "AlertOut":
+        self.links = [
+            AlertLink(url=link.url, label=link.label or _host_label(link.url)) for link in self.links
+        ]
+        return self
 
 
 class AlertList(BaseModel):

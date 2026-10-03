@@ -36,6 +36,15 @@ class SuggestedAction(BaseModel):
     prompt: str
 
 
+class AlertLink(BaseModel):
+    """A web page that goes with an alert — the calendar week an event is on, the email a
+    suggestion came from, the dashboard that raised it. Stored permissively; requests are
+    validated (schemas/alert.py:AlertLinkIn) and responses always carry a label."""
+
+    url: str
+    label: str | None = None
+
+
 class AlertDoc(BaseModel):
     id: str = Field(default_factory=new_id)
     user_id: str
@@ -69,6 +78,8 @@ class AlertDoc(BaseModel):
     # alert and one every time a five-minute cron fires.
     dedupe_key: str | None = None
     suggested_actions: list[SuggestedAction] = Field(default_factory=list)
+    # Pages worth opening to act on this alert; the app shows them as tappable links.
+    links: list[AlertLink] = Field(default_factory=list)
 
     status: str = "new"
     status_changed_at: datetime = Field(default_factory=utcnow)

@@ -205,6 +205,9 @@ patching it.
     { "label": "Clean up old logs", "prompt": "Free space on hermes-box by …" },
     { "label": "Show me what's big", "prompt": "List the 20 largest files under …" }
   ],
+  "links": [                        // pages that go with this alert (see below)
+    { "url": "https://calendar.example.com/#week-card-2026-10-05", "label": "Open family calendar" }
+  ],
 
   "status": "new",                  // stored status — see §4
   "effective_status": "new",        // what to DISPLAY — see §4
@@ -224,6 +227,15 @@ patching it.
 3. **`suggested_actions` may be empty.** When present, render as buttons —
    tapping one sends its `prompt` to `/delegate`. This is the primary interaction,
    not a nice-to-have.
+
+**`links`** are web pages to open in order to act on the alert — the calendar week an event is in, the
+email a suggestion came from, the dashboard that raised it. Up to 10; each is `{url, label?}`.
+`url` must be `http://` or `https://` (anything else is a `422`; the app opens these on tap). **Responses
+always carry a `label`** — if the poster gave none it's the site's name (`mail.google.com`). Put the link
+here rather than only in `body`: the app shows links as buttons under the alert text, and when an alert
+is taken to a chat the links are included in the text the agent gets. Like `suggested_actions`, links are
+part of the alert's content: a re-post with the same `dedupe_key` **replaces** them, so restate any you
+still want.
 
 ---
 

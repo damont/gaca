@@ -206,6 +206,12 @@ def _delegate_prompt(
         parts.append(instruction)
     if not parts:
         parts.append(f"{alert.title}\n\n{alert.body}" if alert.body else alert.title)
+        # The alert's own words stand in for it, so its links must too — otherwise the page the
+        # alert pointed at never reaches the agent. (A chosen suggestion's prompt stands alone.)
+        if alert.links:
+            parts.append(
+                "Links:\n" + "\n".join(f"- {link.label or link.url}: {link.url}" for link in alert.links)
+            )
     return "\n\n".join(parts)
 
 
