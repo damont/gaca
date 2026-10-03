@@ -63,8 +63,15 @@ async def run(conn: SSHConnection, command: str, *, timeout: float = 20.0) -> st
 # .env — the root ~/.hermes/.env for "default", ~/.hermes/profiles/<name>/.env
 # for each named one). A profile with the API server off, or missing a port
 # or key, is silently excluded — nothing for gaca-api to reach there yet.
+#
+# WHERE a profile is reached depends on how Hermes is run, and that changed
+# (v0.21, 2026-10-03: "one gateway per host serves every profile"). Older Hermes
+# ran a gateway per profile on the port in its own .env. Current Hermes serves the
+# others from the DEFAULT gateway's port under /p/<name>, and a profile's own
+# .env port is then stale. Hermes doesn't advertise which, so ask it: if the
+# default gateway answers /p/<name>/health, that profile is served there.
 _DISCOVER_SCRIPT = r"""
-import json, pathlib, re
+import json, pathlib, re, urllib.request
 
 def read_api_server(env_path):
     if not env_path.is_file():
@@ -82,26 +89,40 @@ def read_api_server(env_path):
         return None
     return {"port": int(port), "api_key": key}
 
+def served_by_default(default_port, name):
+    try:
+        url = "http://127.0.0.1:%d/p/%s/health" % (default_port, name)
+        with urllib.request.urlopen(url, timeout=3) as response:
+            return response.status == 200
+    except Exception:
+        return False
+
 home = pathlib.Path.home() / ".hermes"
 found = {}
 default = read_api_server(home / ".env")
 if default:
-    found["default"] = default
+    found["default"] = dict(default, path="")
 profiles_dir = home / "profiles"
 if profiles_dir.is_dir():
     for entry in sorted(profiles_dir.iterdir()):
         if entry.is_dir():
             info = read_api_server(entry / ".env")
-            if info:
-                found[entry.name] = info
+            if not info:
+                continue
+            if default and served_by_default(default["port"], entry.name):
+                info = {"port": default["port"], "api_key": info["api_key"], "path": "/p/" + entry.name}
+            else:
+                info["path"] = ""
+            found[entry.name] = info
 print(json.dumps(found))
 """
 
 
 async def discover_profiles(conn: SSHConnection) -> dict[str, dict]:
-    """Every profile on the box with its HTTP gateway enabled, by name —
-    `{"toolshed": {"port": 8643, "api_key": "..."}, ...}`. Read-only: never
-    creates, installs, or changes anything on the box.
+    """Every profile on the box with its HTTP gateway enabled, by name, with
+    where it is actually reached — `{"toolshed": {"port": 8642, "path": "/p/toolshed",
+    "api_key": "..."}, ...}` (`path` is "" for a profile with a gateway of its own).
+    Read-only: never creates, installs, or changes anything on the box.
     """
     stdout = await run(conn, f"python3 -c {shlex.quote(_DISCOVER_SCRIPT)}")
     return json.loads(stdout)
@@ -130,18 +151,34 @@ def read(path, limit):
     except OSError:
         return None
 
+def stock_texts():
+    # The installed Hermes' own list of "this persona carries no user intent" texts, so we
+    # recognise them whatever version is installed (they changed between 0.20 and 0.21).
+    # Loads just that one dependency-free file by path; never imports the hermes_cli package.
+    try:
+        import importlib.util
+        path = home / "hermes-agent" / "hermes_cli" / "default_soul.py"
+        spec = importlib.util.spec_from_file_location("hermes_default_soul", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        texts = [module.DEFAULT_SOUL_MD, *getattr(module, "_LEGACY_TEMPLATE_SOULS", ())]
+        return [t for t in texts if isinstance(t, str)]
+    except Exception:
+        return []
+
 if d is None or not d.is_dir():
     print(json.dumps({"found": False}))
 else:
     print(json.dumps({"found": True, "soul": read(d / "SOUL.md", 40000),
-                      "profile_yaml": read(d / "profile.yaml", 4000)}))
+                      "profile_yaml": read(d / "profile.yaml", 4000), "stock": stock_texts()}))
 """
 
 _PROFILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 
 
 async def read_profile_files(conn: SSHConnection, name: str) -> dict | None:
-    """`{"soul": str|None, "profile_yaml": str|None}` for one profile, or None if no such
+    """`{"soul", "profile_yaml", "stock"}` for one profile (`stock`: the installed Hermes' own
+    untouched-default persona texts, possibly empty), or None if no such
     profile exists on the box. Read-only; the command is fixed and `name` is validated."""
     if name != "default" and not _PROFILE_NAME.fullmatch(name):
         raise SSHError(f"not a valid profile name: {name!r}")
@@ -165,7 +202,7 @@ async def next_free_port(conn: SSHConnection, *, base: int = 8642) -> int:
     return max(ports, default=base - 1) + 1
 
 
-# Runs ON the box, over the connection above — the confirmed-live command
+# Runs ON the box, over the connection above. The confirmed-live command
 # sequence (david-claw, 2026-09-20, `hermes --help`/`profile --help`/
 # `gateway --help`/`config --help`, cross-checked against real behavior):
 #   1. `hermes profile create <name> --no-alias` — no --port flag exists;
@@ -175,34 +212,64 @@ async def next_free_port(conn: SSHConnection, *, base: int = 8642) -> int:
 #      .env (`hermes config set` only touches config.yaml-style keys, not
 #      .env — confirmed via `hermes config --help`; env vars need a direct
 #      file edit).
-#   3. `hermes --profile <name> gateway install --start-now` — `--profile`
-#      is a real global flag (confirmed: `hermes --profile toolshed config
-#      env-path` correctly resolved that profile's own .env; also the
-#      literal fix Hermes' own error log suggests: "hermes --profile default
-#      gateway stop"). Installs the systemd/launchd service and starts it,
-#      which then reads the .env we just wrote.
+#   3. Make it reachable — which way depends on the Hermes (see _DISCOVER_SCRIPT):
+#      * current Hermes (multiplexed): nothing to install. The default gateway
+#        rescans profiles/ and serves the new one at /p/<name> within ~30s (2026-10-03,
+#        v0.21.5, confirmed live). We wait for /p/<name>/health, and that is its address.
+#      * older Hermes: `hermes --profile <name> gateway install --start-now`
+#        installs and starts a gateway of its own on the port we wrote.
+#      Which one it is gets decided by asking the box, not by version number: if the
+#      default gateway already serves another named profile at /p/<it>, or the
+#      new profile appears there within the wait, it's multiplexed.
 # Wrapped in `bash -lc` by create_profile below because `hermes` lives in
 # ~/.local/bin, only on PATH in a login shell (confirmed: a plain non-login
 # `ssh host hermes --version` fails with "not found"; `bash -lc` finds it).
 _CREATE_PROFILE_SCRIPT = r"""
-import json, pathlib, subprocess, sys
+import json, pathlib, re, subprocess, sys, time, urllib.request
 
 name, port, api_key = sys.argv[1], sys.argv[2], sys.argv[3]
+home = pathlib.Path.home() / ".hermes"
+
+def fail(stage, error):
+    print(json.dumps({"ok": False, "stage": stage, "error": error}))
+    sys.exit(0)
+
+def env_value(path, key):
+    try:
+        for line in path.read_text(errors="replace").splitlines():
+            if line.startswith(key + "="):
+                return line.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return ""
+
+def health_ok(default_port, profile):
+    try:
+        url = "http://127.0.0.1:%d/p/%s/health" % (default_port, profile)
+        with urllib.request.urlopen(url, timeout=3) as response:
+            return response.status == 200
+    except Exception:
+        return False
 
 created = subprocess.run(
     ["hermes", "profile", "create", name, "--no-alias"],
     capture_output=True, text=True,
 )
 if created.returncode != 0:
-    print(json.dumps({"ok": False, "stage": "create", "error": created.stderr.strip()}))
-    sys.exit(0)
+    fail("create", created.stderr.strip())
 
-env_path = pathlib.Path.home() / ".hermes" / "profiles" / name / ".env"
+# Is this host multiplexed? Ask the default gateway whether it already serves another profile.
+default_port_text = env_value(home / ".env", "API_SERVER_PORT")
+default_port = int(default_port_text) if default_port_text.isdigit() else 8642
+others = [p.name for p in sorted((home / "profiles").iterdir()) if p.is_dir() and p.name != name]
+multiplexed = any(health_ok(default_port, other) for other in others)
+
+env_path = home / "profiles" / name / ".env"
 lines = env_path.read_text().splitlines() if env_path.is_file() else []
 wanted = {
     "API_SERVER_ENABLED": "true",
     "API_SERVER_HOST": "0.0.0.0",
-    "API_SERVER_PORT": port,
+    "API_SERVER_PORT": str(default_port) if multiplexed else port,
     "API_SERVER_KEY": api_key,
 }
 seen, out = set(), []
@@ -218,34 +285,76 @@ for key, value in wanted.items():
         out.append(f"{key}={value}")
 env_path.parent.mkdir(parents=True, exist_ok=True)
 env_path.write_text("\n".join(out) + "\n")
+env_path.chmod(0o600)
 
-installed = subprocess.run(
-    ["hermes", "--profile", name, "gateway", "install", "--start-now"],
-    capture_output=True, text=True,
-)
-if installed.returncode != 0:
-    print(json.dumps({"ok": False, "stage": "install", "error": installed.stderr.strip()}))
-    sys.exit(0)
+def expects_multiplex():
+    # Only a tie-breaker for the FIRST named profile on a host (nothing to compare against): an
+    # explicit flag in the default config, or a Hermes new enough (>= 0.21) to do it by default.
+    try:
+        text = (home / "config.yaml").read_text(errors="replace")
+        if re.search(r"^\s*multiplex_profiles:\s*true\b", text, re.M):
+            return True
+    except OSError:
+        pass
+    try:
+        out = subprocess.run(["hermes", "--version"], capture_output=True, text=True, timeout=20).stdout
+        match = re.search(r"v?0\.(\d+)\.", out)
+        return bool(match and int(match.group(1)) >= 21)
+    except Exception:
+        return False
 
-print(json.dumps({"ok": True}))
+if not multiplexed:
+    # Give the default gateway a moment to notice the new profile before concluding it needs a
+    # gateway of its own — but only on a host that should be multiplexed, so an older Hermes
+    # isn't made to wait for nothing.
+    deadline = time.time() + (40 if (not others and expects_multiplex()) else 0)
+    while time.time() < deadline and not multiplexed:
+        multiplexed = health_ok(default_port, name)
+        if not multiplexed:
+            time.sleep(2)
+
+if multiplexed:
+    deadline = time.time() + 60  # the default gateway rescans profiles/ about every 30s
+    while time.time() < deadline and not health_ok(default_port, name):
+        time.sleep(2)
+    if not health_ok(default_port, name):
+        fail("serve", "the default gateway did not start serving the new profile within 60s")
+    print(json.dumps({"ok": True, "port": default_port, "path": "/p/" + name}))
+else:
+    installed = subprocess.run(
+        ["hermes", "--profile", name, "gateway", "install", "--start-now"],
+        capture_output=True, text=True,
+    )
+    if installed.returncode != 0:
+        fail("install", installed.stderr.strip())
+    print(json.dumps({"ok": True, "port": int(port), "path": ""}))
 """
 
 
-async def create_profile(conn: SSHConnection, name: str, port: int, api_key: str) -> None:
-    """Create a brand new Hermes profile, enable its HTTP gateway on `port`
-    with `api_key`, and install+start its gateway service. Raises SSHError
-    (with the real Hermes stderr) if any stage fails — most commonly the
-    name already exists as a profile on the box.
+async def create_profile(
+    conn: SSHConnection, name: str, port: int, api_key: str
+) -> tuple[int, str]:
+    """Create a brand new Hermes profile with `api_key` and make it reachable, returning
+    the `(port, path)` it can be reached at.
+
+    On a Hermes that serves every profile from its default gateway that is the default's
+    port and `/p/<name>` (nothing to install — `port` here is ignored); on an older one
+    that runs a gateway per profile it is `port` and "" after installing and starting that
+    gateway. Raises SSHError (with the real Hermes stderr) if any stage fails — most
+    commonly the name already exists as a profile on the box.
     """
+    if not _PROFILE_NAME.fullmatch(name) or name == "default":
+        raise SSHError(f"not a valid new profile name: {name!r}")
     inner = (
         f"python3 -c {shlex.quote(_CREATE_PROFILE_SCRIPT)} "
         f"{shlex.quote(name)} {port} {shlex.quote(api_key)}"
     )
-    # 60s, not the default 20s — profile create bootstraps bundled skills,
-    # which is slower than the one-liners every other command here runs.
-    stdout = await run(conn, f"bash -lc {shlex.quote(inner)}", timeout=60.0)
+    # Generous: profile create bootstraps bundled skills, and the default gateway can take
+    # ~30s to notice a new profile — far longer than the one-liners every other command runs.
+    stdout = await run(conn, f"bash -lc {shlex.quote(inner)}", timeout=150.0)
     result = json.loads(stdout)
     if not result.get("ok"):
         raise SSHError(
             f"provisioning {name!r} failed at {result.get('stage')}: {result.get('error')}"
         )
+    return int(result["port"]), result.get("path", "")

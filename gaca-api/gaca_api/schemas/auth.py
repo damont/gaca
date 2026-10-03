@@ -5,7 +5,9 @@ a client written against one app reads the same on this one.
 """
 from __future__ import annotations
 
-from pydantic import BaseModel, EmailStr, Field, model_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
+
+from ..models.user import normalize_crew_path
 
 
 class RegisterRequest(BaseModel):
@@ -93,6 +95,10 @@ class CrewAccess(BaseModel):
     private_key: str = Field(..., min_length=1)
 
 
+def _valid_crew_path(value: str | None) -> str | None:
+    return None if value is None else normalize_crew_path(value)
+
+
 _HEX_COLOR = Field(
     default=None,
     pattern=r"^#[0-9A-Fa-f]{6}$",
@@ -114,8 +120,13 @@ class CrewMemberCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=50)
     port: int | None = Field(default=None, ge=1, le=65535)
     api_key: str | None = Field(default=None, min_length=1, max_length=500)
+    # Where under host:port the engine serves this member, e.g. "/p/toolshed"; omit when
+    # it has a port of its own.
+    path: str | None = Field(default=None, max_length=200)
     color: str | None = _HEX_COLOR
     access: CrewAccess | None = None
+
+    _check_path = field_validator("path")(_valid_crew_path)
 
     @model_validator(mode="after")
     def _port_and_key_together(self) -> "CrewMemberCreate":
@@ -141,7 +152,11 @@ class CrewMemberUpdate(BaseModel):
 
     port: int = Field(..., ge=1, le=65535)
     api_key: str = Field(..., min_length=1, max_length=500)
+    # Omit to keep the current path; "" to clear it; "/p/name" to set it.
+    path: str | None = Field(default=None, max_length=200)
     color: str | None = _HEX_COLOR
+
+    _check_path = field_validator("path")(_valid_crew_path)
 
 
 class CrewMemberOut(BaseModel):
@@ -149,6 +164,8 @@ class CrewMemberOut(BaseModel):
 
     name: str
     port: int
+    # Where under host:port this member is served ("" = its own port, "/p/name" = shared gateway).
+    path: str = ""
     color: str
     is_default: bool
 

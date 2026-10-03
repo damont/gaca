@@ -116,11 +116,37 @@ def test_on_box_script_maps_default_and_named_profiles_and_rejects_everything_el
     (hermes / "profiles" / "bare").mkdir()
     (tmp_path / "secret.txt").write_text("nope")
 
-    assert _run_script(tmp_path, "default") == {"found": True, "soul": "default soul", "profile_yaml": None}
-    assert _run_script(tmp_path, "toolshed") == {"found": True, "soul": "toolshed soul", "profile_yaml": "description: x\n"}
-    assert _run_script(tmp_path, "bare") == {"found": True, "soul": None, "profile_yaml": None}
+    assert _run_script(tmp_path, "default") == {"found": True, "soul": "default soul", "profile_yaml": None, "stock": []}
+    assert _run_script(tmp_path, "toolshed") == {"found": True, "soul": "toolshed soul", "profile_yaml": "description: x\n", "stock": []}
+    assert _run_script(tmp_path, "bare") == {"found": True, "soul": None, "profile_yaml": None, "stock": []}
     for hostile in ("ghost", "../secret", "..", "a/b", "toolshed; id", "$(id)", "", "-x", "default/../x"):
         assert _run_script(tmp_path, hostile) == {"found": False}, hostile
+
+
+def test_on_box_script_reports_the_installed_hermes_own_stock_texts(tmp_path):
+    hermes = tmp_path / ".hermes"
+    (hermes / "hermes-agent" / "hermes_cli").mkdir(parents=True)
+    (hermes / "SOUL.md").write_text("whatever")
+    (hermes / "hermes-agent" / "hermes_cli" / "default_soul.py").write_text(
+        'DEFAULT_SOUL_MD = ("You are Future Hermes. " "Be brief.")\n_LEGACY_TEMPLATE_SOULS = ("old text one", "old text two")\n'
+    )
+    assert _run_script(tmp_path, "default")["stock"] == ["You are Future Hermes. Be brief.", "old text one", "old text two"]
+    # a broken or missing definition must never break the read itself
+    (hermes / "hermes-agent" / "hermes_cli" / "default_soul.py").write_text("this is not python (")
+    assert _run_script(tmp_path, "default")["stock"] == []
+
+
+def test_a_future_stock_persona_is_recognised_when_hermes_reports_it():
+    future = "You are Future Hermes. Be brief and kind."
+    assert tp.custom_instructions(future) is not None                     # unknown to us on its own
+    assert tp.custom_instructions(future, [future]) is None               # but the installed Hermes says it's stock
+    assert tp.custom_instructions(future + "\n\n## Focus\nBirds only.", [future]) == "## Focus\nBirds only."
+    assert tp.to_purpose_info({"soul": future, "profile_yaml": None, "stock": [future]}).instructions is None
+
+
+def test_both_known_stock_generations_are_generic_without_any_help():
+    for stock in tp.KNOWN_STOCK_SOULS:
+        assert tp.custom_instructions(stock) is None and tp.custom_instructions(stock + "\n") is None
 
 
 def test_read_profile_files_builds_a_safe_command_and_validates_the_name(monkeypatch):

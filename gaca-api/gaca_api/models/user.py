@@ -6,9 +6,11 @@ in and the hash is all we keep.
 """
 from __future__ import annotations
 
+import re
+
 from datetime import datetime
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator, field_validator
 
 from .base import new_id, utcnow
 
@@ -27,26 +29,50 @@ CREW_COLOR_PALETTE: tuple[str, ...] = (
 )
 
 
+def normalize_crew_path(value: str) -> str:
+    """"/p/toolshed/" -> "/p/toolshed"; "" stays "". Raises ValueError for anything else odd.
+
+    Every segment starts with a letter or digit, so "." and ".." (which an HTTP client may
+    collapse, escaping the prefix) can't be spelled."""
+    value = value.strip().rstrip("/")
+    if value and not re.fullmatch(r"(/[A-Za-z0-9][A-Za-z0-9._~-]*){1,4}", value):
+        raise ValueError("path must look like /p/name (letters, digits, . _ ~ -)")
+    return value
+
+
 class CrewMember(BaseModel):
     """One named Hermes profile under the user's connected agent.
 
     The user connects to one Hermes agent (POST /api/agent/connect), which
     creates the first ("default") crew member automatically; more can be
-    added afterward. Each one runs on its own port on the account's shared
-    `agent_host`, with its own `api_key` — separate ports because a Hermes
-    profile is, underneath, a separate Hermes process, addressed
-    independently rather than through Hermes' own path-prefix multiplexing.
-    That's an implementation detail, not something the API surfaces: from
-    the outside, this is just "another crew member."
+    added afterward. Each has its own `api_key`, and an address on the
+    account's shared `agent_host`: a `port`, plus an optional `path` prefix.
+
+    The address depends on how Hermes is run, which is not up to us and has
+    changed: older Hermes ran one gateway process per profile, each on its own
+    port (`path` empty); current Hermes folds every profile into the default
+    gateway and serves the others under `/p/<profile>` on that one port. The
+    row simply records where this member actually is, and discovery
+    (`POST /crew/discover`) keeps it current. That's an implementation detail,
+    not something the app needs to understand: from the outside, this is just
+    "another crew member."
     """
 
     name: str
     port: int
     api_key: str
+    # URL path under host:port where this member's engine is served — "" or e.g.
+    # "/p/toolshed". Defaults to "" so every row saved before this existed is valid.
+    path: str = ""
     # Defaults to the first palette color so an old row migrated without one
     # (see UserDoc._migrate_legacy_agent_fields) still validates; real
     # creation always sets it explicitly via services.auth.add_crew_member.
     color: str = CREW_COLOR_PALETTE[0]
+
+    @field_validator("path")
+    @classmethod
+    def _valid_path(cls, value: str) -> str:
+        return normalize_crew_path(value)
 
 
 class SSHConnection(BaseModel):

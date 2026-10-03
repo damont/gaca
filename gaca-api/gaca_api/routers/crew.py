@@ -39,6 +39,7 @@ def crew_out(user: UserDoc) -> CrewOut:
             CrewMemberOut(
                 name=c.name,
                 port=c.port,
+                path=c.path,
                 color=c.color,
                 is_default=c.name == user.default_crew,
             )
@@ -94,7 +95,7 @@ async def add_crew_member(
                 user, access.host, access.port, access.username, access.private_key
             )
         updated = await auth_service.add_crew_member(
-            user, data.name, data.port, data.api_key, data.color
+            user, data.name, data.port, data.api_key, data.color, path=data.path or ""
         )
     else:
         updated = await auth_service.provision_crew_member(
@@ -128,9 +129,9 @@ async def update_crew_member(
     data: CrewMemberUpdate,
     user: UserDoc = Depends(get_current_user),
 ):
-    """Replace an existing crew member's port and key (and color, if given)."""
+    """Replace an existing crew member's port and key (and color / path, if given)."""
     updated = await auth_service.update_crew_member(
-        user, name, data.port, data.api_key, data.color
+        user, name, data.port, data.api_key, data.color, path=data.path
     )
     return crew_out(updated)
 

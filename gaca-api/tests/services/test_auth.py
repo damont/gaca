@@ -790,13 +790,18 @@ def test_discover_crew_never_overwrites_an_already_known_member(tmp_path, monkey
 # tests/provisioning/test_ssh.py. These are about provision_crew_member's
 # own orchestration: what it checks, what order, what it persists.
 
-def _install_fake_provisioning(monkeypatch, *, port: int, calls: list | None = None):
+def _install_fake_provisioning(
+    monkeypatch, *, port: int, calls: list | None = None, address: tuple | None = None
+):
+    """`address` is what create_profile reports back; by default the port it was asked for
+    with no path (a gateway of its own)."""
     async def fake_next_free_port(conn):
         return port
 
     async def fake_create_profile(conn, name, port_, api_key):
         if calls is not None:
             calls.append((name, port_, api_key))
+        return address or (port_, "")
 
     monkeypatch.setattr(auth_service.ssh_provisioning, "next_free_port", fake_next_free_port)
     monkeypatch.setattr(auth_service.ssh_provisioning, "create_profile", fake_create_profile)
@@ -920,3 +925,88 @@ def test_discover_crew_accepts_access_inline_on_a_fresh_account(tmp_path, monkey
     updated = _run(go)
     assert updated.ssh.host == "david-claw.lan"
     assert updated.crew[0].name == "default"
+
+
+# ── where a crew member lives: its own port, or a path on the shared gateway ─────────────────
+def test_a_crew_members_address_includes_its_path(tmp_path, monkeypatch):
+    settings.db_path = str(tmp_path / "t.db")
+    seen = []
+    monkeypatch.setattr(auth_service.agent_runtime, "backend_for", lambda base_url, key: seen.append((base_url, key)) or object())
+
+    async def go():
+        user = await _new_user()
+        user = await auth_service.connect_agent(user, "http://box", 8642, "default-key", "default")
+        user = await auth_service.add_crew_member(user, "toolshed", 8642, "ts-key", path="/p/toolshed")
+        user = await auth_service.add_crew_member(user, "legacy", 8650, "legacy-key")
+        for name in ("default", "toolshed", "legacy"):
+            auth_service.backend_for_crew(user, auth_service.find_crew_member(user, name))
+
+    _run(go)
+    assert seen == [
+        ("http://box:8642", "default-key"),
+        ("http://box:8642/p/toolshed", "ts-key"),
+        ("http://box:8650", "legacy-key"),
+    ]
+
+
+def test_a_crew_path_is_validated_and_normalized():
+    from gaca_api.models.user import CrewMember
+    assert CrewMember(name="a", port=1, api_key="k", path="/p/toolshed/").path == "/p/toolshed"
+    assert CrewMember(name="a", port=1, api_key="k").path == ""
+    for bad in ("p/toolshed", "/p/../x", "/p/a b", "http://evil", "/p/x?y=1", "//x"):
+        with pytest.raises(ValueError):
+            CrewMember(name="a", port=1, api_key="k", path=bad)
+
+
+def test_updating_a_crew_member_keeps_its_path_unless_told_otherwise(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        user = await _new_user()
+        user = await auth_service.add_crew_member(user, "toolshed", 8642, "k", path="/p/toolshed")
+        kept = await auth_service.update_crew_member(user, "toolshed", 8642, "k2")
+        changed = await auth_service.update_crew_member(kept, "toolshed", 8650, "k3", path="")
+        return kept.crew[0], changed.crew[0]
+
+    kept, changed = _run(go)
+    assert (kept.path, kept.api_key) == ("/p/toolshed", "k2")  # an edit that doesn't mention path must not reset it
+    assert (changed.path, changed.port) == ("", 8650)
+
+
+def test_discover_crew_follows_a_member_that_moved_to_the_shared_gateway(tmp_path, monkeypatch):
+    """The real incident (2026-10-03): Hermes moved toolshed from its own port to /p/toolshed on the
+    default gateway. Same key, new address -> follow it; different key -> leave it alone."""
+    settings.db_path = str(tmp_path / "t.db")
+    _install_fake_discovery(monkeypatch, {
+        "default": {"port": 8642, "api_key": "default-key", "path": ""},
+        "toolshed": {"port": 8642, "api_key": "ts-key", "path": "/p/toolshed"},
+        "trading": {"port": 8642, "api_key": "NEW-key", "path": "/p/trading"},
+        "david": {"port": 8642, "api_key": "david-key", "path": "/p/david"},
+    })
+
+    async def go():
+        user = await _connected_user()
+        user = await auth_service.add_crew_member(user, "default", 8642, "default-key")
+        user = await auth_service.add_crew_member(user, "toolshed", 8643, "ts-key")
+        user = await auth_service.add_crew_member(user, "trading", 8644, "old-key")
+        return await auth_service.discover_crew(user)
+
+    updated = _run(go)
+    by_name = {c.name: c for c in updated.crew}
+    assert (by_name["toolshed"].port, by_name["toolshed"].path, by_name["toolshed"].api_key) == (8642, "/p/toolshed", "ts-key")
+    assert (by_name["trading"].port, by_name["trading"].path, by_name["trading"].api_key) == (8644, "", "old-key")  # key differs
+    assert (by_name["default"].port, by_name["default"].path) == (8642, "")  # unchanged
+    assert (by_name["david"].port, by_name["david"].path) == (8642, "/p/david")  # newly found, with its path
+
+
+def test_provision_crew_member_records_the_address_the_box_reports(tmp_path, monkeypatch):
+    settings.db_path = str(tmp_path / "t.db")
+    calls: list = []
+    _install_fake_provisioning(monkeypatch, port=8650, calls=calls, address=(8642, "/p/newone"))
+
+    async def go():
+        return await auth_service.provision_crew_member(await _connected_user(), "newone")
+
+    member = _run(go).crew[0]
+    assert calls[0][1] == 8650  # the candidate port offered for a gateway-per-profile host
+    assert (member.port, member.path) == (8642, "/p/newone")  # ...but the shared gateway's address was recorded

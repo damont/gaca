@@ -138,7 +138,13 @@ async def connect_agent(
 
 
 async def add_crew_member(
-    user: UserDoc, name: str, port: int, api_key: str, color: str | None = None
+    user: UserDoc,
+    name: str,
+    port: int,
+    api_key: str,
+    color: str | None = None,
+    *,
+    path: str = "",
 ) -> UserDoc:
     """Register a new named crew member.
 
@@ -151,7 +157,8 @@ async def add_crew_member(
         raise InvalidRequest(f"crew member {name!r} already exists")
 
     member = CrewMember(
-        name=name, port=port, api_key=api_key, color=color or _next_color(user)
+        name=name, port=port, api_key=api_key, path=path,
+        color=color or _next_color(user),
     )
     updated = user.model_copy(
         update={
@@ -195,14 +202,22 @@ async def provision_crew_member(
     if find_crew_member(user, name) is not None:
         raise InvalidRequest(f"crew member {name!r} already exists")
 
-    port = await ssh_provisioning.next_free_port(user.ssh)
+    # `candidate_port` is only used if this Hermes runs a gateway per profile; if it serves
+    # every profile from one gateway, create_profile reports that address instead.
+    candidate_port = await ssh_provisioning.next_free_port(user.ssh)
     api_key = secrets.token_hex(32)
-    await ssh_provisioning.create_profile(user.ssh, name, port, api_key)
-    return await add_crew_member(user, name, port, api_key, color)
+    port, path = await ssh_provisioning.create_profile(user.ssh, name, candidate_port, api_key)
+    return await add_crew_member(user, name, port, api_key, color, path=path)
 
 
 async def update_crew_member(
-    user: UserDoc, name: str, port: int, api_key: str, color: str | None = None
+    user: UserDoc,
+    name: str,
+    port: int,
+    api_key: str,
+    color: str | None = None,
+    *,
+    path: str | None = None,
 ) -> UserDoc:
     """Replace an existing crew member's port and key (and color, if given).
 
@@ -215,7 +230,11 @@ async def update_crew_member(
         raise NotFound("crew member", name)
 
     crew = [
-        CrewMember(name=name, port=port, api_key=api_key, color=color or c.color)
+        CrewMember(
+            name=name, port=port, api_key=api_key, color=color or c.color,
+            # Not mentioned = unchanged; this must never silently reset a member's address.
+            path=c.path if path is None else path,
+        )
         if c.name == name
         else c
         for c in user.crew
@@ -316,7 +335,7 @@ def backend_for_crew(user: UserDoc, crew_member: CrewMember) -> AgentBackend:
             "no agent connected yet — connect one first via "
             "POST /api/agent/connect"
         )
-    base_url = f"{user.agent_host}:{crew_member.port}"
+    base_url = f"{user.agent_host}:{crew_member.port}{crew_member.path}"
     return agent_runtime.backend_for(base_url, crew_member.api_key)
 
 
@@ -369,9 +388,9 @@ async def discover_crew(
 
     Read-only against the box (see ssh.discover_profiles); the only writes
     are to this account's own row. Never overwrites a crew member gaca-api
-    already knows by that name — a name collision keeps the existing entry
-    as-is rather than silently replacing its port/key with whatever the box
-    currently reports. Sets `agent_host` from the SSH host if unset (a
+    already knows by that name — a name collision keeps its key and color —
+    with one exception: if the box reports the same key at a new address, the
+    member has moved and its address is updated. Sets `agent_host` from the SSH host if unset (a
     discovery with nothing connected yet doubles as first-time connect),
     and `default_crew` to "default" if that name was found and nothing was
     already the default.
@@ -390,13 +409,24 @@ async def discover_crew(
 
     updated = user
     for name, info in found.items():
-        if find_crew_member(updated, name) is not None:
-            continue  # already known — never overwrite an existing entry
+        known = find_crew_member(updated, name)
+        if known is not None:
+            # Already known: never overwrite its key or color. But if the box reports the SAME
+            # key at a different address, it's the same crew member that Hermes has moved (e.g.
+            # from its own port to /p/<name> on the shared gateway) — follow it, or it would be
+            # unreachable until someone re-typed the address by hand.
+            address = (info["port"], info.get("path", ""))
+            if known.api_key == info["api_key"] and (known.port, known.path) != address:
+                moved = known.model_copy(update={"port": address[0], "path": address[1]})
+                updated = updated.model_copy(
+                    update={"crew": [moved if c.name == name else c for c in updated.crew]}
+                )
+            continue
         # _next_color reads `updated.crew`, so two newly-discovered profiles
         # in the same call still get distinct colors, not both the same one.
         member = CrewMember(
             name=name, port=info["port"], api_key=info["api_key"],
-            color=_next_color(updated),
+            path=info.get("path", ""), color=_next_color(updated),
         )
         updated = updated.model_copy(update={"crew": [*updated.crew, member]})
 

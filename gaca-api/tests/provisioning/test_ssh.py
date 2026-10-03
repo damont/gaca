@@ -177,10 +177,10 @@ def test_discover_profiles_finds_default_and_named_profiles(tmp_path):
             return await discover_profiles(conn)
 
     found = asyncio.run(go())
-    assert found == {
-        "default": {"port": 8642, "api_key": "default-key"},
-        "toolshed": {"port": 8643, "api_key": "toolshed-key"},
-        "trading": {"port": 8644, "api_key": "trading-key"},
+    assert found == {  # no gateway answers /p/<name>, so each profile keeps its own port
+        "default": {"port": 8642, "api_key": "default-key", "path": ""},
+        "toolshed": {"port": 8643, "api_key": "toolshed-key", "path": ""},
+        "trading": {"port": 8644, "api_key": "trading-key", "path": ""},
     }
 
 
@@ -324,9 +324,10 @@ def test_create_profile_runs_the_real_sequence_and_writes_the_env(tmp_path):
                 host="127.0.0.1", port=port, username="david",
                 private_key=client_key.export_private_key().decode(),
             )
-            await create_profile(conn, "toolshed", 8643, "the-generated-key")
+            return await create_profile(conn, "toolshed", 8643, "the-generated-key")
 
-    asyncio.run(go())
+    address = asyncio.run(go())
+    assert address == (8643, "")  # a gateway of its own, on the port asked for
 
     profile_dir = home / ".hermes" / "profiles" / "toolshed"
     assert (profile_dir / ".installed").is_file()  # gateway install really ran
@@ -382,3 +383,109 @@ def test_create_profile_raises_when_the_name_already_exists(tmp_path):
 
     with pytest.raises(SSHError, match="already exists"):
         asyncio.run(go())
+
+
+# ── Hermes' multiplexed layout: one gateway per host serves every profile at /p/<name> ──────────
+import http.server
+import threading
+
+
+@asynccontextmanager
+async def _fake_default_gateway(serving: set[str]):
+    """Stands in for Hermes' default gateway: 200 on /p/<name>/health for the profiles it
+    'serves', 404 otherwise. Returns its port."""
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            parts = self.path.strip("/").split("/")
+            ok = len(parts) == 3 and parts[0] == "p" and parts[2] == "health" and parts[1] in serving
+            self.send_response(200 if ok else 404)
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield server.server_address[1]
+    finally:
+        server.shutdown()
+
+
+def test_discover_profiles_follows_the_shared_gateway_for_profiles_it_serves(tmp_path):
+    home = tmp_path / "home"
+
+    async def go():
+        async with _fake_default_gateway({"toolshed", "trading"}) as gateway_port:
+            _write_env(home / ".hermes" / ".env", API_SERVER_ENABLED="true",
+                       API_SERVER_PORT=str(gateway_port), API_SERVER_KEY="default-key")
+            # Their own .env ports are stale leftovers from when each had a gateway of its own.
+            _write_env(home / ".hermes" / "profiles" / "toolshed" / ".env", API_SERVER_ENABLED="true",
+                       API_SERVER_PORT="8643", API_SERVER_KEY="toolshed-key")
+            _write_env(home / ".hermes" / "profiles" / "trading" / ".env", API_SERVER_ENABLED="true",
+                       API_SERVER_PORT="8644", API_SERVER_KEY="trading-key")
+            _write_env(home / ".hermes" / "profiles" / "legacy" / ".env", API_SERVER_ENABLED="true",
+                       API_SERVER_PORT="8650", API_SERVER_KEY="legacy-key")  # NOT served: keeps its port
+            async with _local_ssh_server(home_override=str(home)) as (port, client_key, _w):
+                conn = SSHConnection(host="127.0.0.1", port=port, username="david",
+                                     private_key=client_key.export_private_key().decode())
+                return gateway_port, await discover_profiles(conn)
+
+    gateway_port, found = asyncio.run(go())
+    assert found == {
+        "default": {"port": gateway_port, "api_key": "default-key", "path": ""},
+        "toolshed": {"port": gateway_port, "api_key": "toolshed-key", "path": "/p/toolshed"},
+        "trading": {"port": gateway_port, "api_key": "trading-key", "path": "/p/trading"},
+        "legacy": {"port": 8650, "api_key": "legacy-key", "path": ""},
+    }
+
+
+def test_create_profile_on_a_multiplexed_host_installs_no_gateway_and_returns_the_shared_address(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    _install_fake_hermes(home)
+
+    async def go():
+        async with _fake_default_gateway({"existing", "newone"}) as gateway_port:
+            _write_env(home / ".hermes" / ".env", API_SERVER_ENABLED="true",
+                       API_SERVER_PORT=str(gateway_port), API_SERVER_KEY="default-key")
+            (home / ".hermes" / "profiles" / "existing").mkdir(parents=True)  # served by the shared gateway
+            async with _local_ssh_server(home_override=str(home)) as (port, client_key, _w):
+                conn = SSHConnection(host="127.0.0.1", port=port, username="david",
+                                     private_key=client_key.export_private_key().decode())
+                return gateway_port, await create_profile(conn, "newone", 8650, "fresh-key")
+
+    gateway_port, address = asyncio.run(go())
+    assert address == (gateway_port, "/p/newone")
+    profile_dir = home / ".hermes" / "profiles" / "newone"
+    assert not (profile_dir / ".installed").exists()  # no per-profile gateway on this layout
+    env = (profile_dir / ".env").read_text().splitlines()
+    assert "API_SERVER_KEY=fresh-key" in env and f"API_SERVER_PORT={gateway_port}" in env
+
+
+def test_create_profile_first_profile_on_a_flagged_host_waits_for_the_shared_gateway(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    _install_fake_hermes(home)
+
+    async def go():
+        async with _fake_default_gateway({"first"}) as gateway_port:
+            _write_env(home / ".hermes" / ".env", API_SERVER_ENABLED="true",
+                       API_SERVER_PORT=str(gateway_port), API_SERVER_KEY="default-key")
+            (home / ".hermes" / "config.yaml").write_text("gateway:\n  multiplex_profiles: true\n")
+            async with _local_ssh_server(home_override=str(home)) as (port, client_key, _w):
+                conn = SSHConnection(host="127.0.0.1", port=port, username="david",
+                                     private_key=client_key.export_private_key().decode())
+                return gateway_port, await create_profile(conn, "first", 8650, "k")
+
+    gateway_port, address = asyncio.run(go())
+    assert address == (gateway_port, "/p/first")
+
+
+def test_create_profile_rejects_names_that_could_escape_the_profiles_directory():
+    conn = SSHConnection(host="127.0.0.1", username="u", private_key="k")
+    for bad in ("../x", "a/b", "default", "", "x y", "$(id)"):
+        with pytest.raises(SSHError):
+            asyncio.run(create_profile(conn, bad, 8650, "k"))
