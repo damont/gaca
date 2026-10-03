@@ -38,6 +38,7 @@ USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safa
 
 # School/team mail lands in Primary or Updates; skip the obviously-not-family tabs.
 BASE_QUERY = "in:inbox -category:promotions -category:social -in:spam -in:trash"
+CALENDAR_BASE = "https://calendar.rabidflamingos.com"
 BODY_LIMIT = 3500
 KEEP_DAYS = 30
 MAX_SUGGESTIONS = 10
@@ -99,6 +100,7 @@ def cmd_fetch(args) -> None:
         body = re.sub(r"\n{3,}", "\n\n", (full.get("body") or item.get("snippet") or "").strip())
         emails.append({
             "id": item["id"],
+            "thread_id": item.get("threadId", ""),
             "from": item.get("from", ""),
             "subject": item.get("subject", ""),
             "date": item.get("date", ""),
@@ -141,6 +143,38 @@ def when_text(s: dict) -> str:
     except (KeyError, ValueError):
         day = str(s.get("date", "?"))
     return f"{day}, {s['time']}" if s.get("time") else day
+
+
+def week_start(day: date) -> date:
+    """The Monday of `day`'s week — the calendar app's pages are keyed by it."""
+    return day - timedelta(days=day.weekday())
+
+
+def build_links(suggestions: list[dict]) -> list[dict]:
+    """GACA alert links for a batch: the calendar week of the earliest suggestion, then one per
+    distinct source email (opens that Gmail thread). Gmail's `u/0` is the first signed-in account
+    on the phone — the one this inbox belongs to. Thread ids are checked to be hex so nothing else
+    can end up inside the URL."""
+    links: list[dict] = []
+    if suggestions:
+        first = min(date.fromisoformat(s["date"]) for s in suggestions)
+        links.append({
+            "label": "Open family calendar",
+            "url": f"{CALENDAR_BASE}/#week-card-{week_start(first).isoformat()}",
+        })
+    seen: set[str] = set()
+    for s in suggestions:
+        thread = str(s.get("source_thread_id") or "").strip()
+        if not re.fullmatch(r"[0-9a-fA-F]{8,40}", thread) or thread in seen:
+            continue
+        seen.add(thread)
+        subject = " ".join(str(s.get("source_subject") or "").split()) or "email"
+        label = f"Email: {subject}"
+        links.append({
+            "label": label if len(label) <= 80 else label[:79].rstrip() + "…",
+            "url": f"https://mail.google.com/mail/u/0/#all/{thread}",
+        })
+    return links[:10]
 
 
 def line_for(s: dict) -> str:
@@ -213,6 +247,7 @@ def cmd_finish(args) -> None:
         "body": "\n".join(details),
         "data": {"date": today.isoformat(), "suggestions": [{k: v for k, v in s.items() if k != "_fp"} for s in fresh]},
         "dedupe_key": f"calendar:suggestions:{today.isoformat()}",
+        "links": build_links(fresh),
         # No approve button yet — David takes it to chat and asks Hermes to add them.
         "suggested_actions": [],
     }
