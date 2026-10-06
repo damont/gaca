@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from ..db import alerts as alerts_db
+from ..db import artifacts as artifacts_db
 from ..models.alert import AlertDoc
 from ..models.base import utcnow
 from ..models.user import UserDoc
@@ -70,6 +71,8 @@ async def create(user_id: str, payload: AlertCreate) -> tuple[AlertDoc, bool]:
     `payload.model_dump(exclude_unset=True)` here — but then the result depends
     on history, which makes a noisy poster much harder to debug.
     """
+    if payload.artifact_id and await artifacts_db.find(user_id, payload.artifact_id) is None:
+        raise NotFound("artifact", payload.artifact_id)
     if payload.dedupe_key:
         existing = await alerts_db.find_by_dedupe_key(user_id, payload.dedupe_key)
         if existing is not None:

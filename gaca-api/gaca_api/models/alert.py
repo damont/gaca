@@ -80,6 +80,9 @@ class AlertDoc(BaseModel):
     suggested_actions: list[SuggestedAction] = Field(default_factory=list)
     # Pages worth opening to act on this alert; the app shows them as tappable links.
     links: list[AlertLink] = Field(default_factory=list)
+    # An artifact (HTML page, see models/artifact.py) that goes with this alert; the app
+    # offers to open it.
+    artifact_id: str | None = None
 
     status: str = "new"
     status_changed_at: datetime = Field(default_factory=utcnow)

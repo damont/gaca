@@ -15,9 +15,10 @@ from .agent import runtime as agent_runtime
 from .bus import event_bus
 from .db import client
 from .provisioning.ssh import SSHError
-from .routers import agent, alerts, auth, briefings, crew, lists, push, sessions
+from .routers import agent, alerts, artifacts, auth, briefings, crew, lists, push, sessions
 from .services import push as push_service
 from .services.exceptions import (
+    Conflict,
     CrewNotConfigured,
     InvalidRequest,
     InvalidTransition,
@@ -85,6 +86,12 @@ async def handle_invalid_request(
     return JSONResponse(status_code=422, content={"detail": str(exc)})
 
 
+@app.exception_handler(Conflict)
+async def handle_conflict(request: Request, exc: Conflict) -> JSONResponse:
+    """Map a lost write race / duplicate create to HTTP 409, in one place."""
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
 @app.exception_handler(PayloadTooLarge)
 async def handle_payload_too_large(request: Request, exc: PayloadTooLarge) -> JSONResponse:
     """Map an oversized upload to HTTP 413, in one place."""
@@ -139,6 +146,7 @@ app.include_router(push.router, prefix="/api")
 app.include_router(sessions.router, prefix="/api")
 app.include_router(briefings.router, prefix="/api")
 app.include_router(lists.router, prefix="/api")
+app.include_router(artifacts.router, prefix="/api")
 
 
 def run() -> None:
