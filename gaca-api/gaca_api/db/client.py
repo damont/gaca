@@ -127,6 +127,55 @@ CREATE TABLE IF NOT EXISTS list_items (
 );
 CREATE INDEX IF NOT EXISTS ix_list_items_list ON list_items (list_id, done, created_at);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_list_items_key ON list_items (list_id, item_key);
+-- Artifacts: HTML pages an agent writes, plus the data they keep. The page (`html`) is a
+-- stateless view; `state` is one JSON document (compare-and-set via `state_version`) and
+-- artifact_docs holds keyed collections of small documents. `rev` increases on ANY data
+-- write so a page can poll cheaply ("anything new since rev N?").
+CREATE TABLE IF NOT EXISTS artifacts (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL,
+    archived      INTEGER NOT NULL DEFAULT 0,
+    version       INTEGER NOT NULL DEFAULT 1,
+    state         TEXT NOT NULL DEFAULT '{}',
+    state_version INTEGER NOT NULL DEFAULT 0,
+    rev           INTEGER NOT NULL DEFAULT 0,
+    updated_at    TEXT NOT NULL,
+    doc           TEXT NOT NULL,
+    html          TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_artifacts_user ON artifacts (user_id, archived, updated_at);
+CREATE TABLE IF NOT EXISTS artifact_versions (
+    artifact_id TEXT NOT NULL,
+    version     INTEGER NOT NULL,
+    created_at  TEXT NOT NULL,
+    note        TEXT,
+    html        TEXT NOT NULL,
+    PRIMARY KEY (artifact_id, version)
+);
+CREATE TABLE IF NOT EXISTS artifact_docs (
+    artifact_id TEXT NOT NULL,
+    collection  TEXT NOT NULL,
+    doc_id      TEXT NOT NULL,
+    version     INTEGER NOT NULL DEFAULT 1,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    data        TEXT NOT NULL,
+    PRIMARY KEY (artifact_id, collection, doc_id)
+);
+CREATE INDEX IF NOT EXISTS ix_artifact_docs_order
+    ON artifact_docs (artifact_id, collection, created_at, doc_id);
+-- What the page tells the agent happened ("checked out", "picked Friday"): a small
+-- outbox the agent reads, so interactions flow back without a chat message.
+CREATE TABLE IF NOT EXISTS artifact_events (
+    seq         INTEGER PRIMARY KEY AUTOINCREMENT,
+    artifact_id TEXT NOT NULL,
+    user_id     TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    handled     INTEGER NOT NULL DEFAULT 0,
+    payload     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_artifact_events ON artifact_events (artifact_id, seq);
 CREATE TABLE IF NOT EXISTS briefings (
     user_id       TEXT NOT NULL,
     briefing_date TEXT NOT NULL,

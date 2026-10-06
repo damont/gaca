@@ -74,3 +74,8 @@ class CrewNotConfigured(Exception):
 
 class PayloadTooLarge(Exception):
     """An upload is bigger than the API accepts. Mapped to HTTP 413."""
+
+
+class Conflict(Exception):
+    """A write lost a race: the caller's `expected_version` is no longer current, or
+    the thing it tried to create already exists. Mapped to HTTP 409 — refetch, then retry."""

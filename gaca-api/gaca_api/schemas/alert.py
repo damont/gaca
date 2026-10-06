@@ -59,6 +59,9 @@ class AlertCreate(BaseModel):
     # Pages that go with this alert (the calendar week, the source email...). Up to 10;
     # an unlabeled one is shown under its site's name.
     links: list[AlertLinkIn] = Field(default_factory=list, max_length=MAX_LINKS)
+    # An artifact you published (POST /api/artifacts) to show with this alert. `404` if it
+    # isn't one of the caller's.
+    artifact_id: str | None = Field(default=None, max_length=64)
     # Advisory label for who posted this. Not authenticated — ownership comes
     # from the token, this is only for telling posters apart in the UI.
     source: str = "unknown"
@@ -99,6 +102,7 @@ class AlertOut(BaseModel):
     suggested_actions: list[SuggestedAction] = []
     # Every link has a label here, even if the poster didn't give one.
     links: list[AlertLink] = []
+    artifact_id: str | None = None
 
     status: str
     # What the client should display and filter on. Differs from `status` when a
