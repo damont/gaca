@@ -486,6 +486,16 @@ Authenticates cleanly against the live <code>goodandcheapagent.com</code> deploy
 <div class="callout"><span class="label b">A loose end from <a href="#step5">Step 5</a>/<a href="#step9">Step 9</a>, now resolved by observation</span>
 Both earlier steps flagged <code>skills</code> as still sitting in <code>agent.disabled_toolsets</code>, and the box's <strong>"Verified on the box"</strong> section below re-confirms it's <em>still</em> there today, alongside <code>cronjob</code> and <code>delegation</code>. And yet <code>david-alerts</code> plainly loaded and worked — proof, not just a working theory, that this toolset flag governs a different capability (most likely a dynamic runtime skill-discovery tool) and has no bearing on whether a hand-authored <code>SKILL.md</code> with a matching <code>trigger</code>/<code>description</code> gets read and followed. Worth a real answer before <code>gaca-agent</code>'s adapter has to reason about it, but empirically it is not blocking anything here.</div>
 
+<h2 id="step14">Step 14 — Approvals: let unattended runs actually run</h2>
+<p>A crew member that posts alerts, writes artifacts, or runs a cron job has nobody at the keyboard to click "approve". With Hermes' default approval prompts, those runs stall waiting for a human. Every profile therefore needs the same two settings:</p>
+<pre><code>hermes --profile &lt;name&gt; config set approvals.mode off
+hermes --profile &lt;name&gt; config set approvals.cron_mode approve
+hermes --profile &lt;name&gt; cron doctor</code></pre>
+<p>Both are choices, not secrets, so they live in each profile's <code>config.yaml</code>, not <code>.env</code>. <strong>Do it for every profile</strong> (<code>default</code>, <code>david</code>, <code>toolshed</code>, <code>trading</code> on the live box), and re-check the values afterwards. <code>cron doctor</code> should report no issues.</p>
+
+<div class="callout warn"><span class="label">Broader than it sounds</span>
+<code>approvals.mode: off</code> disables Hermes' approval checks for commands in that profile, <strong>not just cron</strong>. Hermes' hardline blocklist still applies. Treat a new profile as unattended-safe only after you have chosen this deliberately, and make provisioning (<a href="hermes/0003-ssh-provisioning.md">ADR 0003</a>) apply it to every profile it creates, since a hand-made profile starts with the defaults.</div>
+
 <h2>Where each thing landed on disk</h2>
 <p>The reason to do this by hand is to end up with this table — the map the adapter needs:</p>
 <div class="table-scroll">
