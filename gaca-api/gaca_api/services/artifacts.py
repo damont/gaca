@@ -49,7 +49,8 @@ def _out(row: db.ArtifactRow) -> s.ArtifactOut:
     d = row.doc
     return s.ArtifactOut(
         id=d.id, title=d.title, description=d.description, data_notes=d.data_notes, crew=d.crew,
-        session_id=d.session_id, alert_id=d.alert_id, archived=row.archived, version=row.version,
+        session_id=d.session_id, alert_id=d.alert_id, archived=row.archived, position=row.position,
+        version=row.version,
         rev=row.rev, state_version=row.state_version, created_at=d.created_at,
         updated_at=row.updated_at, last_opened_at=d.last_opened_at,
     )
@@ -109,6 +110,21 @@ async def list_for_user(
         needle = q.lower()
         rows = [r for r in rows if needle in r.doc.title.lower() or needle in (r.doc.description or "").lower()]
     return s.ArtifactList(artifacts=[_out(r) for r in rows[:limit]])
+
+
+async def reorder(user_id: str, ids: list[str]) -> s.ArtifactList:
+    """Save the owner's drag-and-drop order. `ids` go first, in the order given; everything else
+    (archived pages included) keeps its current relative order after them."""
+    async with _write_lock:
+        current = await db.find_many(user_id, True, None, None, 100000)
+        known = {r.doc.id for r in current}
+        wanted = list(dict.fromkeys(ids))
+        for artifact_id in wanted:
+            if artifact_id not in known:
+                raise NotFound("artifact", artifact_id)
+        rest = [r.doc.id for r in current if r.doc.id not in set(wanted)]
+        await db.set_positions(user_id, wanted + rest)
+    return await list_for_user(user_id)
 
 
 async def get(user_id: str, artifact_id: str) -> s.ArtifactOut:

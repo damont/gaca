@@ -96,6 +96,12 @@ class ArtifactPatch(BaseModel):
         return v
 
 
+class ArtifactOrder(BaseModel):
+    """Put these artifacts first, in this order. Any you leave out keep their current order
+    after them, so a partial list (e.g. just the visible ones) is fine."""
+    ids: list[str] = Field(max_length=500)
+
+
 class ArtifactOut(BaseModel):
     id: str
     title: str
@@ -105,6 +111,8 @@ class ArtifactOut(BaseModel):
     session_id: str | None = None
     alert_id: str | None = None
     archived: bool = False
+    # Where the owner dragged it in the Artifacts tab (0 = first); null until they place it.
+    position: int | None = None
     version: int
     # Bumped by any data write; compare with the `rev` you last saw to learn if there's news.
     rev: int

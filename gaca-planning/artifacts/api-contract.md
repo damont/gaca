@@ -10,7 +10,8 @@ gives it `window.app` (see `hermes-skill/gaca-artifacts/references/sdk.md`). Aut
 | | |
 |---|---|
 | `POST /api/artifacts` | `{title, html, description?, data_notes?, crew?, session_id?, alert_id?, state?, collections?}` → `ArtifactOut` (201). `collections` seeds `{name: {docId: {...}}}`. `html` ≤ 1 MB. |
-| `GET /api/artifacts` | `?include_archived&session_id&alert_id&q&limit` → `{artifacts: [...]}`, most recently changed first |
+| `GET /api/artifacts` | `?include_archived&session_id&alert_id&q&limit` → `{artifacts: [...]}` in the owner's own order (`position`); pages never placed yet come first, newest first |
+| `PUT /api/artifacts/order` | `{ids: [...]}` → the owner's drag-and-drop order: listed ids first, in that order, the rest keep their relative order after them (archived pages included). 404 on an unknown / not-yours id. Returns the non-archived list |
 | `GET /api/artifacts/{id}` | metadata incl. `version`, `rev`, `state_version`, `link` (`gaca://artifact/<id>`) |
 | `GET /api/artifacts/{id}/html` | the page, `text/html` (`?version=N` for an old one) |
 | `PATCH /api/artifacts/{id}` | `{title?, description?, data_notes?, archived?, html?, note?}`; new `html` makes a new version (last 20 kept); data untouched |

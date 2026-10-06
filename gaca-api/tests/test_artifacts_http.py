@@ -196,3 +196,36 @@ def test_users_are_isolated(http):
     assert http.post("/api/alerts", json={"kind": "x.y", "title": "t", "artifact_id": a["id"]}).status_code == 404
     _current["id"] = "u1"
     assert http.get(base).status_code == 200
+
+
+def test_reorder_artifacts(http):
+    a, b, c = (make(http, title=t)["id"] for t in ("A", "B", "C"))
+    # Never placed: newest first.
+    assert [x["id"] for x in http.get("/api/artifacts").json()["artifacts"]] == [c, b, a]
+    r = http.put("/api/artifacts/order", json={"ids": [a, c, b]})
+    assert r.status_code == 200
+    assert [x["id"] for x in r.json()["artifacts"]] == [a, c, b]
+    assert [x["position"] for x in r.json()["artifacts"]] == [0, 1, 2]
+    # Editing a page doesn't move it; a brand-new page appears on top until placed.
+    http.patch(f"/api/artifacts/{b}", json={"description": "touched"})
+    d = make(http, title="D")["id"]
+    assert [x["id"] for x in http.get("/api/artifacts").json()["artifacts"]] == [d, a, c, b]
+    # A partial list puts those first and keeps the rest in order.
+    r = http.put("/api/artifacts/order", json={"ids": [b]})
+    assert [x["id"] for x in r.json()["artifacts"]] == [b, d, a, c]
+
+
+def test_reorder_rejects_unknown_and_other_users_ids(http):
+    a = make(http)["id"]
+    assert http.put("/api/artifacts/order", json={"ids": [a, "nope"]}).status_code == 404
+    _current["id"] = "u2"
+    assert http.put("/api/artifacts/order", json={"ids": [a]}).status_code == 404
+    assert http.get("/api/artifacts").json()["artifacts"] == []
+
+
+def test_reorder_keeps_archived_pages_out_of_the_list_but_in_the_order(http):
+    a, b = make(http, title="A")["id"], make(http, title="B")["id"]
+    http.patch(f"/api/artifacts/{a}", json={"archived": True})
+    r = http.put("/api/artifacts/order", json={"ids": [b]})
+    assert [x["id"] for x in r.json()["artifacts"]] == [b]
+    assert http.get(f"/api/artifacts/{a}").json()["position"] == 1

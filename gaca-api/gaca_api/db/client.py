@@ -207,6 +207,8 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # a NOT NULL default from existing rows; _backfill_session_user_ids does
     # that from each row's own `doc` right after.
     ("sessions", "user_id", "TEXT"),
+    # The owner's own drag-and-drop order of their artifacts; NULL = never placed (sorts first).
+    ("artifacts", "position", "INTEGER"),
 )
 
 # Indexes that depend on a column from _ADDED_COLUMNS, so they can only be
