@@ -33,8 +33,16 @@ async def list_artifacts(
     limit: int = Query(default=100, ge=1, le=500),
     user: UserDoc = Depends(get_current_user),
 ) -> s.ArtifactList:
-    """Your artifacts, most recently changed first."""
+    """Your artifacts in your own order (see PUT /order). Pages you haven't placed yet come
+    first, most recently changed first."""
     return await svc.list_for_user(user.id, include_archived, session_id, alert_id, q, limit)
+
+
+@router.put("/order")
+async def reorder_artifacts(body: s.ArtifactOrder, user: UserDoc = Depends(get_current_user)) -> s.ArtifactList:
+    """Save the order the owner dragged their artifacts into. Listed ids come first, in the
+    order given; the rest follow in their existing order. Returns the (non-archived) list."""
+    return await svc.reorder(user.id, body.ids)
 
 
 @router.get("/{artifact_id}")

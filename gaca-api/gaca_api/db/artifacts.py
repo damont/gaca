@@ -18,6 +18,7 @@ class ArtifactRow:
     state_version: int
     rev: int
     updated_at: datetime
+    position: int | None = None  # the owner's manual order; None = never placed
     html: str | None = None  # only when asked for (it's the big column)
 
 
@@ -40,6 +41,7 @@ def _row(r, with_html: bool = False) -> ArtifactRow:
         state_version=r["state_version"],
         rev=r["rev"],
         updated_at=datetime.fromisoformat(r["updated_at"]),
+        position=r["position"],
         html=r["html"] if with_html else None,
     )
 
@@ -55,7 +57,7 @@ def _doc_row(r) -> DocRow:
     )
 
 
-_META = "id, user_id, archived, version, state, state_version, rev, updated_at, doc"
+_META = "id, user_id, archived, version, state, state_version, rev, updated_at, position, doc"
 
 
 # ── artifacts ────────────────────────────────────────────────────────────────
@@ -91,7 +93,9 @@ async def find_many(
         sql += " AND archived = 0"
     # session / alert live inside `doc`; one user's artifact count is small enough that
     # filtering after the (indexed) per-user read beats another column.
-    sql += " ORDER BY updated_at DESC, id"
+    # The owner's manual order first; anything never placed (a brand-new page) sorts above it,
+    # newest first, until they drag it somewhere.
+    sql += " ORDER BY (position IS NOT NULL), position, updated_at DESC, id"
     async with connection().execute(sql, params) as cursor:
         rows = [_row(r) for r in await cursor.fetchall()]
     if session_id:
@@ -99,6 +103,16 @@ async def find_many(
     if alert_id:
         rows = [r for r in rows if r.doc.alert_id == alert_id]
     return rows[:limit]
+
+
+async def set_positions(user_id: str, ordered_ids: list[str]) -> None:
+    """Number the given artifacts 0..n-1 in that order (rows not listed are left alone)."""
+    conn = connection()
+    await conn.executemany(
+        "UPDATE artifacts SET position = ? WHERE id = ? AND user_id = ?",
+        [(i, artifact_id, user_id) for i, artifact_id in enumerate(ordered_ids)],
+    )
+    await conn.commit()
 
 
 async def update_meta(
