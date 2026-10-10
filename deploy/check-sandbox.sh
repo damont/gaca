@@ -7,7 +7,10 @@ set -euo pipefail
 [ "$(id -u)" = 0 ] || { echo "run with sudo" >&2; exit 2; }
 U="${1:-${SUDO_USER:-}}"; [ -n "$U" ] || { echo "usage: sudo $0 <user>" >&2; exit 2; }
 H="$(getent passwd "$U" | cut -d: -f6)"
-PROBE="$(mktemp /root/gaca-probe.XXXXXX.py)"; trap 'rm -f "$PROBE"' EXIT
+# Under /run, not /root or /tmp: the probe runs as the service user (which can't read /root),
+# and the sandbox's PrivateTmp would hide /tmp.
+DIR="$(mktemp -d /run/gaca-check.XXXXXX)"; chmod 755 "$DIR"; trap 'rm -rf "$DIR"' EXIT
+PROBE="$DIR/probe.py"
 cat > "$PROBE" <<PY
 import os, pathlib, sys
 h = pathlib.Path("$H")
@@ -38,9 +41,10 @@ for what, actual, expected in checks:
     print(("ok   " if ok else "FAIL ") + what + ("  (allowed)" if actual else "  (blocked)"))
 sys.exit(1 if bad else 0)
 PY
-exec systemd-run --wait --pipe --quiet --uid="$U" \
+chmod 644 "$PROBE"
+systemd-run --wait --pipe --quiet --uid="$U" \
   -p NoNewPrivileges=yes -p PrivateTmp=yes -p ProtectSystem=strict -p ProtectHome=tmpfs \
   -p BindReadOnlyPaths="$H/gaca $H/.hermes $H/.local" -p BindPaths="$H/gaca-data $H/gaca-run $H/.hermes/profiles" \
   -p ProtectKernelTunables=yes -p ProtectKernelModules=yes -p ProtectControlGroups=yes \
   -p RestrictSUIDSGID=yes -p LockPersonality=yes -p CapabilityBoundingSet= \
-  -p BindReadOnlyPaths="$PROBE" /usr/bin/python3 "$PROBE"
+  /usr/bin/python3 "$PROBE"
