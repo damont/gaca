@@ -7,7 +7,10 @@ local mode, and it is deliberately small:
           .env (only the API_SERVER_* lines are parsed, nothing else leaves
           this module), SOUL.md, profile.yaml, config.yaml (one flag), and
           hermes-agent/hermes_cli/default_soul.py (parsed, never executed).
-  WRITE   one file: profiles/<name>/.env of a profile it just created, atomically.
+  WRITE   only profiles/<name>/.env, atomically (never a symlink target, never `default`):
+            * on create: the profile's API_SERVER_* lines, plus GACA_BASE_URL / GACA_API_TOKEN so
+              its skills can reach GACA with no manual step;
+            * afterwards: ONLY those two GACA_* keys, into a profile that has no GACA token yet.
   RUN     `hermes --version` and `hermes profile create <name> --no-alias`.
           Nothing else — `_hermes` refuses any other argv before spawning.
 
@@ -45,12 +48,16 @@ from pathlib import Path
 import httpx
 
 from .base import ProvisioningError
-from .envfile import upsert_env
+from .envfile import has_gaca_token, upsert_env
 
 
 class LocalError(ProvisioningError):
     """A local Hermes operation failed or was refused."""
 
+
+# The only keys local mode may write into a profile besides its API_SERVER_* settings: how that
+# profile's skills reach GACA. Nothing else about a profile's .env is ever touched.
+GACA_ENV_KEYS = ("GACA_BASE_URL", "GACA_API_TOKEN")
 
 PROFILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 _API_KEY = re.compile(r"[A-Za-z0-9_-]{16,256}")
@@ -196,6 +203,8 @@ def _api_server_settings(env_text: str | None) -> dict | None:
 
 class LocalHermes:
     default_agent_host = "http://127.0.0.1"
+    # Local mode can put a GACA token into a profile's .env (create_profile / write_gaca_env).
+    can_wire_gaca = True
 
     def __init__(self, hermes_home: str | os.PathLike = "~/.hermes", hermes_bin: str = "hermes"):
         self.home = Path(hermes_home).expanduser()
@@ -356,7 +365,9 @@ class LocalHermes:
 
     # -- creating a profile ---------------------------------------------
 
-    def _write_profile_env(self, directory: Path, port: int, api_key: str) -> None:
+    def _write_profile_env(
+        self, directory: Path, port: int, api_key: str, extra_env: dict[str, str] | None = None
+    ) -> None:
         upsert_env(
             directory / ".env",
             {
@@ -364,8 +375,46 @@ class LocalHermes:
                 "API_SERVER_HOST": "0.0.0.0",
                 "API_SERVER_PORT": str(port),
                 "API_SERVER_KEY": api_key,
+                **(extra_env or {}),
             },
         )
+
+    @staticmethod
+    def _check_gaca_env(values: dict[str, str]) -> None:
+        if not values or not set(values) <= set(GACA_ENV_KEYS):
+            raise LocalError(f"only {', '.join(GACA_ENV_KEYS)} may be written into a profile")
+
+    def _missing_gaca_token(self) -> list[str]:
+        profiles = self._root / "profiles"
+        if profiles.is_symlink() or not profiles.is_dir():
+            return []
+        return [
+            entry.name
+            for entry in sorted(profiles.iterdir())
+            if PROFILE_NAME.fullmatch(entry.name)
+            and not entry.is_symlink()
+            and entry.is_dir()
+            and not has_gaca_token(entry / ".env")
+        ]
+
+    async def profiles_missing_gaca_token(self) -> list[str]:
+        """Named profiles (never `default`, whose .env is outside what gaca-api may write) that
+        do not have a GACA API token yet."""
+        return await asyncio.to_thread(self._missing_gaca_token)
+
+    async def write_gaca_env(self, name: str, values: dict[str, str]) -> None:
+        """Put GACA_BASE_URL / GACA_API_TOKEN into an existing profile's .env — those two keys
+        only, and only for a real (non-symlinked) named profile."""
+        if name == "default" or not (isinstance(name, str) and PROFILE_NAME.fullmatch(name)):
+            raise LocalError(f"not a valid profile name: {name!r}")
+        self._check_gaca_env(values)
+        directory = self._profile_dir(name)
+        if directory is None:
+            raise LocalError(f"no profile called {name!r}")
+        try:
+            await asyncio.to_thread(upsert_env, directory / ".env", values)
+        except ValueError as error:
+            raise LocalError(str(error)) from error
 
     async def _expects_multiplex(self) -> bool:
         config = _read_regular_file(self._root / "config.yaml", _SOURCE_LIMIT)
@@ -378,21 +427,29 @@ class LocalHermes:
         match = re.search(r"v?0\.(\d+)\.", out) if code == 0 else None
         return bool(match and int(match.group(1)) >= 21)
 
-    async def create_profile(self, name: str, port: int, api_key: str) -> tuple[int, str]:
+    async def create_profile(
+        self, name: str, port: int, api_key: str, extra_env: dict[str, str] | None = None
+    ) -> tuple[int, str]:
         """Create a new Hermes profile and make it reachable at the default gateway's
         `/p/<name>`, returning `(port, path)`. `port` is only meaningful for a Hermes
-        that runs a gateway per profile, which local mode does not support."""
+        that runs a gateway per profile, which local mode does not support. `extra_env` (only
+        GACA_BASE_URL / GACA_API_TOKEN) is written in the same atomic write as the profile's
+        own settings, so its skills can reach GACA from the first moment."""
         if name == "default" or not (isinstance(name, str) and PROFILE_NAME.fullmatch(name)):
             raise LocalError(f"not a valid new profile name: {name!r}")
         if not (isinstance(api_key, str) and _API_KEY.fullmatch(api_key)):
             raise LocalError("not a valid API key")
+        if extra_env is not None:
+            self._check_gaca_env(extra_env)
         try:
             async with asyncio.timeout(150):
-                return await self._create_profile(name, api_key)
+                return await self._create_profile(name, api_key, extra_env)
         except TimeoutError:
             raise LocalError(f"provisioning {name!r} failed at serve: timed out") from None
 
-    async def _create_profile(self, name: str, api_key: str) -> tuple[int, str]:
+    async def _create_profile(
+        self, name: str, api_key: str, extra_env: dict[str, str] | None = None
+    ) -> tuple[int, str]:
         default_port = await asyncio.to_thread(self._read_default_gateway_port)
         code, _, err = await self._hermes("profile", "create", name, "--no-alias", timeout=120)
         if code != 0:
@@ -400,7 +457,7 @@ class LocalHermes:
         directory = self._profile_dir(name)
         if directory is None:
             raise LocalError(f"provisioning {name!r} failed at create: profile directory not found")
-        await asyncio.to_thread(self._write_profile_env, directory, default_port, api_key)
+        await asyncio.to_thread(self._write_profile_env, directory, default_port, api_key, extra_env)
 
         # The default gateway rescans profiles/ about every 30s; only a Hermes that does that
         # (>= 0.21, or multiplex_profiles on) can serve the new profile.

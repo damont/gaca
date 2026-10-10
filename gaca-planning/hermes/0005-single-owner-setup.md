@@ -58,6 +58,13 @@ Hermes skills authenticate with an **API token** (`gaca_pat_…`), not a sign-in
   followed, other lines untouched), and revokes the profile's previous token. Write first, revoke
   after; a failed write revokes the new token rather than orphaning it.
 
+**No per-profile step.** A crew member created in the app gets its scoped token in the same write as
+its other settings; a profile made by hand with `hermes profile create` gets one the next time the app
+discovers it (best-effort: wiring never fails discovery, and a token whose write failed is revoked).
+`gaca-api hermes connect` is for first-time setup/migration and the `default` profile (whose `.env`
+the sandboxed service may not write); it is safe to re-run (only wires profiles that lack a token;
+`--rotate` replaces them).
+
 Also fixed here: the Swagger UI was mounted at `/api/agent`, shadowing the real `GET /api/agent`
 status route (the app got an unauthenticated HTML page instead of JSON). Docs are now at `/api/docs`.
 

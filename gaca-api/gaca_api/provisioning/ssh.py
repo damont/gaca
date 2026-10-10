@@ -367,6 +367,8 @@ class SshProvisioner:
     """The module-level functions above, bound to one stored connection, so callers can
     treat SSH and local access the same way (see base.Provisioner)."""
 
+    can_wire_gaca = False
+
     def __init__(self, conn: SSHConnection):
         self.conn = conn
         self.default_agent_host = f"http://{conn.host}"
@@ -380,5 +382,13 @@ class SshProvisioner:
     async def next_free_port(self) -> int:
         return await next_free_port(self.conn)
 
-    async def create_profile(self, name: str, port: int, api_key: str) -> tuple[int, str]:
-        return await create_profile(self.conn, name, port, api_key)
+    async def create_profile(
+        self, name: str, port: int, api_key: str, extra_env: dict[str, str] | None = None
+    ) -> tuple[int, str]:
+        return await create_profile(self.conn, name, port, api_key)  # extra_env: not supported over SSH
+
+    async def profiles_missing_gaca_token(self) -> list[str]:
+        return []
+
+    async def write_gaca_env(self, name: str, values: dict[str, str]) -> None:
+        raise ProvisioningError("wiring GACA tokens is only supported in local mode")

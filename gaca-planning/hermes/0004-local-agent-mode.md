@@ -9,7 +9,7 @@ GACA and Hermes live on one machine. `GACA_AGENT_ACCESS=local` replaces the per-
 | Does | Limit |
 |------|-------|
 | Read `.env` (API_SERVER_* lines only), `SOUL.md`, `profile.yaml`, `config.yaml` (one flag), `default_soul.py` | fixed filenames, size-capped, regular files only, symlinks refused, profile names strictly patterned |
-| Write one file | `profiles/<name>/.env` of a profile it just created; atomic, 0600 |
+| Write `.env` files | Only `profiles/<name>/.env` (never `default`, never a symlink). On create: the profile's API_SERVER_* lines plus `GACA_BASE_URL`/`GACA_API_TOKEN`. Later: **only** those two GACA keys, into a profile that has no GACA token yet. Atomic, 0600 |
 | Run commands | `hermes --version`, `hermes profile create <name> --no-alias`; allowlist checked before spawn, exec with argv (no shell), scrubbed env, killed on timeout |
 
 The HTTP API is unchanged: discovery, creation and the purpose read are the same endpoints. Only

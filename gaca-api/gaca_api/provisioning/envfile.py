@@ -31,6 +31,14 @@ def read_text(path: Path) -> str:
         os.close(fd)
 
 
+_PAT_LINE = re.compile(r"^GACA_API_TOKEN=gaca_pat_", re.M)
+
+
+def has_gaca_token(path: Path) -> bool:
+    """True if the file already holds a GACA API token (the old agent JWTs don't count)."""
+    return _PAT_LINE.search(read_text(path)) is not None
+
+
 def upsert_env(path: Path, values: dict[str, str]) -> None:
     for key, value in values.items():
         if not _KEY.fullmatch(key) or not _VALUE.fullmatch(value):

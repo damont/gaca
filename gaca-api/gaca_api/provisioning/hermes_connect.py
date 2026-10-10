@@ -9,10 +9,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..config import settings
+from ..models.api_token import ApiTokenDoc
 from ..models.user import UserDoc
 from ..services import tokens as token_service
 from ..utils import tokens as token_utils
-from .envfile import upsert_env
+from .envfile import has_gaca_token, upsert_env
 from .local import PROFILE_NAME
 
 
@@ -21,7 +23,17 @@ class Connected:
     profile: str
     env_path: Path
     token_name: str
-    token_id: str
+    token_id: str | None  # None: already wired, left alone
+
+
+def gaca_base_url() -> str:
+    return f"http://127.0.0.1:{settings.api_port}"
+
+
+async def mint_profile_env(owner: UserDoc, profile: str) -> tuple[ApiTokenDoc, dict[str, str]]:
+    """A fresh scoped token for `profile` and the two env lines that hand it to that profile's skills."""
+    doc, secret = await token_service.create(owner, f"hermes-{profile}", list(token_utils.SCOPES))
+    return doc, {"GACA_BASE_URL": gaca_base_url(), "GACA_API_TOKEN": secret}
 
 
 def profile_env_paths(home: Path) -> dict[str, Path]:
@@ -38,14 +50,25 @@ def profile_env_paths(home: Path) -> dict[str, Path]:
 
 
 async def connect_profiles(
-    home: Path, base_url: str, owner: UserDoc, scopes: list[str] | None = None
+    home: Path,
+    base_url: str,
+    owner: UserDoc,
+    scopes: list[str] | None = None,
+    *,
+    rotate: bool = False,
 ) -> list[Connected]:
-    """Mint a token for each profile (named `hermes-<profile>`, revoking its predecessor) and
-    write GACA_BASE_URL + GACA_API_TOKEN into the profile's .env. Re-running rotates the tokens."""
+    """Give each Hermes profile a scoped token (named `hermes-<profile>`) in its own .env.
+
+    Safe to re-run: a profile that already holds a GACA API token is left alone unless `rotate`
+    (old agent JWTs don't count, so they get replaced). With `rotate`, the profile's previous
+    token is revoked after the new one is written."""
     scopes = scopes or list(token_utils.SCOPES)
     results = []
     for profile, env_path in profile_env_paths(home).items():
         name = f"hermes-{profile}"
+        if has_gaca_token(env_path) and not rotate:
+            results.append(Connected(profile, env_path, name, None))
+            continue
         # Write the new token before revoking the old one: if the write fails, the old one still works.
         doc, secret = await token_service.create(owner, name, scopes)
         try:
