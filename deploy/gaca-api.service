@@ -24,6 +24,7 @@ Wants=network-online.target
 User=@USER@
 WorkingDirectory=@HOME@/gaca/gaca-api
 EnvironmentFile=@HOME@/gaca/.env
+Environment=GACA_AGENT_ENGINE=hermes
 Environment=GACA_AGENT_ACCESS=local
 Environment=GACA_HERMES_HOME=@HOME@/.hermes
 Environment=GACA_HERMES_BIN=@HOME@/.local/bin/hermes

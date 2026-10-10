@@ -5,7 +5,7 @@ health probe, and the session router.
 """
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,9 +30,18 @@ from .services.exceptions import (
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await client.connect()  # startup: open SQLite + ensure the schema
-    await event_bus.connect()  # bus for read_run -> open SSE streams
-    agent_runtime.connect()  # resolve the configured engine module
-    push_service.connect()  # Firebase Admin SDK, if GACA_FCM_CREDENTIALS_PATH is set
+    try:
+        await event_bus.connect()  # bus for read_run -> open SSE streams
+        agent_runtime.connect()  # resolve the configured engine module
+        push_service.connect()  # Firebase Admin SDK, if GACA_FCM_CREDENTIALS_PATH is set
+    except BaseException:
+        # A failed startup must not leave the SQLite worker thread running: it is non-daemon,
+        # so the process would hang instead of exiting and a supervisor would never restart it.
+        with suppress(Exception):
+            await event_bus.aclose()
+        with suppress(Exception):
+            await client.close()
+        raise
     yield
     push_service.close()  # shutdown, reverse order
     await agent_runtime.close()
