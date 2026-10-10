@@ -15,7 +15,7 @@ from .agent import runtime as agent_runtime
 from .bus import event_bus
 from .db import client
 from .provisioning.base import ProvisioningError
-from .routers import agent, alerts, artifacts, auth, briefings, crew, lists, push, sessions
+from .routers import agent, alerts, artifacts, auth, briefings, crew, lists, push, sessions, setup
 from .services import push as push_service
 from .services.exceptions import (
     Conflict,
@@ -147,6 +147,7 @@ async def get_schema():
 
 # Routers carry their resource prefix ("/auth", "/sessions"); the "/api" mount
 # point is applied here, matching how calendarapp and toolshed mount theirs.
+app.include_router(setup.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
 app.include_router(agent.router, prefix="/api")
 app.include_router(crew.router, prefix="/api")

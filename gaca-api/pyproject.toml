@@ -22,11 +22,12 @@ dependencies = [
     "asyncssh>=2.24.0",
 ]
 
-# Console entry point. `gaca-api` on PATH starts the server via main:run().
+# Console entry point. `gaca-api` on PATH starts the server (via cli.main -> main.run) and
+# also carries the owner tools: setup-code, status, reset-password.
 # uv installs this into .venv/bin; Nix installs it into the packaged venv, and
 # that same binary is what a systemd ExecStart will point at on the Pi.
 [project.scripts]
-gaca-api = "gaca_api.main:run"
+gaca-api = "gaca_api.cli:main"
 
 [dependency-groups]
 dev = [

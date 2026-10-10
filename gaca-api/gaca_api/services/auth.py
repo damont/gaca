@@ -24,11 +24,39 @@ async def find_by_id(user_id: str) -> UserDoc | None:
 
 
 async def find_by_email(email: str) -> UserDoc | None:
-    return await users_db.find_by_email(email)
+    # Emails are stored lowercase, so look up lowercase: a phone keyboard that capitalises the
+    # first letter must not turn a correct sign-in into a 401.
+    return await users_db.find_by_email(email.strip().lower())
 
 
 async def find_by_google_sub(google_sub: str) -> UserDoc | None:
     return await users_db.find_by_google_sub(google_sub)
+
+
+async def resolve_google_user(*, google_sub: str, email: str) -> UserDoc | None:
+    """Sign-in only: the existing owner for this verified Google identity, or None.
+
+    Never creates an account — a server has one owner, made through the setup claim. Links the
+    Google identity onto the owner's row when the verified email matches (they claimed with a
+    password and are now using the Google button).
+    """
+    existing = await users_db.find_by_google_sub(google_sub)
+    if existing is not None:
+        return existing
+    by_email = await users_db.find_by_email(email.lower())
+    if by_email is None:
+        return None
+    linked = by_email.model_copy(update={"google_sub": google_sub, "email_verified": True})
+    await users_db.replace(linked)
+    return linked
+
+
+async def set_password(user: UserDoc, password: str) -> UserDoc:
+    """Replace the owner's password (also gives a Google-only owner one). Used by the
+    `gaca-api reset-password` command: shell access to the server is the proof of ownership."""
+    updated = user.model_copy(update={"hashed_password": hash_password(password)})
+    await users_db.replace(updated)
+    return updated
 
 
 async def upsert_google_user(
@@ -74,7 +102,7 @@ async def create_user(name: str, email: str, password: str) -> UserDoc:
     The plaintext stops here — it is hashed on the way in and never stored.
     """
     user = UserDoc(
-        email=email,
+        email=email.strip().lower(),
         display_name=name,
         hashed_password=hash_password(password),
     )
