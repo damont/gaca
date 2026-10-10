@@ -66,3 +66,33 @@ def test_serves_tcp_and_unix_socket_together_and_cleans_up(tmp_path):
 
     assert asyncio.run(go()) == ("hello", "hello")
     assert not os.path.exists(path)  # removed on shutdown
+
+
+async def failing_startup_app(scope, receive, send):
+    if scope["type"] == "lifespan":
+        await receive()
+        await send({"type": "lifespan.startup.failed", "message": "boom"})
+        return
+
+
+def test_an_app_that_fails_to_start_exits_nonzero_instead_of_hanging(tmp_path):
+    for socket_path in (None, str(tmp_path / "api.sock")):
+        with pytest.raises(SystemExit) as exit_info:
+            asyncio.run(serve_module.serve(failing_startup_app, "127.0.0.1", free_port(), socket_path))
+        assert exit_info.value.code == 3
+
+
+def test_a_failed_startup_closes_the_database_so_the_process_can_exit(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from gaca_api import main
+    from gaca_api.config import settings
+    from gaca_api.db import client
+
+    monkeypatch.setattr(settings, "db_path", str(tmp_path / "t.db"))
+    monkeypatch.setattr(settings, "agent_engine", "")  # the real-world failure: engine unset
+    with pytest.raises(RuntimeError, match="GACA_AGENT_ENGINE"):
+        with TestClient(main.app):
+            pass
+    with pytest.raises(RuntimeError, match="not initialized"):
+        client.connection()  # closed, not leaked

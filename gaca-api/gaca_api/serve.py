@@ -42,15 +42,19 @@ async def serve(app, host: str, port: int, socket_path: str | None = None) -> No
     server = uvicorn.Server(config)
     if not socket_path:
         await server.serve()
-        return
-    sockets = [config.bind_socket(), bind_unix_socket(socket_path)]
-    try:
-        await server.serve(sockets=sockets)
-    finally:
+    else:
+        sockets = [config.bind_socket(), bind_unix_socket(socket_path)]
         try:
-            os.unlink(socket_path)
-        except OSError:
-            pass
+            await server.serve(sockets=sockets)
+        finally:
+            try:
+                os.unlink(socket_path)
+            except OSError:
+                pass
+    if not server.started:
+        # Same contract as uvicorn.run(): an app that never started is a failure, so a
+        # supervisor (systemd Restart=on-failure) sees it instead of a clean exit.
+        raise SystemExit(3)
 
 
 def run_app(app, host: str, port: int, socket_path: str | None = None) -> None:
