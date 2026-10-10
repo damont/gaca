@@ -48,6 +48,7 @@ def _parser() -> argparse.ArgumentParser:
     connect = hermes.add_parser("connect", help="mint a token per Hermes profile and write it into the profile's .env")
     connect.add_argument("--hermes-home", default=None, help="default: GACA_HERMES_HOME or ~/.hermes")
     connect.add_argument("--base-url", default=None, help="default: http://127.0.0.1:<api port>")
+    connect.add_argument("--rotate", action="store_true", help="replace tokens already in place (default: only wire profiles that have none)")
     return parser
 
 
@@ -135,7 +136,7 @@ async def _token_revoke(token_id: str) -> int:
     return 0
 
 
-async def _hermes_connect(hermes_home: str | None, base_url: str | None) -> int:
+async def _hermes_connect(hermes_home: str | None, base_url: str | None, rotate: bool = False) -> int:
     owner = await _owner_or_none()
     if owner is None:
         return 1
@@ -144,11 +145,16 @@ async def _hermes_connect(hermes_home: str | None, base_url: str | None) -> int:
         print(f"No Hermes home at {home}. Pass --hermes-home.", file=sys.stderr)
         return 1
     url = base_url or f"http://127.0.0.1:{settings.api_port}"
-    connected = await hermes_connect.connect_profiles(home, url, owner)
+    connected = await hermes_connect.connect_profiles(home, url, owner, rotate=rotate)
+    wired = [c for c in connected if c.token_id is not None]
     for c in connected:
-        print(f"  {c.profile:12} token {c.token_name} -> {c.env_path}")
-    print(f"Wrote GACA_BASE_URL={url} and a scoped GACA_API_TOKEN into {len(connected)} profile(s); any older hermes-* token was revoked.")
-    print("Restart Hermes so running agents pick up the new token (e.g. `systemctl --user restart hermes-gateway`).")
+        note = "already has a GACA token, left alone" if c.token_id is None else f"token {c.token_name}"
+        print(f"  {c.profile:12} {note}  ({c.env_path})")
+    if wired:
+        print(f"Wrote GACA_BASE_URL={url} and a scoped GACA_API_TOKEN into {len(wired)} profile(s).")
+        print("Restart Hermes so running agents pick up the new token (e.g. `systemctl --user restart hermes-gateway`).")
+    else:
+        print("Every profile already has a GACA token; nothing to do. (`--rotate` replaces them.)")
     return 0
 
 
@@ -190,7 +196,7 @@ def main(argv: list[str] | None = None) -> int:
         }
         return asyncio.run(_with_database(handlers[args.token_command]))
     if args.command == "hermes":
-        return asyncio.run(_with_database(lambda: _hermes_connect(args.hermes_home, args.base_url)))
+        return asyncio.run(_with_database(lambda: _hermes_connect(args.hermes_home, args.base_url, args.rotate)))
     return asyncio.run(_with_database(_reset_password))
 
 

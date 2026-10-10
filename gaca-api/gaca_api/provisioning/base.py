@@ -20,6 +20,9 @@ class Provisioner(Protocol):
     # Where the Hermes HTTP gateway is reached from gaca-api when nothing is
     # connected yet ("http://127.0.0.1" locally, the SSH host otherwise).
     default_agent_host: str
+    # True if this provisioner can put a GACA token into a profile's .env (local mode only; over
+    # SSH the operator wires Hermes themselves).
+    can_wire_gaca: bool
 
     async def discover_profiles(self) -> dict[str, dict]:
         """`{name: {"port", "path", "api_key"}}` for every profile with its HTTP gateway on."""
@@ -31,6 +34,12 @@ class Provisioner(Protocol):
 
     async def next_free_port(self) -> int: ...
 
-    async def create_profile(self, name: str, port: int, api_key: str) -> tuple[int, str]:
+    async def create_profile(
+        self, name: str, port: int, api_key: str, extra_env: dict[str, str] | None = None
+    ) -> tuple[int, str]:
         """Create a new profile and make it reachable; returns `(port, path)`."""
         ...
+
+    async def profiles_missing_gaca_token(self) -> list[str]: ...
+
+    async def write_gaca_env(self, name: str, values: dict[str, str]) -> None: ...

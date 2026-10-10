@@ -124,7 +124,7 @@ def test_connect_gives_every_profile_its_own_scoped_token(server, hermes_home, c
 def test_connect_again_rotates_instead_of_piling_up_valid_tokens(server, hermes_home):
     cli.main(["hermes", "connect", "--hermes-home", str(hermes_home)])
     first = env(hermes_home / ".env")["GACA_API_TOKEN"]
-    cli.main(["hermes", "connect", "--hermes-home", str(hermes_home)])
+    cli.main(["hermes", "connect", "--hermes-home", str(hermes_home), "--rotate"])
     second = env(hermes_home / ".env")["GACA_API_TOKEN"]
     assert first != second
     assert len(active_tokens()) == 3
@@ -161,7 +161,7 @@ def test_connect_honours_a_custom_base_url_and_refuses_unsafe_values(server, her
     assert env(hermes_home / ".env")["GACA_BASE_URL"] == "http://127.0.0.1:9999"
     before = (hermes_home / ".env").read_text()
     with pytest.raises(ValueError, match="unsafe"):
-        cli.main(["hermes", "connect", "--hermes-home", str(hermes_home), "--base-url", "http://x\nEVIL=1"])
+        cli.main(["hermes", "connect", "--hermes-home", str(hermes_home), "--base-url", "http://x\nEVIL=1", "--rotate"])
     assert (hermes_home / ".env").read_text() == before  # nothing half-written
 
 
@@ -169,7 +169,7 @@ def test_a_failed_write_leaves_the_old_token_working(server, hermes_home):
     cli.main(["hermes", "connect", "--hermes-home", str(hermes_home)])
     old = env(hermes_home / ".env")["GACA_API_TOKEN"]
     with pytest.raises(ValueError):
-        cli.main(["hermes", "connect", "--hermes-home", str(hermes_home), "--base-url", "bad url"])
+        cli.main(["hermes", "connect", "--hermes-home", str(hermes_home), "--base-url", "bad url", "--rotate"])
     assert run(lambda: token_service.authenticate(old)) is not None  # still valid: revoke comes after the write
     assert len(active_tokens()) == 3  # and the token minted for the failed write was revoked, not orphaned
 
@@ -177,3 +177,26 @@ def test_a_failed_write_leaves_the_old_token_working(server, hermes_home):
 def test_connect_needs_a_hermes_home_and_an_owner(server, tmp_path, capsys):
     assert cli.main(["hermes", "connect", "--hermes-home", str(tmp_path / "missing")]) == 1
     assert "No Hermes home" in capsys.readouterr().err
+
+
+def test_connect_is_safe_to_re_run_and_only_wires_what_is_missing(server, hermes_home, capsys):
+    cli.main(["hermes", "connect", "--hermes-home", str(hermes_home)])
+    before = {p: (p.read_text(), p.stat().st_mtime_ns) for p in hermes_home.rglob(".env")}
+    capsys.readouterr()
+    assert cli.main(["hermes", "connect", "--hermes-home", str(hermes_home)]) == 0
+    assert "nothing to do" in capsys.readouterr().out
+    assert {p: (p.read_text(), p.stat().st_mtime_ns) for p in hermes_home.rglob(".env")} == before  # untouched
+    assert len(active_tokens()) == 3
+
+    # A profile created later is picked up; the others are not disturbed.
+    (hermes_home / "profiles" / "newcomer").mkdir()
+    cli.main(["hermes", "connect", "--hermes-home", str(hermes_home)])
+    assert env(hermes_home / "profiles" / "newcomer" / ".env")["GACA_API_TOKEN"].startswith("gaca_pat_")
+    assert {p: p.read_text() for p in before} == {p: t for p, (t, _) in before.items()}
+    assert len(active_tokens()) == 4
+
+
+def test_an_old_agent_jwt_is_not_mistaken_for_an_api_token(server, hermes_home):
+    assert "old-jwt-value" in (hermes_home / ".env").read_text()
+    cli.main(["hermes", "connect", "--hermes-home", str(hermes_home)])
+    assert env(hermes_home / ".env")["GACA_API_TOKEN"].startswith("gaca_pat_")
