@@ -12,6 +12,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..utils import artifact_links
+from .artifact import ArtifactRefOut
 
 MAX_ATTACHMENTS_PER_MESSAGE = 4
 
@@ -50,18 +51,6 @@ class AttachmentOut(BaseModel):
     content_type: str
     size: int
     url: str = ""
-
-
-class ArtifactRefOut(BaseModel):
-    """An artifact a message links to, resolved so the client can draw its chip
-    without a second request. `missing` is true when the link points at nothing
-    this user owns (deleted, or a bad id from the agent): the chip still shows,
-    titled with the link's own text, so the link isn't silently lost."""
-    id: str
-    title: str
-    description: str | None = None
-    crew: str | None = None
-    missing: bool = False
 
 
 class ToolUseOut(BaseModel):

@@ -5,16 +5,16 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 
-from ..db import artifacts as artifacts_db
 from ..db import events as events_db
 from ..db import messages as messages_db
 from ..db import sessions as sessions_db
 from ..models.message import MessageDoc
 from ..models.session import SessionDoc
-from ..schemas.message import ArtifactRefOut, MessageOut
+from ..schemas.artifact import ArtifactRefOut
+from ..schemas.message import MessageOut
 from ..schemas.session import SessionDetail, SessionOut
 from ..utils import artifact_links
-from . import runs
+from . import artifact_refs, runs
 from .exceptions import NotFound
 
 
@@ -113,17 +113,21 @@ async def messages_out(user_id: str, messages: list[MessageDoc]) -> list[Message
     scoped to the session's owner — a link to someone else's artifact resolves
     exactly like a deleted one (missing), never to their title."""
     links = {m.id: artifact_links.find(m.content) for m in messages}
-    ids = list({link.artifact_id for found in links.values() for link in found})
-    owned = {row.doc.id: row.doc for row in await artifacts_db.find_by_ids(user_id, ids)}
+    refs = await artifact_refs.resolve(
+        user_id, {link.artifact_id: None for found in links.values() for link in found}
+    )
 
-    def ref(link: artifact_links.ArtifactLink) -> ArtifactRefOut:
-        doc = owned.get(link.artifact_id)
-        if doc is None:
-            return ArtifactRefOut(id=link.artifact_id, title=link.label or "Page", missing=True)
-        return ArtifactRefOut(id=doc.id, title=doc.title, description=doc.description, crew=doc.crew)
+    def chips(message_links: list[artifact_links.ArtifactLink]) -> list[ArtifactRefOut]:
+        # A missing artifact is titled from this message's own link text.
+        return [
+            refs[l.artifact_id].model_copy(update={"title": l.label or "Page"})
+            if refs[l.artifact_id].missing
+            else refs[l.artifact_id]
+            for l in message_links
+        ]
 
     return [
-        MessageOut.model_validate(m).model_copy(update={"artifacts": [ref(l) for l in links[m.id]]})
+        MessageOut.model_validate(m).model_copy(update={"artifacts": chips(links[m.id])})
         for m in messages
     ]
 
