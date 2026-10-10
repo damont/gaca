@@ -32,7 +32,22 @@ def _parser() -> argparse.ArgumentParser:
     code = sub.add_parser("setup-code", help="print a one-time code to claim a new server from the app")
     code.add_argument("--ttl", type=int, default=setup_service.DEFAULT_TTL_MINUTES, metavar="MINUTES")
     code.add_argument("--url", help="the server's public https URL, to also print an app link")
+    code.add_argument("--qr", action="store_true", help="also print a QR code of the app link (needs --url)")
     sub.add_parser("status", help="is this server claimed yet?")
+
+    install = sub.add_parser("install", help="set this server up (normally run via ./install.sh)")
+    install.add_argument("--repo-root", required=True)
+    install.add_argument("--service", choices=["auto", "system", "user"], default="auto", help="system: sandboxed, needs sudo (recommended). user: no root, no sandbox")
+    install.add_argument("--name", default="gaca-api", help="service name")
+    install.add_argument("--data-dir", default=None, help="default: ~/gaca-data")
+    install.add_argument("--port", type=int, default=41700)
+    install.add_argument("--tunnel", choices=["ask", "token", "quick", "none"], default="ask", help="how to reach the server from the internet")
+    install.add_argument("--hostname", default=None, help="the tunnel's public hostname, e.g. gaca.example.com")
+    install.add_argument("--tunnel-token-file", default=None, help="file holding the Cloudflare tunnel token (or set GACA_TUNNEL_TOKEN)")
+    install.add_argument("--hermes-home", default=None, help="default: ~/.hermes")
+    install.add_argument("--no-hermes", action="store_true", help="do not look for Hermes on this machine")
+    install.add_argument("--no-wait", action="store_true", help="do not wait for you to claim the server in the app")
+    install.add_argument("--yes", action="store_true", help="never ask questions")
     sub.add_parser("reset-password", help="set a new password for the owner")
 
     token = sub.add_parser("token", help="manage API tokens (what Hermes skills use)").add_subparsers(dest="token_command", required=True)
@@ -61,7 +76,7 @@ def _read_new_password() -> str:
     return first
 
 
-async def _setup_code(ttl: int, url: str | None) -> int:
+async def _setup_code(ttl: int, url: str | None, qr: bool = False) -> int:
     try:
         code, _ = await setup_service.issue_code(ttl)
     except setup_service.SetupRefused as error:
@@ -71,7 +86,14 @@ async def _setup_code(ttl: int, url: str | None) -> int:
     print('Open the app, enter this server\'s address, and choose "Set up this server".')
     if url:
         query = urlencode({"url": url.rstrip("/"), "code": code.replace("-", "")})
-        print(f"Or open this link on your phone:  gaca://setup?{query}")
+        link = f"gaca://setup?{query}"
+        print(f"Or open this link on your phone:  {link}")
+        if qr:
+            import segno
+
+            segno.make(link, error="m").terminal(compact=True)
+    elif qr:
+        print("(--qr needs --url, the server's public https address)", file=sys.stderr)
     return 0
 
 
@@ -177,6 +199,20 @@ async def _with_database(coro_factory) -> int:
         await client.close()
 
 
+def _install(args) -> int:
+    from .installer.run import Options, run
+
+    def maybe(value):
+        return Path(value).expanduser() if value else None
+
+    return run(Options(
+        repo_root=Path(args.repo_root).resolve(), service=args.service, name=args.name,
+        data_dir=maybe(args.data_dir), port=args.port, hostname=args.hostname, tunnel=args.tunnel,
+        tunnel_token_file=maybe(args.tunnel_token_file), hermes_home=maybe(args.hermes_home),
+        use_hermes=not args.no_hermes, wait_for_claim=not args.no_wait, yes=args.yes,
+    ))
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command in (None, "serve"):
@@ -184,8 +220,10 @@ def main(argv: list[str] | None = None) -> int:
 
         run()
         return 0
+    if args.command == "install":
+        return _install(args)
     if args.command == "setup-code":
-        return asyncio.run(_with_database(lambda: _setup_code(args.ttl, args.url)))
+        return asyncio.run(_with_database(lambda: _setup_code(args.ttl, args.url, args.qr)))
     if args.command == "status":
         return asyncio.run(_with_database(_status))
     if args.command == "token":

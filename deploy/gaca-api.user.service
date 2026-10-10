@@ -1,0 +1,23 @@
+# The GACA API as a per-user service (`./install.sh --service user`): no root needed.
+#
+# This is the NO-SANDBOX variant. It runs as you, with your full file access. The filesystem
+# sandbox in gaca-api.service can't be applied from a user service on Ubuntu 24.04+ (the kernel
+# blocks the user namespaces it needs), and pretending to apply it would be worse than saying so.
+# Prefer the system service on any machine where you have sudo.
+[Unit]
+Description=GACA API (user service)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=@REPO@/gaca-api
+EnvironmentFile=@REPO@/.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=@REPO@/gaca-api/.venv/bin/gaca-api
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+UMask=0077
+
+[Install]
+WantedBy=default.target
