@@ -156,8 +156,7 @@ def run() -> None:
     environment (GACA_API_HOST / GACA_API_PORT). No --reload here — that's a
     dev-only convenience you still get from running uvicorn by hand.
     """
-    import uvicorn
-
     from .config import settings
+    from .serve import run_app
 
-    uvicorn.run(app, host=settings.api_host, port=settings.api_port)
+    run_app(app, settings.api_host, settings.api_port, settings.api_socket)

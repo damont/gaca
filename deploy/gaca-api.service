@@ -12,7 +12,7 @@
 # options are accepted and then silently NOT applied — the process can still read ~/.ssh.
 #
 # What the sandbox allows: read the code, read Hermes' home, write the GACA data dir and
-# Hermes' profiles/ directory (so `hermes profile create` works). Everything else under the
+# Hermes' profiles/ directory (so `hermes profile create` works) and the socket directory. Everything else under the
 # home directory is invisible. If `hermes profile create` needs another path on your install,
 # add it to BindPaths and re-run check-sandbox.sh.
 [Unit]
@@ -28,10 +28,12 @@ Environment=GACA_AGENT_ACCESS=local
 Environment=GACA_HERMES_HOME=@HOME@/.hermes
 Environment=GACA_HERMES_BIN=@HOME@/.local/bin/hermes
 Environment=GACA_DB_PATH=@HOME@/gaca-data/gaca.db
-# Loopback by default. How the gateway's nginx container reaches this process is a deployment
-# choice (bind the docker bridge address, or 0.0.0.0 behind a firewall) — set GACA_API_HOST.
+# TCP is loopback only (Hermes skills use it). The frontend container uses the Unix socket below.
 Environment=GACA_API_HOST=127.0.0.1
 Environment=GACA_API_PORT=41700
+# The frontend container's nginx reaches the API through this socket (mount its directory).
+Environment=GACA_API_SOCKET=@HOME@/gaca-run/api.sock
+Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStart=@HOME@/gaca/gaca-api/.venv/bin/gaca-api
 Restart=on-failure
 RestartSec=3
@@ -42,8 +44,8 @@ PrivateTmp=yes
 UMask=0077
 ProtectSystem=strict
 ProtectHome=tmpfs
-BindReadOnlyPaths=@HOME@/gaca @HOME@/.hermes @HOME@/.local
-BindPaths=@HOME@/gaca-data @HOME@/.hermes/profiles
+BindReadOnlyPaths=@HOME@/gaca @HOME@/.hermes @HOME@/.local -@HOME@/gaca-secrets
+BindPaths=@HOME@/gaca-data @HOME@/gaca-run @HOME@/.hermes/profiles
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
