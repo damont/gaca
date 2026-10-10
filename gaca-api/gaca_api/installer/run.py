@@ -324,6 +324,7 @@ def uninstall(opts: Options, shell: Shell | None = None, out=print, *, purge: bo
         say.step("Service")
         user_unit = Path.home() / ".config" / "systemd" / "user" / f"{opts.name}.service"
         system_unit = SYSTEM_UNIT_DIR / f"{opts.name}.service"
+        found_a_service = user_unit.exists() or system_unit.exists()
         if user_unit.exists():
             env = user_systemd_env()
             shell.run(["systemctl", "--user", "disable", "--now", f"{opts.name}.service"], env=env)
@@ -341,7 +342,7 @@ echo "{opts.name} removed"
 """
             run_as_root(shell, script, opts.config_dir / "uninstall-service.sh")
             say.ok("system service stopped and removed")
-        if not user_unit.exists() and not system_unit.exists():
+        if not found_a_service:
             say.note("no service found (already removed?)")
 
         say.step("Tunnel")

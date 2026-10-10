@@ -392,6 +392,7 @@ def test_uninstall_removes_the_service_and_tunnel_but_keeps_data(installed, caps
     assert run_mod.uninstall(installed, shell) == 0
     out = capsys.readouterr().out
     assert not unit.exists()
+    assert "no service found" not in out  # it found one and removed it: don't claim otherwise
     assert shell.called("systemctl", "--user", "disable", "--now", "gaca-api.service")
     assert shell.called("docker", "rm", "-f", "gaca-quick-tunnel") and shell.called("docker", "compose")
     assert not (installed.config_dir / "tunnel").exists()  # the stored tunnel token is gone
