@@ -3,7 +3,8 @@
 **Status:** Alerts (create, read, triage, delegate), Crew management, Chat
 sessions, and Skills are all implemented and tested server-side ·
 **Date:** 2026-08-07, updated 2026-09-20 (crew rename + chat/skills),
-2026-10-10 (iOS: APNs push, iOS Google sign-in, server-derived message and run fields)
+2026-10-10 (iOS: APNs push, iOS Google sign-in, server-derived message and run fields;
+one-call delegation, `data_rows`, `artifact`, `last_activity_at`)
 **Audience:** the Android and iPhone apps (and anything else reading the inbox or chatting)
 
 Standalone by design — you can build the app against this without reading
@@ -221,6 +222,11 @@ patching it.
   "links": [                        // pages that go with this alert (see below)
     { "url": "https://calendar.example.com/#week-card-2026-10-05", "label": "Open family calendar" }
   ],
+  "artifact_id": null,              // a page published for this alert (artifacts/api-contract.md)
+  "artifact": null,                 // that page resolved for its chip, or null — see below
+  "data_rows": [                    // `data` ready to show as label/value rows — see below
+    { "key": "mount", "value": "/" }, { "key": "used_pct", "value": "91" }, { "key": "free_gb", "value": "12.4" }
+  ],
 
   "status": "new",                  // stored status — see §4
   "effective_status": "new",        // what to DISPLAY — see §4
@@ -240,6 +246,15 @@ patching it.
 3. **`suggested_actions` may be empty.** When present, render as buttons —
    tapping one sends its `prompt` to `/delegate`. This is the primary interaction,
    not a nice-to-have.
+
+**`data_rows`** is `data`'s top-level entries in order, each value already rendered as text: a
+string as-is; a number, boolean or null as its JSON text (`91`, `false`, `null`); an object as
+`k: v, k2: v2` and an array as items joined with `, `, both recursively. Show these rather than
+walking `data` yourself — `data` is arbitrary and stays there for anything that wants the raw JSON.
+
+**`artifact`** is `artifact_id` resolved: `{ "id", "title", "description", "crew", "missing" }`, the
+same chip shape as a chat message's `artifacts` (§6). `missing: true` (title `"Page"`, the rest null)
+when the page has since been deleted. `null` when `artifact_id` is. Both list and detail carry it.
 
 **`links`** are web pages to open in order to act on the alert — the calendar week an event is in, the
 email a suggestion came from, the dashboard that raised it. Up to 10; each is `{url, label?}`.
@@ -363,6 +378,26 @@ watches its outcome and moves the alert on its own: `run.completed` →
 silently vanish" rule §4 applies to every other terminal outcome). Poll
 `GET /api/alerts/{id}` — or the session's own stream, §6 — to see it land.
 
+### `POST /api/alerts/delegations` — "have a crew member do this"
+
+For work the user asks for directly (the app's "New delegation" screen), with no alert to start
+from: one call raises the alert and delegates it.
+
+```jsonc
+// request
+{ "instruction": "Renew the domain before Friday\nand tell me the new expiry",  // required, not blank, ≤ 2000
+  "crew": "toolshed",   // optional — who handles it; omit for the account default
+  "source": "app" }     // optional, default "app"
+
+// 201 — the Alert, already "delegated", with session_id set
+```
+
+The alert is `kind: "manual.delegation"`, `title` = the instruction's first line cut to 120
+characters, `body` = the instruction (trimmed), `crew` = whoever handles it; it's delegated with the
+instruction as the prompt and settles like any delegation (`completed` / back to `new`). A new
+alert pushes like any other. Errors match `/delegate`: `422` blank instruction or unknown `crew`,
+`400` `CrewNotConfigured` — checked before anything is stored, so a failed call leaves no alert.
+
 ### `POST /api/alerts/{id}/take-to-chat`
 
 "Talk to Hermes about this" — opens the chat **without sending anything**. Where `/delegate`
@@ -460,6 +495,8 @@ same endpoints from here on.
                                        // the title if set, else the opening message; null if empty
   "preview": "You: Done - it's now Friday at 9.",  // latest message, one line; "You: " if yours
                                        // (artifact links are left out of both)
+  "last_activity_at": "2026-09-20T14:05:41Z",  // latest message's time, else created_at — show THIS
+                                       // as "2m ago" in the Chat list (it's what the list is sorted by)
   "messages": [ { /* Message, GET only */ } ],
 
   // GET /api/sessions/{id} only — see "Opening a thread" below
@@ -865,7 +902,7 @@ Refetch and re-render rather than showing an error.
 |---|---|
 | **Hermes** | Noticing things. Writing well-formed alerts — good `dedupe_key`, honest `severity`, useful `suggested_actions`. Doing delegated and chatted-with work. Its own skills |
 | **gaca-api** | System of record for users, crew config, alerts, sessions and messages. Auth. State machine and its guards. Effective-status computation. Fan-out. Never caches a crew member's skills or models — always live |
-| **Android / iPhone** | Triage and chat UX. Rendering unknown `kind`s gracefully. Making which crew member you're talking to obvious (color, name) everywhere it's relevant. Local read/unread. Reconnect and refetch. **Not** parsing message text, tallying tool use, or guessing whether a run is in flight — `display_content`, `artifacts`, `activity`, `running` and `resume_seq` (§6) come from the API |
+| **Android / iPhone** | Triage and chat UX. Rendering unknown `kind`s gracefully. Making which crew member you're talking to obvious (color, name) everywhere it's relevant. Local read/unread. Reconnect and refetch. **Not** parsing message text, tallying tool use, or guessing whether a run is in flight — `display_content`, `artifacts`, `activity`, `running` and `resume_seq` (§6) come from the API; nor rendering `data` (`data_rows`), resolving `artifact_id` (`artifact`), composing a delegation (`POST /alerts/delegations`), or wrapping an artifact page (`GET /artifacts/{id}/page`, `POST /artifacts/{id}/call`) |
 | **frontend** | Signup, login, minting the agent token. **Not** triage |
 
 **The app does not compute state.** Don't locally derive whether a snooze has
