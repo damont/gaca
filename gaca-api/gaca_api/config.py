@@ -11,6 +11,10 @@ from typing import Literal
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+# The placeholder that ships in the code. Startup refuses it (security.check_startup_secrets).
+DEFAULT_JWT_SECRET = "change-me-this-default-is-not-secret-and-too-short"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=("../.env", ".env"), env_prefix="GACA_", extra="ignore"
@@ -23,7 +27,7 @@ class Settings(BaseSettings):
     # have — it invalidates every outstanding token at once.
     # Keep any real value at 32+ bytes: PyJWT raises InsecureKeyLengthWarning
     # below that for HS256 (RFC 7518 §3.2). See .env.example for a generator.
-    jwt_secret: str = "change-me-this-default-is-not-secret-and-too-short"
+    jwt_secret: str = DEFAULT_JWT_SECRET
     jwt_algorithm: str = "HS256"
 
     # Browser session lifetime. Agent tokens pass their own, much longer expiry
@@ -35,6 +39,21 @@ class Settings(BaseSettings):
     # with the same value (as VITE_GOOGLE_CLIENT_ID). Not a secret — it's public
     # by design — but leaving it unset disables Google sign-in entirely.
     google_client_id: str | None = None
+
+    # Local development only: skips the refusal to start with the placeholder JWT secret.
+    dev: bool = False
+
+    # Requests over this many bytes are refused with 413 (the 2 MiB photo cap plus multipart
+    # framing). Used to be nginx's client_max_body_size.
+    max_body_bytes: int = 3 * 1024 * 1024
+
+    # Attempts per minute, per client, on the endpoints a stranger can reach without
+    # credentials: sign-in and the first-run claim.
+    auth_attempts_per_minute: int = 10
+
+    # Browser origins allowed to call the API cross-origin, comma-separated. Empty (the default)
+    # means none: the phone app is not a browser, and nothing here is meant to be called from a web page.
+    cors_origins: str = ""
 
     # Interface this service binds to. Loopback by default (safe for local dev);
     # set GACA_API_HOST=0.0.0.0 on the Pi so other machines can reach it.
