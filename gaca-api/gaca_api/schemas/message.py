@@ -11,6 +11,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ..utils import artifact_links
+
 MAX_ATTACHMENTS_PER_MESSAGE = 4
 
 
@@ -50,21 +52,62 @@ class AttachmentOut(BaseModel):
     url: str = ""
 
 
+class ArtifactRefOut(BaseModel):
+    """An artifact a message links to, resolved so the client can draw its chip
+    without a second request. `missing` is true when the link points at nothing
+    this user owns (deleted, or a bad id from the agent): the chip still shows,
+    titled with the link's own text, so the link isn't silently lost."""
+    id: str
+    title: str
+    description: str | None = None
+    crew: str | None = None
+    missing: bool = False
+
+
+class ToolUseOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    name: str
+    count: int
+    errors: int = 0
+
+
+class MessageActivity(BaseModel):
+    """What the agent did to produce this reply. `label` is ready to display
+    ("Ran terminal 3× · 41s"); `tools` is there for a client that wants more."""
+    model_config = ConfigDict(from_attributes=True)
+
+    tools: list[ToolUseOut]
+    duration_seconds: float
+    label: str
+
+
 class MessageOut(BaseModel):
-    """A message as returned to the client."""
+    """A message as returned to the client.
+
+    `content` is the raw text, exactly as stored (and as sent back to the agent
+    as history). Clients render `display_content` — the same text with artifact
+    links taken out — and show `artifacts` as chips beneath it.
+    """
     model_config = ConfigDict(from_attributes=True)
 
     id: str
     session_id: str
     role: str
     content: str
+    display_content: str = ""
     created_at: datetime
     attachments: list[AttachmentOut] = []
+    # Filled in by the service layer, which can look the artifacts up; built
+    # straight from a MessageDoc it's empty.
+    artifacts: list[ArtifactRefOut] = []
+    activity: MessageActivity | None = None
 
     @model_validator(mode="after")
-    def _attachment_urls(self) -> "MessageOut":
+    def _derived(self) -> "MessageOut":
         for a in self.attachments:
             a.url = f"sessions/{self.session_id}/attachments/{a.id}"
+        self.display_content = artifact_links.strip(self.content)
         return self
 
 

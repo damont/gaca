@@ -4,10 +4,14 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from ..db import artifacts as artifacts_db
 from ..db import messages as messages_db
 from ..db import sessions as sessions_db
 from ..models.message import MessageDoc
 from ..models.session import SessionDoc
+from ..schemas.message import ArtifactRefOut, MessageOut
+from ..schemas.session import SessionDetail, SessionOut
+from ..utils import artifact_links
 from .exceptions import NotFound
 
 
@@ -60,10 +64,10 @@ def labels_for(
     it's the user's."""
     summary = tidy(title, SUMMARY_MAX) if title else None
     if summary is None and first_user is not None:
-        summary = tidy(first_user.content, SUMMARY_MAX) or _photo_label(first_user)
+        summary = tidy(artifact_links.strip(first_user.content), SUMMARY_MAX) or _photo_label(first_user)
     preview = None
     if last is not None:
-        preview = tidy(last.content, PREVIEW_MAX) or _photo_label(last)
+        preview = tidy(artifact_links.strip(last.content), PREVIEW_MAX) or _photo_label(last)
         if preview and last.role == "user":
             preview = f"You: {preview}"
     return Labels(summary, preview)
@@ -98,3 +102,35 @@ async def get_with_messages(
     first_user = next((m for m in messages if m.role == "user"), None)
     last = messages[-1] if messages else None
     return session, messages, labels_for(session.title, first_user, last)
+
+
+async def messages_out(user_id: str, messages: list[MessageDoc]) -> list[MessageOut]:
+    """The transcript as clients get it, with each message's artifact links
+    resolved to chips. All the transcript's artifacts are looked up in one query,
+    scoped to the session's owner — a link to someone else's artifact resolves
+    exactly like a deleted one (missing), never to their title."""
+    links = {m.id: artifact_links.find(m.content) for m in messages}
+    ids = list({link.artifact_id for found in links.values() for link in found})
+    owned = {row.doc.id: row.doc for row in await artifacts_db.find_by_ids(user_id, ids)}
+
+    def ref(link: artifact_links.ArtifactLink) -> ArtifactRefOut:
+        doc = owned.get(link.artifact_id)
+        if doc is None:
+            return ArtifactRefOut(id=link.artifact_id, title=link.label or "Page", missing=True)
+        return ArtifactRefOut(id=doc.id, title=doc.title, description=doc.description, crew=doc.crew)
+
+    return [
+        MessageOut.model_validate(m).model_copy(update={"artifacts": [ref(l) for l in links[m.id]]})
+        for m in messages
+    ]
+
+
+async def get_detail(user_id: str, session_id: str) -> SessionDetail:
+    """GET /sessions/{id}: the session, its labels, and its rendered transcript."""
+    session, messages, labels = await get_with_messages(user_id, session_id)
+    return SessionDetail(
+        **SessionOut.model_validate(session).model_dump(exclude={"summary", "preview"}),
+        summary=labels.summary,
+        preview=labels.preview,
+        messages=await messages_out(user_id, messages),
+    )

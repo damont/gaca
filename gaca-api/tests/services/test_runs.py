@@ -7,7 +7,7 @@ monkeypatching needed, it's just a value passed in like any other.
 """
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -17,9 +17,10 @@ from gaca_api.db import client
 from gaca_api.db import events as events_db
 from gaca_api.db import messages as messages_db
 from gaca_api.db import sessions as sessions_db
-from gaca_api.models.message import MessageDoc
+from gaca_api.models.message import MessageDoc, ToolUsage
 from gaca_api.models.session import SessionDoc
-from gaca_api.schemas.event import AssistantDelta, RunCompleted, ToolStarted
+from gaca_api.schemas.event import AssistantDelta, RunCompleted, ToolCompleted, ToolStarted
+from gaca_api.schemas.message import MessageOut
 from gaca_api.services.exceptions import NotFound
 
 
@@ -191,3 +192,85 @@ def test_chat_reply_notifier_pushes_reply_and_failure(monkeypatch):
         ("u1", "Hermes", "Done — moved it to Friday. Anything else?", "s1"),
         ("u1", "Hermes couldn't finish", "engine event stream idle for over 180s", "s1"),
     ]
+
+
+# --- activity: what the run did, stored on the assistant message -------------
+
+T0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+
+class ToolBackend(StubBackend):
+    """A run that used two tools (one of them three times, once failing)."""
+
+    async def stream_events(self, run_id, *, session_id):
+        def tool(tool, error=None):
+            if error is None:
+                return ToolStarted(session_id=session_id, run_id=run_id, tool=tool)
+            return ToolCompleted(session_id=session_id, run_id=run_id, tool=tool, error=error)
+
+        yield tool("web_search")
+        yield tool("web_search", error=False)
+        for ok in (True, False, True):
+            yield tool("terminal")
+            yield tool("terminal", error=not ok)
+        yield RunCompleted(
+            session_id=session_id, run_id=run_id, output="Done",
+            created_at=T0 + timedelta(seconds=41.3),
+        )
+
+
+def _finalize(tmp_path, backend):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def main():
+        await client.connect()
+        try:
+            await sessions_db.insert(SessionDoc(id="s1", user_id="u1"))
+            await runs.read_run(backend, "s1", "run_x", started_at=T0)
+            return await messages_db.find_by_session("s1")
+        finally:
+            await client.close()
+
+    return asyncio.run(main())
+
+
+def test_completed_run_stores_its_tool_activity_on_the_reply(tmp_path):
+    [reply] = _finalize(tmp_path, ToolBackend())
+    activity = reply.activity
+    assert [(t.name, t.count, t.errors) for t in activity.tools] == [
+        ("web_search", 1, 0),
+        ("terminal", 3, 1),
+    ]
+    assert activity.duration_seconds == 41.3
+    assert activity.label == "Used web_search, terminal 3× · 41s"
+    # and it reaches the client shape unchanged
+    out = MessageOut.model_validate(reply)
+    assert out.activity.label == activity.label
+
+
+class NoToolBackend(StubBackend):
+    async def stream_events(self, run_id, *, session_id):
+        yield AssistantDelta(session_id=session_id, run_id=run_id, text="Hi")
+        yield RunCompleted(session_id=session_id, run_id=run_id, output="Hi")
+
+
+def test_a_run_without_tools_has_no_activity(tmp_path):
+    [reply] = _finalize(tmp_path, NoToolBackend())
+    assert reply.activity is None
+
+
+def test_activity_label_wording():
+    use = lambda name, n: ToolUsage(name=name, count=n)  # noqa: E731
+    assert runs.activity_label([use("terminal", 3)], 41) == "Ran terminal 3× · 41s"
+    assert runs.activity_label([use("terminal", 1)], 8) == "Ran terminal · 8s"
+    assert runs.activity_label([use("web_search", 1), use("terminal", 2)], 8.2) == (
+        "Used web_search, terminal 2× · 8s"
+    )
+    assert runs.format_duration(65) == "1m 05s"
+    assert runs.format_duration(59.6) == "1m 00s"
+    assert runs.format_duration(3720) == "1h 02m"
+
+
+def test_messages_stored_before_activity_existed_read_back_as_none():
+    old = '{"id":"m1","session_id":"s1","role":"assistant","content":"hi","created_at":"2026-01-01T00:00:00Z"}'
+    assert MessageDoc.model_validate_json(old).activity is None

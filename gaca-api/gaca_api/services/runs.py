@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import datetime
 from typing import TYPE_CHECKING
 from collections.abc import Awaitable, Callable, Sequence
 
@@ -20,8 +21,16 @@ from ..db import events as events_db
 from ..db import messages as messages_db
 from ..db import sessions as sessions_db
 from ..db import attachments as attachments_db
-from ..models.message import AttachmentMeta, MessageDoc
-from ..schemas.event import GacaEvent, RunCompleted, RunFailed, RunHeartbeat
+from ..models.base import utcnow
+from ..models.message import AttachmentMeta, MessageDoc, RunActivity, ToolUsage
+from ..schemas.event import (
+    GacaEvent,
+    RunCompleted,
+    RunFailed,
+    RunHeartbeat,
+    ToolCompleted,
+    ToolStarted,
+)
 from ..schemas.message import ImageInput, MessageOut
 from .exceptions import NotFound
 
@@ -103,12 +112,17 @@ async def read_run(
     run_id: str,
     *,
     on_settled: OnSettled | None = None,
+    started_at: datetime | None = None,
 ) -> None:
     """Drain a run's events: persist (stamps seq), publish live, finalize on end.
 
     While the engine is quiet, publishes an ephemeral RunHeartbeat every
     HEARTBEAT_INTERVAL so clients can tell "working" from "hung".
+
+    `started_at` is when the run began, for the finished message's activity
+    duration; it defaults to now, i.e. when reading starts.
     """
+    started_at = started_at or utcnow()
     events = backend.stream_events(run_id, session_id=session_id).__aiter__()
     pending: asyncio.Future | None = None
     last_event_at = time.monotonic()
@@ -133,14 +147,18 @@ async def read_run(
             except StopAsyncIteration:
                 break
             last_event_at = time.monotonic()
-            await _handle_event(session_id, run_id, event, on_settled)
+            await _handle_event(session_id, run_id, event, on_settled, started_at)
     finally:
         if pending is not None:
             pending.cancel()
 
 
 async def _handle_event(
-    session_id: str, run_id: str, event: GacaEvent, on_settled: OnSettled | None
+    session_id: str,
+    run_id: str,
+    event: GacaEvent,
+    on_settled: OnSettled | None,
+    started_at: datetime,
 ) -> None:
     # Persist FIRST — the insert assigns seq (Last-Event-ID) atomically.
     event.seq = await events_db.insert(event)
@@ -156,12 +174,57 @@ async def _handle_event(
     # so the next turn's history replay includes it.
     if isinstance(event, RunCompleted):
         assistant = MessageDoc(
-            session_id=session_id, role="assistant", content=event.output
+            session_id=session_id,
+            role="assistant",
+            content=event.output,
+            activity=await _activity(run_id, started_at, event.created_at),
         )
         await messages_db.insert(assistant)
 
     if on_settled is not None and isinstance(event, (RunCompleted, RunFailed)):
         await on_settled(event)
+
+
+async def _activity(run_id: str, started_at: datetime, ended_at: datetime) -> RunActivity | None:
+    """Summarize a finished run's tool use from its persisted events. None when
+    it used no tools — a plain answer needs no "what I did" line."""
+    tallies: dict[str, ToolUsage] = {}  # dicts keep insertion order = first use
+    completed: dict[str, int] = {}
+    for event in await events_db.find_by_run(run_id, ("tool.started", "tool.completed")):
+        usage = tallies.setdefault(event.tool, ToolUsage(name=event.tool, count=0))
+        if isinstance(event, ToolStarted):
+            usage.count += 1
+        elif isinstance(event, ToolCompleted):
+            completed[event.tool] = completed.get(event.tool, 0) + 1
+            usage.errors += int(event.error)
+    if not tallies:
+        return None
+    # An engine that reports only completions still ran the tool that many times.
+    for usage in tallies.values():
+        usage.count = max(usage.count, completed.get(usage.name, 0))
+    tools = list(tallies.values())
+    duration = max(0.0, (ended_at - started_at).total_seconds())
+    return RunActivity(
+        tools=tools, duration_seconds=round(duration, 1), label=activity_label(tools, duration)
+    )
+
+
+def activity_label(tools: Sequence[ToolUsage], duration_seconds: float) -> str:
+    """"Ran terminal 3× · 41s" / "Used web_search, terminal 2× · 8s". Worded here,
+    not in a client, so every client says the same thing."""
+    names = ", ".join(t.name if t.count <= 1 else f"{t.name} {t.count}×" for t in tools)
+    verb = "Ran" if len(tools) == 1 else "Used"
+    return f"{verb} {names} · {format_duration(duration_seconds)}"
+
+
+def format_duration(seconds: float) -> str:
+    """8s / 1m 05s / 1h 02m — the coarsest two units that matter."""
+    total = int(round(seconds))
+    if total < 60:
+        return f"{total}s"
+    if total < 3600:
+        return f"{total // 60}m {total % 60:02d}s"
+    return f"{total // 3600}h {total % 3600 // 60:02d}m"
 
 
 def chat_reply_notifier(
@@ -175,6 +238,7 @@ def chat_reply_notifier(
     preview, so what the notification shows matches what the app shows. Push is
     best effort: a failure here never touches the run.
     """
+    from ..utils import artifact_links
     from . import push as push_service
     from .sessions import PREVIEW_MAX, tidy
 
@@ -182,7 +246,7 @@ def chat_reply_notifier(
 
     async def notify(event: GacaEvent) -> None:
         if isinstance(event, RunCompleted):
-            body = tidy(event.output, PREVIEW_MAX) or "Replied."
+            body = tidy(artifact_links.strip(event.output), PREVIEW_MAX) or "Replied."
             await push_service.notify_chat(
                 user_id, title=title, body=body, session_id=session_id
             )

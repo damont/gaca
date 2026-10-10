@@ -43,3 +43,21 @@ async def find_by_session(session_id: str, after_seq: int = 0) -> list[GacaEvent
         event.seq = row["seq"]  # the column is authoritative
         events.append(event)
     return events
+
+
+async def find_by_run(run_id: str, types: tuple[str, ...]) -> list[GacaEvent]:
+    """One run's events of the given types, oldest first — e.g. its tool calls,
+    to summarize what the run did once it's over."""
+    placeholders = ", ".join("?" for _ in types)
+    async with connection().execute(
+        f"SELECT seq, doc FROM events WHERE run_id = ? AND type IN ({placeholders}) ORDER BY seq",
+        (run_id, *types),
+    ) as cursor:
+        rows = await cursor.fetchall()
+
+    events: list[GacaEvent] = []
+    for row in rows:
+        event = GacaEventAdapter.validate_json(row["doc"])
+        event.seq = row["seq"]
+        events.append(event)
+    return events
