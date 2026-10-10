@@ -5,6 +5,7 @@ health probe, and the session router.
 """
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
@@ -27,6 +28,9 @@ from .services.exceptions import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await client.connect()  # startup: open SQLite + ensure the schema
@@ -43,10 +47,13 @@ async def lifespan(app: FastAPI):
             await client.close()
         raise
     yield
-    push_service.close()  # shutdown, reverse order
-    await agent_runtime.close()
-    await event_bus.aclose()
-    await client.close()
+    # Shutdown, reverse order. Every step is attempted even if an earlier one fails: not being
+    # able to close Firebase must not skip closing the database.
+    for step in (push_service.aclose, agent_runtime.close, event_bus.aclose, client.close):
+        try:
+            await step()
+        except Exception:
+            logger.exception("shutdown step %s failed", getattr(step, "__qualname__", step))
 
 
 app = FastAPI(
