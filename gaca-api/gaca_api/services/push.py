@@ -62,6 +62,13 @@ def close() -> None:
         _app = None
 
 
+async def aclose() -> None:
+    """Shut Firebase down from async code. firebase_admin's cleanup calls asyncio.run() once its
+    messaging client exists (after the first push), which raises inside a running event loop, so
+    it has to run in a worker thread that has no loop of its own."""
+    await asyncio.to_thread(close)
+
+
 async def _send_to_user(
     user_id: str, *, title: str, body: str, data: dict[str, str], channel_id: str
 ) -> None:
