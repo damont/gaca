@@ -71,5 +71,21 @@ class Settings(BaseSettings):
     # alert creation or delegation, which must never depend on it.
     fcm_credentials_path: str | None = None
 
+    # APNs (iPhones), sent directly to Apple rather than through FCM — see
+    # services/apns.py. Path to the .p8 auth key from the Apple Developer
+    # portal (Certificates, Identifiers & Profiles → Keys, with "Apple Push
+    # Notifications service" enabled). A secret like fcm_credentials_path, so
+    # likewise a file path mounted in at deploy time. The key id is shown next
+    # to the key in the portal; the team id is the 10-character id on the
+    # Membership page. Neither of those two is secret on its own. All three
+    # must be set or iOS push is disabled (no-op), exactly like FCM.
+    apns_key_path: str | None = None
+    apns_key_id: str | None = None
+    apns_team_id: str | None = None
+
+    # The iOS app's bundle id — APNs routes by it (the apns-topic header) and
+    # rejects a token that belongs to a different app (DeviceTokenNotForTopic).
+    apns_topic: str = "dev.monts.gaca"
+
 
 settings = Settings()

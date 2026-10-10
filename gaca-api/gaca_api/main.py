@@ -32,9 +32,9 @@ async def lifespan(app: FastAPI):
     await client.connect()  # startup: open SQLite + ensure the schema
     await event_bus.connect()  # bus for read_run -> open SSE streams
     agent_runtime.connect()  # resolve the configured engine module
-    push_service.connect()  # Firebase Admin SDK, if GACA_FCM_CREDENTIALS_PATH is set
+    push_service.connect()  # Firebase Admin SDK / APNs client, whichever is configured
     yield
-    push_service.close()  # shutdown, reverse order
+    await push_service.close()  # shutdown, reverse order
     await agent_runtime.close()
     await event_bus.aclose()
     await client.close()

@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -478,9 +478,9 @@ dependencies = [
     { name = "fastapi" },
     { name = "firebase-admin" },
     { name = "google-auth", extra = ["requests"] },
-    { name = "httpx" },
+    { name = "httpx", extra = ["http2"] },
     { name = "pydantic-settings" },
-    { name = "pyjwt" },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "sse-starlette" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -499,9 +499,9 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "firebase-admin", specifier = ">=6.5" },
     { name = "google-auth", extras = ["requests"], specifier = ">=2.29.0" },
-    { name = "httpx", specifier = ">=0.27" },
+    { name = "httpx", extras = ["http2"], specifier = ">=0.27" },
     { name = "pydantic-settings", specifier = ">=2.6" },
-    { name = "pyjwt", specifier = ">=2.8" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.8" },
     { name = "sse-starlette", specifier = ">=2.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
 ]
