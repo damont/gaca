@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime
 
 from ..db import artifacts as artifacts_db
+from ..db import events as events_db
 from ..db import messages as messages_db
 from ..db import sessions as sessions_db
 from ..models.message import MessageDoc
@@ -12,6 +14,7 @@ from ..models.session import SessionDoc
 from ..schemas.message import ArtifactRefOut, MessageOut
 from ..schemas.session import SessionDetail, SessionOut
 from ..utils import artifact_links
+from . import runs
 from .exceptions import NotFound
 
 
@@ -125,12 +128,33 @@ async def messages_out(user_id: str, messages: list[MessageDoc]) -> list[Message
     ]
 
 
+async def resume_point(session_id: str) -> tuple[tuple[str, datetime] | None, int]:
+    """(the in-flight run if any, the Last-Event-ID to open the stream with).
+
+    With a run in flight that's one before the run's first persisted event, or
+    the session's latest seq if it hasn't emitted any yet; otherwise just the
+    latest seq. Either way the replay holds the live run's events and no older
+    ones — finished runs are already in the transcript.
+    """
+    active = runs.active_run(session_id)
+    if active is not None:
+        first = await events_db.min_seq_for_run(session_id, active[0])
+        if first is not None:
+            return active, first - 1
+    return active, await events_db.max_seq(session_id)
+
+
 async def get_detail(user_id: str, session_id: str) -> SessionDetail:
-    """GET /sessions/{id}: the session, its labels, and its rendered transcript."""
+    """GET /sessions/{id}: the session, its labels, its rendered transcript, and
+    whether a run is in flight (with where to resume its stream)."""
     session, messages, labels = await get_with_messages(user_id, session_id)
+    active, resume_seq = await resume_point(session_id)
     return SessionDetail(
         **SessionOut.model_validate(session).model_dump(exclude={"summary", "preview"}),
         summary=labels.summary,
         preview=labels.preview,
         messages=await messages_out(user_id, messages),
+        running=active is not None,
+        run_started_at=active[1] if active else None,
+        resume_seq=resume_seq,
     )

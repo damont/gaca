@@ -61,3 +61,24 @@ async def find_by_run(run_id: str, types: tuple[str, ...]) -> list[GacaEvent]:
         event.seq = row["seq"]
         events.append(event)
     return events
+
+
+async def max_seq(session_id: str) -> int:
+    """The session's latest seq, 0 if it has no events — "everything up to here"
+    as a Last-Event-ID."""
+    async with connection().execute(
+        "SELECT MAX(seq) AS seq FROM events WHERE session_id = ?", (session_id,)
+    ) as cursor:
+        row = await cursor.fetchone()
+    return row["seq"] or 0
+
+
+async def min_seq_for_run(session_id: str, run_id: str) -> int | None:
+    """The first seq a run persisted in this session, None if it hasn't persisted
+    any yet. Uses the (session_id, seq) index; a session's runs are few."""
+    async with connection().execute(
+        "SELECT MIN(seq) AS seq FROM events WHERE session_id = ? AND run_id = ?",
+        (session_id, run_id),
+    ) as cursor:
+        row = await cursor.fetchone()
+    return row["seq"]

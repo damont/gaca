@@ -274,3 +274,89 @@ def test_activity_label_wording():
 def test_messages_stored_before_activity_existed_read_back_as_none():
     old = '{"id":"m1","session_id":"s1","role":"assistant","content":"hi","created_at":"2026-01-01T00:00:00Z"}'
     assert MessageDoc.model_validate_json(old).activity is None
+
+
+# --- in-flight tracking: SessionDetail.running / resume_seq -----------------
+
+class BlockingBackend(StubBackend):
+    """Emits one tool event, then holds the run open until `release` is set —
+    lets a test look at the session mid-run."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.release = asyncio.Event()
+        self.started = asyncio.Event()  # set before the first event
+        self.emitted = asyncio.Event()  # set once the tool event is out
+
+    async def start_run(self, **kwargs) -> str:
+        await super().start_run(**kwargs)
+        return "run_blocking"
+
+    async def stream_events(self, run_id, *, session_id):
+        self.started.set()
+        await self.release.wait()
+        self.release.clear()
+        yield ToolStarted(session_id=session_id, run_id=run_id, tool="terminal")
+        self.emitted.set()
+        await self.release.wait()
+        yield RunCompleted(session_id=session_id, run_id=run_id, output="Done")
+
+
+def test_session_detail_reports_the_in_flight_run_and_where_to_resume(tmp_path):
+    from gaca_api.services import sessions as session_service
+
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def main():
+        await client.connect()
+        try:
+            s = await session_service.create("u1", None, "hermes")
+            # An earlier, finished run: its events are history, not to be replayed.
+            await runs.start_turn(StubBackend(), s.id, "first")
+            await asyncio.gather(*list(runs._background))
+            idle = await session_service.get_detail("u1", s.id)
+
+            backend = BlockingBackend()
+            await runs.start_turn(backend, s.id, "second")
+            just_posted = await session_service.get_detail("u1", s.id)  # no events yet
+            await backend.started.wait()
+            backend.release.set()
+            await backend.emitted.wait()
+            await asyncio.sleep(0.05)  # let read_run persist the tool event
+            mid_run = await session_service.get_detail("u1", s.id)
+
+            backend.release.set()
+            await asyncio.gather(*list(runs._background))
+            after = await session_service.get_detail("u1", s.id)
+            return idle, just_posted, mid_run, after
+        finally:
+            await client.close()
+
+    idle, just_posted, mid_run, after = asyncio.run(main())
+    # first run persisted seqs 1-3 (delta, tool, completed)
+    assert (idle.running, idle.run_started_at, idle.resume_seq) == (False, None, 3)
+    assert just_posted.running and just_posted.run_started_at is not None
+    assert just_posted.resume_seq == 3  # nothing from the new run yet
+    assert mid_run.running and mid_run.resume_seq == 3  # replay starts at seq 4, the new run's first
+    assert (after.running, after.run_started_at, after.resume_seq) == (False, None, 5)
+    assert runs.active_run(after.id) is None
+
+
+def test_a_finished_older_run_does_not_clear_a_newer_one(tmp_path):
+    """Two runs in one session can overlap (a second message sent mid-run): the
+    first one ending must not mark the session idle while the second goes on."""
+    settings.db_path = str(tmp_path / "t.db")
+    newer = ("run_newer", datetime.now(timezone.utc))
+
+    async def main():
+        await client.connect()
+        try:
+            await sessions_db.insert(SessionDoc(id="s1", user_id="u1"))
+            runs._active["s1"] = newer
+            await runs.read_run(StubBackend(), "s1", "run_stub")
+            return runs.active_run("s1")
+        finally:
+            runs._active.pop("s1", None)
+            await client.close()
+
+    assert asyncio.run(main()) == newer

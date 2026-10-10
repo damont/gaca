@@ -43,6 +43,18 @@ HEARTBEAT_INTERVAL = 15.0
 # Strong refs to in-flight reader tasks so they aren't garbage-collected mid-run.
 _background: set[asyncio.Task] = set()
 
+# Which session has a run in flight right now: session_id -> (run_id, started_at).
+# In-process on purpose — the reader task that would finish the run lives in
+# this process too, so a restart that empties this has also killed the run, and
+# "not running" is then the truth. Lets GET /sessions/{id} tell a client whether
+# to show a run in progress and where to resume its event stream.
+_active: dict[str, tuple[str, datetime]] = {}
+
+
+def active_run(session_id: str) -> tuple[str, datetime] | None:
+    """(run_id, started_at) of this session's in-flight run, or None."""
+    return _active.get(session_id)
+
 OnSettled = Callable[[GacaEvent], Awaitable[None]]
 
 if TYPE_CHECKING:
@@ -98,8 +110,12 @@ async def start_turn(
         images=[ImageInput(a.doc.content_type, a.data) for a in attachments],
     )
 
+    # Registered here, not only once the task gets scheduled, so a client that
+    # fetches the session straight after its 202 already sees the run.
+    started_at = utcnow()
+    _active[session_id] = (run_id, started_at)
     task = asyncio.create_task(
-        read_run(backend, session_id, run_id, on_settled=on_settled)
+        read_run(backend, session_id, run_id, on_settled=on_settled, started_at=started_at)
     )
     _background.add(task)
     task.add_done_callback(_background.discard)
@@ -123,6 +139,9 @@ async def read_run(
     duration; it defaults to now, i.e. when reading starts.
     """
     started_at = started_at or utcnow()
+    # start_turn normally registered us already; never displace a different
+    # (newer) run that got registered while this task was waiting to start.
+    _active.setdefault(session_id, (run_id, started_at))
     events = backend.stream_events(run_id, session_id=session_id).__aiter__()
     pending: asyncio.Future | None = None
     last_event_at = time.monotonic()
@@ -151,6 +170,10 @@ async def read_run(
     finally:
         if pending is not None:
             pending.cancel()
+        # Only clear our own entry — a newer run in the same session may have
+        # replaced it, and it's still going.
+        if _active.get(session_id, (None,))[0] == run_id:
+            del _active[session_id]
 
 
 async def _handle_event(

@@ -43,8 +43,23 @@ class SessionOut(BaseModel):
 
 
 class SessionDetail(SessionOut):
-    """A session plus its messages — GET /sessions/{id}."""
+    """A session plus its messages — GET /sessions/{id}.
+
+    Also says whether a run is in flight, and where to pick up its event stream:
+    open GET /sessions/{id}/events with Last-Event-ID: `resume_seq` and the
+    stream replays exactly the in-flight run's progress (nothing older — those
+    runs are already in `messages`), then continues live. So a client never has
+    to guess which replayed events are stale.
+    """
     messages: list[MessageOut] = []
+    # A run for this session is in flight in the API right now. Cleared when it
+    # completes or fails — and by a server restart, which ends the run too.
+    running: bool = False
+    run_started_at: datetime | None = None
+    # Not running: the session's latest event seq (0 if none) — resume from
+    # there and only new events arrive. Running: just before the run's first
+    # event, so its progress so far is replayed.
+    resume_seq: int = 0
 
 
 class SessionList(BaseModel):
