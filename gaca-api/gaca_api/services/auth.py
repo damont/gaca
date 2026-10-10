@@ -24,7 +24,9 @@ async def find_by_id(user_id: str) -> UserDoc | None:
 
 
 async def find_by_email(email: str) -> UserDoc | None:
-    return await users_db.find_by_email(email)
+    # Emails are stored lowercase, so look up lowercase: a phone keyboard that capitalises the
+    # first letter must not turn a correct sign-in into a 401.
+    return await users_db.find_by_email(email.strip().lower())
 
 
 async def find_by_google_sub(google_sub: str) -> UserDoc | None:
@@ -100,7 +102,7 @@ async def create_user(name: str, email: str, password: str) -> UserDoc:
     The plaintext stops here — it is hashed on the way in and never stored.
     """
     user = UserDoc(
-        email=email,
+        email=email.strip().lower(),
         display_name=name,
         hashed_password=hash_password(password),
     )

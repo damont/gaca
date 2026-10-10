@@ -110,7 +110,7 @@ def test_the_code_is_forgiving_about_case_and_dashes(http):
     assert claim(http, code="abcd-2345 efgh-6789").status_code == 201
 
 
-def test_a_wrong_code_is_refused_and_five_burn_the_real_one(http):
+def test_a_wrong_code_is_refused_and_enough_wrong_ones_burn_the_real_one(http):
     plant_code(http.db)
     for _ in range(setup_service.MAX_WRONG_ATTEMPTS - 1):
         assert claim(http, code="WRONG-WRONG-WRONG").status_code == 401
@@ -200,3 +200,19 @@ def test_a_bad_google_token_is_refused_before_the_code_is_touched(http, monkeypa
     r = http.post("/api/setup/claim/google", json={"code": CODE, "id_token": "t"})
     assert r.status_code == 401
     assert count(http.db, "server_meta") == 1  # code intact: a forged token cannot burn it
+
+
+def test_signing_in_does_not_depend_on_email_capitalisation(http):
+    plant_code(http.db)
+    assert claim(http, email="David.Owner@Example.com").status_code == 201
+    for typed in ("david.owner@example.com", "David.Owner@Example.com", "  DAVID.OWNER@EXAMPLE.COM "):
+        ok = http.post("/api/auth/login", json={"email": typed.strip(), "password": "correct horse"})
+        assert ok.status_code == 200, typed
+    con = sqlite3.connect(http.db)
+    assert con.execute("SELECT email FROM users").fetchone()[0] == "david.owner@example.com"
+    con.close()
+
+
+def test_a_code_that_expires_this_instant_is_expired(http):
+    plant_code(http.db, minutes=0)
+    assert claim(http).status_code == 403

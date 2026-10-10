@@ -16,7 +16,7 @@ import hashlib
 import hmac
 import secrets
 import weakref
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from ..db import meta as meta_db
 from ..db import users as users_db
@@ -29,7 +29,9 @@ _KEY = "setup_code"
 _ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 CODE_LENGTH = 16
 DEFAULT_TTL_MINUTES = 60
-MAX_WRONG_ATTEMPTS = 5
+# Ten, not five: typing 16 characters on a phone goes wrong. Online guessing against an
+# 80-bit code is hopeless either way; the cap just stops a determined flood.
+MAX_WRONG_ATTEMPTS = 10
 
 
 class SetupRefused(Exception):
@@ -87,7 +89,7 @@ async def _check_code(code: str) -> None:
         raise SetupRefused(
             "no_code", "No setup code is active. Run `gaca-api setup-code` on the server."
         )
-    if utcnow().isoformat() > state["expires_at"]:
+    if utcnow() >= datetime.fromisoformat(state["expires_at"]):
         await meta_db.delete(_KEY)
         raise SetupRefused("expired", "That setup code has expired. Run `gaca-api setup-code` for a new one.")
     if not hmac.compare_digest(_digest(code), state["hash"]):
@@ -106,7 +108,7 @@ async def claim_with_password(code: str, name: str, email: str, password: str) -
         if await is_claimed():
             raise SetupRefused("claimed", "This server already has an owner.")
         await _check_code(code)
-        user = await auth_service.create_user(name=name, email=email.lower(), password=password)
+        user = await auth_service.create_user(name=name, email=email, password=password)
         await meta_db.delete(_KEY)
         return user
 

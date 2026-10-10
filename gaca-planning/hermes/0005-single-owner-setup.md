@@ -22,7 +22,7 @@ The app learns what to show from `GET /api/setup` (public): `claimed`, `sign_in`
 ## Why the first claim needs a code
 A fresh public URL belongs to whoever reaches it first. The one-time **setup code** is shown only on
 the server's console, so only the operator has it. Stored hashed, 60-minute expiry, single use,
-burned after 5 wrong guesses, replaced by `gaca-api setup-code`. Once an owner exists the claim
+burned after 10 wrong guesses, replaced by `gaca-api setup-code`. Once an owner exists the claim
 endpoints answer 409 forever.
 
 ## Security properties (PR 1)
