@@ -23,6 +23,10 @@ from ..config import settings
 _conn: aiosqlite.Connection | None = None
 
 _SCHEMA = """
+CREATE TABLE IF NOT EXISTS server_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS users (
     id         TEXT PRIMARY KEY,
     email      TEXT NOT NULL UNIQUE,

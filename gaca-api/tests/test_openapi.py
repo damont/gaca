@@ -19,7 +19,9 @@ def test_every_route_is_mounted_under_api():
 def test_schema_lists_the_auth_and_session_paths():
     paths = app.openapi()["paths"]
     for expected in (
-        "/api/auth/register",
+        "/api/setup",
+        "/api/setup/claim",
+        "/api/setup/claim/google",
         "/api/auth/login",
         "/api/auth/me",
         "/api/auth/google",

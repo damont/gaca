@@ -21,6 +21,19 @@ async def insert(user: UserDoc) -> None:
     await conn.commit()
 
 
+async def count() -> int:
+    async with connection().execute("SELECT COUNT(*) AS n FROM users") as cursor:
+        row = await cursor.fetchone()
+    return int(row["n"])
+
+
+async def first() -> UserDoc | None:
+    """The earliest-created user — on a single-owner server, the owner."""
+    async with connection().execute("SELECT doc FROM users ORDER BY created_at LIMIT 1") as cursor:
+        row = await cursor.fetchone()
+    return UserDoc.model_validate_json(row["doc"]) if row is not None else None
+
+
 async def replace(user: UserDoc) -> None:
     """Overwrite an existing row in place, keeping its id.
 
