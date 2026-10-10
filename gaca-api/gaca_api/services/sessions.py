@@ -43,6 +43,9 @@ class Labels:
 def tidy(text: str, limit: int) -> str | None:
     """One line, markdown noise dropped, cut at a word boundary with an ellipsis."""
     text = re.sub(r"```.*?```", " ", text, flags=re.S)
+    # List markers at the start of a line ("- ", "* ", "1. ") would read as stray
+    # dashes once the lines are joined.
+    text = re.sub(r"(?m)^\s*(?:[-+*]|\d+[.)])\s+", "", text)
     text = re.sub(r"[*_`#>]+", "", text)
     text = re.sub(r"\s+", " ", text).strip()
     if not text:

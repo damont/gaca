@@ -292,3 +292,12 @@ def test_last_activity_is_the_latest_message_else_creation(tmp_path):
     assert [labels.last_activity_at for _, labels in listed] == [later, None]  # None -> created_at
     assert quiet_detail.last_activity_at == quiet.created_at
     assert busy_detail.last_activity_at == later
+
+
+def test_tidy_drops_list_markers():
+    from gaca_api.services.sessions import tidy
+
+    text = "Here's what I found:\n\n- **9:30** Standup\n* Lunch\n1. Dentist\n2) Gym"
+    assert tidy(text, 200) == "Here's what I found: 9:30 Standup Lunch Dentist Gym"
+    # A dash inside a sentence stays.
+    assert tidy("Cleared 12GB - should hold", 200) == "Cleared 12GB - should hold"
