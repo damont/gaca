@@ -35,6 +35,13 @@ def _parser() -> argparse.ArgumentParser:
     code.add_argument("--qr", action="store_true", help="also print a QR code of the app link (needs --url)")
     sub.add_parser("status", help="is this server claimed yet?")
 
+    uninstall = sub.add_parser("uninstall", help="stop and remove the service and tunnel (keeps your data unless --purge)")
+    uninstall.add_argument("--repo-root", required=True)
+    uninstall.add_argument("--name", default="gaca-api")
+    uninstall.add_argument("--data-dir", default=None)
+    uninstall.add_argument("--purge", action="store_true", help="ALSO delete the database and .env (irreversible)")
+    uninstall.add_argument("--yes", action="store_true", help="do not ask for confirmation of --purge")
+
     install = sub.add_parser("install", help="set this server up (normally run via ./install.sh)")
     install.add_argument("--repo-root", required=True)
     install.add_argument("--service", choices=["auto", "system", "user"], default="auto", help="system: sandboxed, needs sudo (recommended). user: no root, no sandbox")
@@ -199,6 +206,17 @@ async def _with_database(coro_factory) -> int:
         await client.close()
 
 
+def _uninstall(args) -> int:
+    from .installer.run import Options, uninstall
+
+    if args.purge and not args.yes:
+        if not sys.stdin.isatty() or input("This permanently deletes the database (chats, account) and .env. Type DELETE to confirm: ").strip() != "DELETE":
+            print("Not purging. (Use --yes to skip this question.)", file=sys.stderr)
+            return 1
+    data_dir = Path(args.data_dir).expanduser() if args.data_dir else None
+    return uninstall(Options(repo_root=Path(args.repo_root).resolve(), name=args.name, data_dir=data_dir), purge=args.purge)
+
+
 def _install(args) -> int:
     from .installer.run import Options, run
 
@@ -222,6 +240,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "install":
         return _install(args)
+    if args.command == "uninstall":
+        return _uninstall(args)
     if args.command == "setup-code":
         return asyncio.run(_with_database(lambda: _setup_code(args.ttl, args.url, args.qr)))
     if args.command == "status":

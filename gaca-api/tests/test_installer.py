@@ -369,3 +369,62 @@ def test_no_hermes_is_not_an_error(flow, capsys):
     flow.service, flow.wait_for_claim = "user", False
     assert run_mod.run(flow, FakeShell()) == 0
     assert "gaca-api hermes connect" in capsys.readouterr().out
+
+
+# ── uninstall ────────────────────────────────────────────────────────
+
+@pytest.fixture
+def installed(flow, monkeypatch, tmp_path):
+    """A user-mode install laid out on disk (via the real installer), plus a fake system unit dir."""
+    flow.service = "user"
+    assert run_mod.run(flow, FakeShell()) == 0
+    monkeypatch.setattr(run_mod, "SYSTEM_UNIT_DIR", tmp_path / "etc-systemd")
+    (flow.config_dir / "tunnel").mkdir(parents=True, exist_ok=True)
+    (flow.config_dir / "tunnel" / "compose.yml").write_text("name: x\n")
+    (flow.config_dir / "tunnel" / "cloudflared.token").write_text("secret-token\n")
+    return flow
+
+
+def test_uninstall_removes_the_service_and_tunnel_but_keeps_data(installed, capsys):
+    shell = FakeShell()
+    unit = Path.home() / ".config" / "systemd" / "user" / "gaca-api.service"
+    assert unit.exists()
+    assert run_mod.uninstall(installed, shell) == 0
+    out = capsys.readouterr().out
+    assert not unit.exists()
+    assert shell.called("systemctl", "--user", "disable", "--now", "gaca-api.service")
+    assert shell.called("docker", "rm", "-f", "gaca-quick-tunnel") and shell.called("docker", "compose")
+    assert not (installed.config_dir / "tunnel").exists()  # the stored tunnel token is gone
+    assert installed.data_dir.exists() and (installed.repo_root / ".env").exists()
+    assert "untouched" in out and "--purge" in out
+
+
+def test_purge_deletes_the_database_and_secrets(installed):
+    (installed.data_dir / "gaca.db").write_text("chats")
+    assert run_mod.uninstall(installed, FakeShell(), purge=True) == 0
+    assert not installed.data_dir.exists() and not (installed.repo_root / ".env").exists()
+
+
+def test_uninstall_twice_is_fine(installed, capsys):
+    run_mod.uninstall(installed, FakeShell())
+    capsys.readouterr()
+    assert run_mod.uninstall(installed, FakeShell()) == 0
+    assert "no service found" in capsys.readouterr().out
+
+
+def test_removing_a_system_service_without_root_leaves_one_command(installed, tmp_path, capsys):
+    (tmp_path / "etc-systemd").mkdir()
+    (tmp_path / "etc-systemd" / "gaca-api.service").write_text("[Unit]\n")
+    shell = FakeShell()
+    assert run_mod.uninstall(installed, shell) == run_mod.EXIT_NEEDS_ROOT
+    script = installed.config_dir / "uninstall-service.sh"
+    assert "sudo bash" in capsys.readouterr().out and "systemctl disable --now gaca-api" in script.read_text()
+    assert not shell.called("sudo", "bash")
+
+
+def test_purge_from_the_command_line_needs_confirmation(installed, monkeypatch, capsys):
+    from gaca_api import cli
+    monkeypatch.setattr("sys.stdin", open(os.devnull))  # no terminal, no --yes
+    code = cli.main(["uninstall", "--repo-root", str(installed.repo_root), "--data-dir", str(installed.data_dir), "--purge"])
+    assert code == 1 and installed.data_dir.exists()
+    assert "Not purging" in capsys.readouterr().err

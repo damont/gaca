@@ -35,4 +35,9 @@ fi
 say "Installing dependencies..."
 (cd gaca-api && uv sync --frozen --no-dev)
 
+# `./install.sh uninstall [--purge]` stops and removes the service and tunnel (keeps your data unless --purge).
+if [ "${1:-}" = "uninstall" ]; then
+  shift
+  exec gaca-api/.venv/bin/gaca-api uninstall --repo-root "$PWD" "$@"
+fi
 exec gaca-api/.venv/bin/gaca-api install --repo-root "$PWD" "$@"
