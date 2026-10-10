@@ -50,5 +50,7 @@ build-backend = "hatchling.build"
 # Tell hatchling exactly which package directory to put in the wheel. (It would
 # usually infer gaca_api/ from the project name, but being explicit is clearer
 # and avoids surprises if we add more top-level modules later.)
+# Everything under gaca_api/ ships, not just .py — including static/artifact-sdk.js,
+# which services/artifact_page.py reads via importlib.resources at runtime.
 [tool.hatch.build.targets.wheel]
 packages = ["gaca_api"]

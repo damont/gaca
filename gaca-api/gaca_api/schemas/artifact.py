@@ -262,3 +262,11 @@ class EventsHandled(BaseModel):
 
 class HandledResult(BaseModel):
     handled: int
+
+
+# ── page calls ───────────────────────────────────────────────────────────────
+class ArtifactCall(BaseModel):
+    """One `window.app.*` call from an artifact page, forwarded verbatim by the client's
+    native bridge: the SDK's method name and its args object."""
+    method: str = Field(max_length=64)
+    args: dict[str, Any] = Field(default_factory=dict)

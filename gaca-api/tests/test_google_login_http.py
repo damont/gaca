@@ -12,6 +12,7 @@ def verify_calls(tmp_path, monkeypatch):
     """Stand in for Google's verifier: record the audience it was asked to
     accept and return a valid identity, so no network or real token is needed."""
     settings.db_path = str(tmp_path / "t.db")
+    monkeypatch.setattr(settings, "agent_engine", "hermes")  # lifespan needs one; never contacted
     calls = []
 
     def fake_verify(token, request, audience=None):
