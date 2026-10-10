@@ -174,8 +174,8 @@ class FakeBackend:
     async def describe_profile(self):
         return ProfileInfo(status="online", engine="Hermes 0.20.5")
 
-    async def describe_purpose(self, *, name, access):
-        self.asked = (name, access.host)
+    async def describe_purpose(self, *, name, provisioner):
+        self.asked = (name, provisioner.conn.host)
         if self._error:
             raise self._error
         return self._purpose
@@ -228,7 +228,7 @@ def test_adapter_wraps_ssh_failures_as_profile_read_errors(monkeypatch):
     conn = SSHConnection(host="h", username="u", private_key="k")
     monkeypatch.setattr(ssh, "read_profile_files", boom)
     with pytest.raises(ProfileReadError):
-        asyncio.run(adapter.describe_purpose(name="toolshed", access=conn))
+        asyncio.run(adapter.describe_purpose(name="toolshed", provisioner=ssh.SshProvisioner(conn)))
     monkeypatch.setattr(ssh, "read_profile_files", missing)
     with pytest.raises(ProfileReadError, match="no profile"):
-        asyncio.run(adapter.describe_purpose(name="ghost", access=conn))
+        asyncio.run(adapter.describe_purpose(name="ghost", provisioner=ssh.SshProvisioner(conn)))

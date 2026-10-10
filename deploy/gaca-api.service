@@ -1,0 +1,60 @@
+# GACA API as a host process next to Hermes (GACA_AGENT_ACCESS=local).
+#
+# Install as a SYSTEM unit (needs root once), running as your normal user:
+#   sed -e 's#@USER@#youruser#g' -e 's#@HOME@#/home/youruser#g' deploy/gaca-api.service \
+#     | sudo tee /etc/systemd/system/gaca-api.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now gaca-api
+# Then check the sandbox really applies:  sudo ./deploy/check-sandbox.sh
+#
+# Why a system unit and not `systemctl --user`: the filesystem sandbox below needs a mount
+# namespace. A user manager can only build one with an unprivileged user namespace, which
+# Ubuntu 24.04+ blocks by default (kernel.apparmor_restrict_unprivileged_userns=1). There the
+# options are accepted and then silently NOT applied — the process can still read ~/.ssh.
+#
+# What the sandbox allows: read the code, read Hermes' home, write the GACA data dir and
+# Hermes' profiles/ directory (so `hermes profile create` works). Everything else under the
+# home directory is invisible. If `hermes profile create` needs another path on your install,
+# add it to BindPaths and re-run check-sandbox.sh.
+[Unit]
+Description=GACA API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=@USER@
+WorkingDirectory=@HOME@/gaca/gaca-api
+EnvironmentFile=@HOME@/gaca/.env
+Environment=GACA_AGENT_ACCESS=local
+Environment=GACA_HERMES_HOME=@HOME@/.hermes
+Environment=GACA_HERMES_BIN=@HOME@/.local/bin/hermes
+Environment=GACA_DB_PATH=@HOME@/gaca-data/gaca.db
+# Loopback by default. How the gateway's nginx container reaches this process is a deployment
+# choice (bind the docker bridge address, or 0.0.0.0 behind a firewall) — set GACA_API_HOST.
+Environment=GACA_API_HOST=127.0.0.1
+Environment=GACA_API_PORT=41700
+ExecStart=@HOME@/gaca/gaca-api/.venv/bin/gaca-api
+Restart=on-failure
+RestartSec=3
+
+# --- Sandbox ---------------------------------------------------------
+NoNewPrivileges=yes
+PrivateTmp=yes
+UMask=0077
+ProtectSystem=strict
+ProtectHome=tmpfs
+BindReadOnlyPaths=@HOME@/gaca @HOME@/.hermes @HOME@/.local
+BindPaths=@HOME@/gaca-data @HOME@/.hermes/profiles
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

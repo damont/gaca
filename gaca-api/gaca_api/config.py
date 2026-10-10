@@ -6,6 +6,8 @@ GACA_) or a local .env file. This starts tiny on purpose — we add fields
 """
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -59,6 +61,18 @@ class Settings(BaseSettings):
     # event for this long, the run is treated as failed. Per-event, NOT total —
     # a long but active run won't trip it.
     agent_stream_idle_timeout: float = 180.0
+
+    # How gaca-api reaches the machine Hermes runs on, for discovering and creating crew
+    # members and reading what a crew member is for. "local": gaca-api runs on that same
+    # machine (the supported setup) and reads/acts on HERMES_HOME directly through
+    # provisioning/local.py, which can read a fixed set of Hermes files and run only
+    # `hermes profile create` / `hermes --version`. "ssh": Hermes is on another machine and
+    # each user supplies an SSH login (legacy; stores a private key per user).
+    agent_access: Literal["ssh", "local"] = "ssh"
+    hermes_home: str = "~/.hermes"
+    # The hermes executable for local mode: a name looked up on PATH (and ~/.local/bin) or an
+    # absolute path.
+    hermes_bin: str = "hermes"
 
     # --- Push notifications --------------------------------------------
     # Path to a Firebase service-account JSON key (Firebase console → Project

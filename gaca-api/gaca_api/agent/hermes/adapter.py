@@ -25,8 +25,7 @@ from ...schemas.event import GacaEvent, RunFailed
 from ...schemas.message import ImageInput, MessageOut
 from ...schemas.model import ModelConfig, ModelInfo, ProviderCredential
 from ...schemas.skill import SkillInfo
-from ...models.user import SSHConnection
-from ...provisioning import ssh
+from ...provisioning.base import Provisioner, ProvisioningError
 from ...schemas.crew_profile import ProfileInfo, PurposeInfo
 from . import translate_profile as tp
 from . import translate_purpose as tpu
@@ -262,14 +261,14 @@ class HermesAdapter:
             info.jobs = tp.jobs(got["jobs"])
         return info
 
-    async def describe_purpose(self, *, name: str, access: SSHConnection) -> PurposeInfo:
+    async def describe_purpose(self, *, name: str, provisioner: Provisioner) -> PurposeInfo:
         """What this profile is for: the `description` in its profile.yaml and the persona in
         its SOUL.md. Hermes' API doesn't serve either (only its loopback-only, authenticated
-        dashboard does), so this reads the two small files over SSH — fixed command, read-only,
-        live every time."""
+        dashboard does), so this reads the two small files through the provisioner (local file
+        reads, or a fixed read-only command over SSH) — live every time."""
         try:
-            files = await ssh.read_profile_files(access, name)
-        except (ssh.SSHError, ValueError) as error:
+            files = await provisioner.read_profile_files(name)
+        except (ProvisioningError, ValueError) as error:
             raise ProfileReadError(str(error)) from error
         if files is None:
             raise ProfileReadError(f"no profile called {name!r} on the engine's host")

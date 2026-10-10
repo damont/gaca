@@ -8,6 +8,7 @@ from gaca_api.config import settings
 from gaca_api.db import client
 from gaca_api.db import users as users_db
 from gaca_api.models.user import SSHConnection, UserDoc
+from gaca_api.provisioning import ssh as ssh_provisioning
 from gaca_api.services import auth as auth_service
 from gaca_api.services.exceptions import CrewNotConfigured, InvalidRequest, NotFound
 from gaca_api.utils.auth import hash_password, verify_password
@@ -668,7 +669,7 @@ def _install_fake_discovery(monkeypatch, found: dict):
         return found
 
     monkeypatch.setattr(
-        auth_service.ssh_provisioning, "discover_profiles", fake_discover_profiles
+        ssh_provisioning, "discover_profiles", fake_discover_profiles
     )
 
 
@@ -803,8 +804,8 @@ def _install_fake_provisioning(
             calls.append((name, port_, api_key))
         return address or (port_, "")
 
-    monkeypatch.setattr(auth_service.ssh_provisioning, "next_free_port", fake_next_free_port)
-    monkeypatch.setattr(auth_service.ssh_provisioning, "create_profile", fake_create_profile)
+    monkeypatch.setattr(ssh_provisioning, "next_free_port", fake_next_free_port)
+    monkeypatch.setattr(ssh_provisioning, "create_profile", fake_create_profile)
 
 
 def test_provision_crew_member_raises_crew_not_configured_without_ssh(tmp_path):
