@@ -42,16 +42,6 @@ class MessageResponse(BaseModel):
     message: str
 
 
-class AgentTokenRequest(BaseModel):
-    expires_in_days: int = Field(default=30, ge=1, le=365)
-
-
-class AgentTokenResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-    expires_in_days: int
-
-
 class AgentConnect(BaseModel):
     """Body for POST /agent/connect — first-time setup. Connects the account
     to its one Hermes agent and creates `name` as the first crew member from

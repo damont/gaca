@@ -16,8 +16,13 @@ from urllib.parse import urlencode
 from .config import settings
 from .db import client
 from .db import users as users_db
+from .models.base import utcnow
+from .provisioning import hermes_connect
 from .services import auth as auth_service
 from .services import setup as setup_service
+from .services import tokens as token_service
+from .services.exceptions import InvalidRequest, NotFound
+from .utils import tokens as token_utils
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -29,6 +34,20 @@ def _parser() -> argparse.ArgumentParser:
     code.add_argument("--url", help="the server's public https URL, to also print an app link")
     sub.add_parser("status", help="is this server claimed yet?")
     sub.add_parser("reset-password", help="set a new password for the owner")
+
+    token = sub.add_parser("token", help="manage API tokens (what Hermes skills use)").add_subparsers(dest="token_command", required=True)
+    create = token.add_parser("create", help="mint a token; the secret is printed once")
+    create.add_argument("--name", required=True)
+    create.add_argument("--scopes", default=",".join(token_utils.SCOPES), help="comma-separated: " + ", ".join(token_utils.SCOPES))
+    create.add_argument("--expires-days", type=int, default=None, help="default: never expires")
+    token.add_parser("list", help="list tokens (never shows secrets)")
+    revoke = token.add_parser("revoke", help="revoke a token by id")
+    revoke.add_argument("token_id")
+
+    hermes = sub.add_parser("hermes", help="wire Hermes to this server").add_subparsers(dest="hermes_command", required=True)
+    connect = hermes.add_parser("connect", help="mint a token per Hermes profile and write it into the profile's .env")
+    connect.add_argument("--hermes-home", default=None, help="default: GACA_HERMES_HOME or ~/.hermes")
+    connect.add_argument("--base-url", default=None, help="default: http://127.0.0.1:<api port>")
     return parser
 
 
@@ -71,6 +90,68 @@ async def _reset_password() -> int:
     return 0
 
 
+async def _owner_or_none():
+    owner = await users_db.first()
+    if owner is None:
+        print("This server has no owner yet; use `gaca-api setup-code`.", file=sys.stderr)
+    return owner
+
+
+async def _token_create(name: str, scopes: str, expires_days: int | None) -> int:
+    owner = await _owner_or_none()
+    if owner is None:
+        return 1
+    try:
+        doc, secret = await token_service.create(owner, name, [s.strip() for s in scopes.split(",") if s.strip()], expires_days)
+    except InvalidRequest as error:
+        print(error, file=sys.stderr)
+        return 1
+    print(f"Token {doc.id} ({doc.name}; scopes: {', '.join(doc.scopes)})")
+    print(f"Secret (shown once, store it now):  {secret}")
+    return 0
+
+
+async def _token_list() -> int:
+    owner = await _owner_or_none()
+    if owner is None:
+        return 1
+    for t in await token_service.list_tokens(owner):
+        state = "revoked" if t.revoked_at else ("expired" if t.expires_at and t.expires_at <= utcnow() else "active")
+        used = t.last_used_at.isoformat(timespec="seconds") if t.last_used_at else "never"
+        print(f"{t.id}  {state:8}  {t.name:20}  scopes={','.join(t.scopes)}  last used: {used}")
+    return 0
+
+
+async def _token_revoke(token_id: str) -> int:
+    owner = await _owner_or_none()
+    if owner is None:
+        return 1
+    try:
+        await token_service.revoke(owner, token_id)
+    except NotFound:
+        print(f"No token {token_id!r}.", file=sys.stderr)
+        return 1
+    print(f"Revoked {token_id}.")
+    return 0
+
+
+async def _hermes_connect(hermes_home: str | None, base_url: str | None) -> int:
+    owner = await _owner_or_none()
+    if owner is None:
+        return 1
+    home = Path(hermes_home or settings.hermes_home).expanduser()
+    if not home.is_dir():
+        print(f"No Hermes home at {home}. Pass --hermes-home.", file=sys.stderr)
+        return 1
+    url = base_url or f"http://127.0.0.1:{settings.api_port}"
+    connected = await hermes_connect.connect_profiles(home, url, owner)
+    for c in connected:
+        print(f"  {c.profile:12} token {c.token_name} -> {c.env_path}")
+    print(f"Wrote GACA_BASE_URL={url} and a scoped GACA_API_TOKEN into {len(connected)} profile(s); any older hermes-* token was revoked.")
+    print("Restart Hermes so running agents pick up the new token (e.g. `systemctl --user restart hermes-gateway`).")
+    return 0
+
+
 async def _with_database(coro_factory) -> int:
     # The owner tools act on the real server's database, never on a new one: with the wrong
     # (or unset) GACA_DB_PATH, connect() would quietly create an empty file and these commands
@@ -101,6 +182,15 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_with_database(lambda: _setup_code(args.ttl, args.url)))
     if args.command == "status":
         return asyncio.run(_with_database(_status))
+    if args.command == "token":
+        handlers = {
+            "create": lambda: _token_create(args.name, args.scopes, args.expires_days),
+            "list": _token_list,
+            "revoke": lambda: _token_revoke(args.token_id),
+        }
+        return asyncio.run(_with_database(handlers[args.token_command]))
+    if args.command == "hermes":
+        return asyncio.run(_with_database(lambda: _hermes_connect(args.hermes_home, args.base_url)))
     return asyncio.run(_with_database(_reset_password))
 
 
