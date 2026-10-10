@@ -39,7 +39,7 @@ from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("America/New_York")
 CALENDAR_BASE = "https://calendar.rabidflamingos.com"
-GACA_BASE = os.environ.get("GACA_BASE_URL", "https://goodandcheapagent.com").rstrip("/")
+GACA_BASE = os.environ.get("GACA_BASE_URL", "http://127.0.0.1:41700").rstrip("/")
 # Cloudflare rejects Python's default signature on the calendar host (Error 1010).
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "

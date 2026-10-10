@@ -29,7 +29,7 @@ from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("America/New_York")
 HOME = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
-GACA_BASE = os.environ.get("GACA_BASE_URL", "https://goodandcheapagent.com").rstrip("/")
+GACA_BASE = os.environ.get("GACA_BASE_URL", "http://127.0.0.1:41700").rstrip("/")
 GOOGLE_API = HOME / "skills/productivity/google-workspace/scripts/google_api.py"
 # The system python lacks the Google libraries; Hermes' own virtualenv has them.
 VENV_PY = HOME / "hermes-agent/venv/bin/python"

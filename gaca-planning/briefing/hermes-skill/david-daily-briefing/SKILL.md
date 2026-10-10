@@ -35,7 +35,7 @@ One day's briefing in GACA (the app's **Today** tab), made of independent **sect
 | `news` | ~5 important headlines | **you**, from web search |
 | (summary) | 1–3 sentence "what matters today" | **you** |
 
-Then a "Daily briefing ready" alert so David knows it's done. The API contract is in `gaca-planning/briefing/api-contract.md` in the GACA repo; the live schema is at `https://goodandcheapagent.com/api/openapi.json` (check it if a post is rejected).
+Then a "Daily briefing ready" alert so David knows it's done. The API contract is in `gaca-planning/briefing/api-contract.md` in the GACA repo; the live schema is at `http://127.0.0.1:41700/api/openapi.json` (the local API; never use the public URL) (check it if a post is rejected).
 
 All helper commands: `python3 ${HERMES_SKILL_DIR}/scripts/briefing.py <command>`. It reads both tokens from the environment and never prints them. **Never** print, log, or pass tokens on a command line. Dates are `YYYY-MM-DD` in David's time zone, America/New_York — never UTC.
 
