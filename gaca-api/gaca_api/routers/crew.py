@@ -12,7 +12,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, status
 
+from ..config import settings
 from ..models.user import SSHConnection, UserDoc
+from ..provisioning.select import provisioner_for
 from ..schemas.auth import (
     CrewDiscover,
     CrewMemberCreate,
@@ -45,7 +47,7 @@ def crew_out(user: UserDoc) -> CrewOut:
             )
             for c in user.crew
         ],
-        can_create=user.ssh is not None,
+        can_create=provisioner_for(user) is not None,
     )
 
 
@@ -90,7 +92,7 @@ async def add_crew_member(
     """
     access = _as_connection(data.access)
     if data.port is not None:
-        if access is not None:
+        if access is not None and settings.agent_access == "ssh":
             user = await auth_service.set_ssh_connection(
                 user, access.host, access.port, access.username, access.private_key
             )

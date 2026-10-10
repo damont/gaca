@@ -45,6 +45,8 @@ RUN npm run build
 FROM nginx:alpine AS frontend
 
 COPY --from=frontend-build /app/dist /usr/share/nginx/html
-COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
+# A template, not a finished config: the nginx image fills in ${GACA_API_UPSTREAM} at start.
+COPY frontend/nginx.conf /etc/nginx/templates/default.conf.template
+ENV GACA_API_UPSTREAM=api:41700
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]

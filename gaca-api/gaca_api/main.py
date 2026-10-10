@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from .agent import runtime as agent_runtime
 from .bus import event_bus
 from .db import client
-from .provisioning.ssh import SSHError
+from .provisioning.base import ProvisioningError
 from .routers import agent, alerts, artifacts, auth, briefings, crew, lists, push, sessions
 from .services import push as push_service
 from .services.exceptions import (
@@ -106,8 +106,8 @@ async def handle_crew_not_configured(
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
-@app.exception_handler(SSHError)
-async def handle_ssh_error(request: Request, exc: SSHError) -> JSONResponse:
+@app.exception_handler(ProvisioningError)
+async def handle_provisioning_error(request: Request, exc: ProvisioningError) -> JSONResponse:
     """Map a failed provisioning call to HTTP 502 — gaca-api reached out to
     the user's own box on their behalf and that failed; not a client error,
     and not gaca-api's own fault either, hence 502 rather than 500."""
@@ -156,8 +156,7 @@ def run() -> None:
     environment (GACA_API_HOST / GACA_API_PORT). No --reload here — that's a
     dev-only convenience you still get from running uvicorn by hand.
     """
-    import uvicorn
-
     from .config import settings
+    from .serve import run_app
 
-    uvicorn.run(app, host=settings.api_host, port=settings.api_port)
+    run_app(app, settings.api_host, settings.api_port, settings.api_socket)

@@ -14,7 +14,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Sequence
 from typing import Protocol, runtime_checkable
 
-from ..models.user import SSHConnection
+from ..provisioning.base import Provisioner
 from ..schemas.crew_profile import ProfileInfo, PurposeInfo
 from ..schemas.event import GacaEvent
 from ..schemas.message import ImageInput, MessageOut
@@ -115,11 +115,11 @@ class AgentBackend(Protocol):
         """
         ...
 
-    async def describe_purpose(self, *, name: str, access: SSHConnection) -> PurposeInfo:
+    async def describe_purpose(self, *, name: str, provisioner: Provisioner) -> PurposeInfo:
         """What this profile is dedicated to doing, as the engine records it (its
         description and standing instructions), in GACA's neutral terms.
 
-        Needs `access` — direct access to the machine the engine runs on — because an
+        Needs `provisioner` — direct access to the machine the engine runs on — because an
         engine may serve this only to local callers (Hermes does: its API doesn't expose
         it, and its dashboard is loopback-only and authenticated). Read-only. Raises
         ProfileReadError when it can't be read; callers treat that as "unavailable".
