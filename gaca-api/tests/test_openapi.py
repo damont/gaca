@@ -25,7 +25,8 @@ def test_schema_lists_the_auth_and_session_paths():
         "/api/auth/login",
         "/api/auth/me",
         "/api/auth/google",
-        "/api/auth/agent-token",
+        "/api/tokens",
+        "/api/tokens/{token_id}",
         "/api/agent",
         "/api/agent/connect",
         "/api/crew",
@@ -61,5 +62,13 @@ def test_schema_lists_the_auth_and_session_paths():
 
 def test_discovery_urls_are_where_the_agent_guide_says():
     assert app.openapi_url == "/api/openapi.json"
-    assert app.docs_url == "/api/agent"
+    # Not /api/agent: that is the real "is an agent connected" route (see the test below).
+    assert app.docs_url == "/api/docs"
     assert app.redoc_url is None
+
+
+def test_the_docs_page_does_not_shadow_the_agent_status_route():
+    """/api/agent is the real "is an agent connected" endpoint. The Swagger UI used to be mounted
+    there, so the app got an HTML page, without credentials, instead of its JSON."""
+    assert app.docs_url != "/api/agent"
+    assert "get" in app.openapi()["paths"]["/api/agent"]

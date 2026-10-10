@@ -1,6 +1,6 @@
 # 0005 — Single-owner setup: URL + sign-in is all the app needs
 
-**Status:** PR 1 (API claim flow) implemented; PRs 2–5 below planned.
+**Status:** PR 1 (API claim flow) and PR 2 (scoped tokens) implemented; PRs 3–5 below planned.
 
 ## Decisions (David, 2026-10-10)
 - **One owner per server.** Everyone hosts their own instance. No invites, no roles, no member accounts.
@@ -39,12 +39,34 @@ The server checks Google tokens against its own `GACA_GOOGLE_CLIENT_ID`; a publi
 operator set one up (and needs the app's package + SHA-1 registered in their Google project). So
 email+password is the default and Google is an advanced option the server advertises via `/api/setup`.
 
+## API tokens (PR 2)
+Hermes skills authenticate with an **API token** (`gaca_pat_…`), not a sign-in session:
+- stored as a SHA-256 hash only; the secret is shown once at creation and never printed by
+  `hermes connect`;
+- **scoped**: `alerts`, `lists`, `briefings`, `artifacts`. A token reaches only those endpoints (on
+  alerts: create and read — not act/dismiss/snooze/delegate/take-to-chat, which are the owner's
+  decisions). Chat, crew, the agent connection, push, account and token management answer 403;
+  dot segments / empty path segments fail closed;
+- **revocable** individually (`gaca-api token revoke`, `DELETE /api/tokens/{id}`), takes effect at
+  once; **no expiry unless asked for**, so nothing silently dies in a year; `last_used_at` shows dead ones;
+- **cannot manage tokens**: minting/revoking needs a real sign-in session, enforced twice (the
+  scopes don't include it, and the endpoints demand a session);
+- `POST /auth/agent-token` is **removed** (it minted a full-power, unrevocable JWT that could mint more).
+  Existing agent JWTs keep working until the JWT secret is rotated.
+- `gaca-api hermes connect` mints one token per Hermes profile (`hermes-<profile>`), writes
+  `GACA_BASE_URL` + `GACA_API_TOKEN` into that profile's `.env` (atomic, 0600, symlinks replaced not
+  followed, other lines untouched), and revokes the profile's previous token. Write first, revoke
+  after; a failed write revokes the new token rather than orphaning it.
+
+Also fixed here: the Swagger UI was mounted at `/api/agent`, shadowing the real `GET /api/agent`
+status route (the app got an unauthenticated HTML page instead of JSON). Docs are now at `/api/docs`.
+
 ## Plan
 1. **API claim flow** (this PR): `/api/setup`, `/api/setup/claim[/google]`, CLI (`setup-code`,
    `status`, `reset-password`), registration closed, Google non-creating.
-2. **Scoped, revocable Hermes token** (replaces the full-power JWT "agent token", which can mint more
-   tokens, can't be revoked except by rotating the JWT secret, and expires silently — today's
-   expires 2027-08-22) + `connect-hermes.sh` that mints it and writes it into every profile.
+2. **Scoped, revocable Hermes token** (this PR) + `gaca-api hermes connect`. Migrating the live box,
+   then rotating the JWT secret (retiring the old agent JWTs, which expire silently 2027-08-22),
+   are deploy steps.
 3. **Installer**: `install.sh` (secrets, uv, venv, system unit, cloudflared with a pasted tunnel token,
    QR/link output); remove nginx + React frontend; body-size limit + security headers in the API.
 4. **Android**: server-address screen, `gaca://setup` deep link, claim and sign-in screens driven by

@@ -6,14 +6,10 @@ rather than a user, so signing up logs you straight in.
 """
 from __future__ import annotations
 
-from datetime import timedelta
-
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from ..models.user import UserDoc
 from ..schemas.auth import (
-    AgentTokenRequest,
-    AgentTokenResponse,
     GoogleLoginRequest,
     RegisterRequest,
     TokenResponse,
@@ -88,27 +84,3 @@ async def google_login(data: GoogleLoginRequest):
 async def me(user: UserDoc = Depends(get_current_user)):
     """Get current user info."""
     return UserResponse(id=user.id, name=user.display_name, email=user.email)
-
-
-@router.post("/agent-token", response_model=AgentTokenResponse)
-async def agent_token(
-    data: AgentTokenRequest,
-    user: UserDoc = Depends(get_current_user),
-):
-    """Create a long-lived JWT for AI agent access for the authenticated user.
-
-    Protected by the same dependency as every other authenticated route: the
-    caller already holds a session token, so there's no password re-prompt. The
-    minted token is an ordinary bearer JWT naming the same user — it just lives
-    longer, and get_current_user accepts it transparently.
-    """
-    token = create_access_token(
-        subject=user.id,
-        expires_delta=timedelta(days=data.expires_in_days),
-    )
-    return AgentTokenResponse(
-        access_token=token,
-        expires_in_days=data.expires_in_days,
-    )
-
-

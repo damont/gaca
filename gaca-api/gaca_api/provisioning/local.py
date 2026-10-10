@@ -39,13 +39,13 @@ import re
 import shutil
 import signal
 import stat
-import tempfile
 import time
 from pathlib import Path
 
 import httpx
 
 from .base import ProvisioningError
+from .envfile import upsert_env
 
 
 class LocalError(ProvisioningError):
@@ -357,38 +357,15 @@ class LocalHermes:
     # -- creating a profile ---------------------------------------------
 
     def _write_profile_env(self, directory: Path, port: int, api_key: str) -> None:
-        env_path = directory / ".env"
-        existing = _read_regular_file(env_path, _ENV_LIMIT) or ""
-        wanted = {
-            "API_SERVER_ENABLED": "true",
-            "API_SERVER_HOST": "0.0.0.0",
-            "API_SERVER_PORT": str(port),
-            "API_SERVER_KEY": api_key,
-        }
-        seen, lines = set(), []
-        for line in existing.splitlines():
-            key = line.split("=", 1)[0] if "=" in line else None
-            if key in wanted:
-                if key not in seen:
-                    lines.append(f"{key}={wanted[key]}")
-                    seen.add(key)
-            else:
-                lines.append(line)
-        lines.extend(f"{k}={v}" for k, v in wanted.items() if k not in seen)
-        # Temp file in the same directory, then rename over the target: atomic, 0600, and a
-        # symlink at `.env` is replaced rather than followed.
-        fd, tmp = tempfile.mkstemp(dir=directory, prefix=".env.")
-        try:
-            with os.fdopen(fd, "w") as handle:
-                handle.write("\n".join(lines) + "\n")
-            os.chmod(tmp, 0o600)
-            os.replace(tmp, env_path)
-        except BaseException:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
+        upsert_env(
+            directory / ".env",
+            {
+                "API_SERVER_ENABLED": "true",
+                "API_SERVER_HOST": "0.0.0.0",
+                "API_SERVER_PORT": str(port),
+                "API_SERVER_KEY": api_key,
+            },
+        )
 
     async def _expects_multiplex(self) -> bool:
         config = _read_regular_file(self._root / "config.yaml", _SOURCE_LIMIT)

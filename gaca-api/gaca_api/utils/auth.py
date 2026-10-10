@@ -13,13 +13,15 @@ from typing import Optional
 import jwt
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 
 from ..config import settings
 from ..db import users as users_db
 from ..models.base import utcnow
 from ..models.user import UserDoc
+from ..services import tokens as token_service
+from . import tokens as token_utils
 
 ph = PasswordHasher()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
@@ -44,7 +46,7 @@ def create_access_token(subject: str, expires_delta: Optional[timedelta] = None)
 
     A JWT is signed, not encrypted — anyone holding it can read the payload, so
     it carries only the subject and expiry. `expires_delta` overrides the default
-    session lifetime; the agent-token endpoint passes a much longer one.
+    session lifetime.
     """
     now = utcnow()
     if expires_delta:
@@ -71,13 +73,32 @@ def decode_token(token: str) -> Optional[str]:
         return None
 
 
-async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserDoc:
-    """Dependency to validate the JWT and return the current User."""
+async def _resolve(request: Request | None, token: str, *, allow_api_token: bool) -> UserDoc:
+    """The user a bearer credential belongs to. Two kinds exist: a sign-in session (JWT) and an
+    API token (utils/tokens.py) for software acting for the owner. An API token only gets
+    through where its scopes allow, and never where `allow_api_token` is False."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+    if token_utils.looks_like_token(token):
+        found = await token_service.authenticate(token)
+        if found is None:
+            raise credentials_exception
+        user, record = found
+        # No request to check the scopes against (a direct call, not through FastAPI) -> deny.
+        if (
+            not allow_api_token
+            or request is None
+            or not token_utils.allowed(record.scopes, request.method, request.url.path)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This API token is not allowed to call that endpoint.",
+            )
+        return user
 
     user_id = decode_token(token)
     if user_id is None:
@@ -88,3 +109,14 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserDoc:
         raise credentials_exception
 
     return user
+
+
+async def get_current_user(token: str = Depends(oauth2_scheme), request: Request = None) -> UserDoc:
+    """Dependency: the signed-in owner — via a session, or an API token within its scopes."""
+    return await _resolve(request, token, allow_api_token=True)
+
+
+async def get_session_user(token: str = Depends(oauth2_scheme), request: Request = None) -> UserDoc:
+    """Like get_current_user but for owner-only actions an API token must never perform
+    (managing tokens): a real sign-in session is required."""
+    return await _resolve(request, token, allow_api_token=False)
