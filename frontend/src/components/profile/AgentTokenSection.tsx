@@ -103,7 +103,7 @@ export default function AgentTokenSection() {
         </div>
         <div className="flex gap-2">
           <dt className="text-text-muted">Swagger UI</dt>
-          <dd className="font-mono">{origin}/api/agent</dd>
+          <dd className="font-mono">{origin}/api/docs</dd>
         </div>
       </dl>
 

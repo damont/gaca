@@ -49,7 +49,7 @@ app = FastAPI(
     description="GACA API — used by the Android app, the web UI, and AI agents",
     version="0.1.0",
     lifespan=lifespan,
-    docs_url="/api/agent",  # Swagger UI, under /api so nginx proxies it
+    docs_url="/api/docs",  # Swagger UI, under /api so nginx proxies it (not /api/agent: that's the agent resource)
     openapi_url="/api/openapi.json",  # machine-readable schema for agents
     redoc_url=None,  # one docs UI is enough
 )

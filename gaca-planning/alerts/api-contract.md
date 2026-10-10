@@ -11,7 +11,7 @@ Standalone by design — you can build the app against this without reading
 [`build-plan.md`](build-plan.md).
 
 > **The API is the source of truth, not this file.** The live schema is at
-> `<base>/api/openapi.json` and a browsable UI at `<base>/api/agent`. If they
+> `<base>/api/openapi.json` and a browsable UI at `<base>/api/docs`. If they
 > disagree with this document, they win.
 
 ---

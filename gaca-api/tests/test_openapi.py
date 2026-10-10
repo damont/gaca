@@ -59,5 +59,15 @@ def test_schema_lists_the_auth_and_session_paths():
 
 def test_discovery_urls_are_where_the_agent_guide_says():
     assert app.openapi_url == "/api/openapi.json"
-    assert app.docs_url == "/api/agent"
+    assert app.docs_url == "/api/docs"
     assert app.redoc_url is None
+
+
+def test_get_agent_is_the_resource_not_the_docs_page():
+    """Swagger UI used to be mounted at /api/agent, which shadowed GET /api/agent
+    (the agent status every client reads) with an HTML page."""
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as client:
+        response = client.get("/api/agent")
+    assert "text/html" not in response.headers.get("content-type", "")
