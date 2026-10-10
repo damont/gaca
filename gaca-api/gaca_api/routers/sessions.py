@@ -44,7 +44,11 @@ async def list_sessions(user: UserDoc = Depends(get_current_user)) -> SessionLis
     return SessionList(
         sessions=[
             SessionOut.model_validate(s).model_copy(
-                update={"summary": labels.summary, "preview": labels.preview}
+                update={
+                    "summary": labels.summary,
+                    "preview": labels.preview,
+                    "last_activity_at": labels.last_activity_at or s.created_at,
+                }
             )
             for s, labels in rows
         ]

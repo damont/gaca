@@ -32,9 +32,12 @@ PREVIEW_MAX = 100
 
 @dataclass(frozen=True)
 class Labels:
-    """How a client should label a session: a headline and a last-message line."""
+    """How a client should label a session: a headline, a last-message line, and
+    when that last message was (None with no messages — then it's the session's
+    own creation time)."""
     summary: str | None
     preview: str | None
+    last_activity_at: datetime | None = None
 
 
 def tidy(text: str, limit: int) -> str | None:
@@ -73,7 +76,7 @@ def labels_for(
         preview = tidy(artifact_links.strip(last.content), PREVIEW_MAX) or _photo_label(last)
         if preview and last.role == "user":
             preview = f"You: {preview}"
-    return Labels(summary, preview)
+    return Labels(summary, preview, last.created_at if last is not None else None)
 
 
 async def list_for_user(user_id: str) -> list[tuple[SessionDoc, Labels]]:
@@ -154,9 +157,12 @@ async def get_detail(user_id: str, session_id: str) -> SessionDetail:
     session, messages, labels = await get_with_messages(user_id, session_id)
     active, resume_seq = await resume_point(session_id)
     return SessionDetail(
-        **SessionOut.model_validate(session).model_dump(exclude={"summary", "preview"}),
+        **SessionOut.model_validate(session).model_dump(
+            exclude={"summary", "preview", "last_activity_at"}
+        ),
         summary=labels.summary,
         preview=labels.preview,
+        last_activity_at=labels.last_activity_at or session.created_at,
         messages=await messages_out(user_id, messages),
         running=active is not None,
         run_started_at=active[1] if active else None,

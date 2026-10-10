@@ -271,3 +271,24 @@ def test_labels_do_not_show_raw_artifact_links(tmp_path):
         return await session_service.get_detail("u1", s.id)
 
     assert _run(scenario).preview == "Here you go"
+
+
+def test_last_activity_is_the_latest_message_else_creation(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+    later = datetime(2030, 1, 1, tzinfo=timezone.utc)
+
+    async def scenario():
+        quiet = await session_service.create("u1", None, "hermes")
+        busy = await session_service.create("u1", None, "hermes")
+        await messages_db.insert(MessageDoc(session_id=busy.id, role="user", content="hi", created_at=later))
+        return (
+            quiet,
+            await session_service.get_detail("u1", quiet.id),
+            await session_service.get_detail("u1", busy.id),
+            await session_service.list_for_user("u1"),
+        )
+
+    quiet, quiet_detail, busy_detail, listed = _run(scenario)
+    assert [labels.last_activity_at for _, labels in listed] == [later, None]  # None -> created_at
+    assert quiet_detail.last_activity_at == quiet.created_at
+    assert busy_detail.last_activity_at == later

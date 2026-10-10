@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from .message import MessageOut
 
@@ -40,6 +40,17 @@ class SessionOut(BaseModel):
     # no messages yet.
     summary: str | None = None
     preview: str | None = None
+    # When this chat last moved: its latest message's time, else when it was
+    # created. What to show as "2m ago" in the Chat list (which is sorted by it).
+    # Never null in a response: the default (unvalidated None) is filled in below,
+    # so the published schema can say plain date-time.
+    last_activity_at: datetime = None  # type: ignore[assignment]
+
+    @model_validator(mode="after")
+    def _activity_defaults_to_creation(self) -> "SessionOut":
+        if self.last_activity_at is None:
+            self.last_activity_at = self.created_at
+        return self
 
 
 class SessionDetail(SessionOut):

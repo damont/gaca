@@ -56,3 +56,10 @@ def test_list_and_detail_carry_data_rows_and_artifact(http):
         assert alert["data_rows"] == [{"key": "used_pct", "value": "91"}, {"key": "mount", "value": "/"}]
         assert alert["artifact"] == {
             "id": page["id"], "title": "Week", "description": None, "crew": None, "missing": False}
+
+
+def test_sessions_carry_last_activity_at_everywhere(http):
+    created = http.post("/api/sessions", json={}).json()
+    assert created["last_activity_at"] == created["created_at"]
+    assert http.get("/api/sessions").json()["sessions"][0]["last_activity_at"] == created["created_at"]
+    assert http.get(f"/api/sessions/{created['id']}").json()["last_activity_at"] == created["created_at"]
