@@ -1,6 +1,6 @@
 # 0005 — Single-owner setup: URL + sign-in is all the app needs
 
-**Status:** PR 1 (API claim flow) and PR 2 (scoped tokens) implemented; PRs 3–5 below planned.
+**Status:** claim flow, scoped tokens, API hardening and the installer are implemented; removing nginx/React, the Android flow, and SECURITY.md are planned.
 
 ## Decisions (David, 2026-10-10)
 - **One owner per server.** Everyone hosts their own instance. No invites, no roles, no member accounts.
@@ -77,8 +77,12 @@ status route (the app got an unauthenticated HTML page instead of JSON). Docs ar
 3. **API hardening for life without nginx** (PR 3a): security headers, 3 MiB request cap, per-client
    rate limits on sign-in/claim (real IP from `CF-Connecting-IP`, trusted only from a loopback peer),
    CORS off by default (`GACA_CORS_ORIGINS`), refusing to start with the placeholder/short JWT secret
-   (`GACA_DEV=1` bypasses, for local dev only). **Installer** (3b): `install.sh` (secrets, uv, venv,
-   service, cloudflared with a pasted tunnel token or a quick tunnel, QR/link output). **Then** remove
+   (`GACA_DEV=1` bypasses, for local dev only). **Installer** (3b, done): `./install.sh` (uv, deps, a strong `.env` that never clobbers an
+   existing secret, the service, cloudflared with a pasted tunnel token or a temporary quick tunnel, the setup
+   code as a QR/`gaca://setup` link, then waits for the claim and wires Hermes). `--service system` is the sandboxed
+   default and needs root; without a way to get root it leaves ONE script for the operator and a re-run
+   resumes. `--service user` needs no root and has no sandbox (said plainly). `./install.sh uninstall [--purge]`.
+   Tested for real on an arm64 box (user mode, quick tunnel): claim, rate limit, body cap, headers, idempotent re-run, Hermes wiring, uninstall. **Then** remove
    nginx + React frontend from the repo and production (a coordinated cutover).
 4. **Android**: server-address screen, `gaca://setup` deep link, claim and sign-in screens driven by
    `/api/setup`; no baked-in server URL.
