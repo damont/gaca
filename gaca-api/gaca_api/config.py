@@ -31,8 +31,15 @@ class Settings(BaseSettings):
     # Google OAuth. One Client ID serves both sides: the API verifies the `aud`
     # claim on incoming ID tokens with it, and the frontend renders its button
     # with the same value (as VITE_GOOGLE_CLIENT_ID). Not a secret — it's public
-    # by design — but leaving it unset disables Google sign-in entirely.
+    # by design. Leaving both this and google_ios_client_id unset disables
+    # Google sign-in entirely.
     google_client_id: str | None = None
+
+    # The iOS OAuth client id (Google Cloud console → Credentials → an "iOS"
+    # client for the app's bundle id). Google Sign-In on iPhone issues ID tokens
+    # whose `aud` is THIS id, not the web one, so the API accepts either. Public,
+    # not a secret — it's also baked into the iOS app's Info.plist.
+    google_ios_client_id: str | None = None
 
     # Interface this service binds to. Loopback by default (safe for local dev);
     # set GACA_API_HOST=0.0.0.0 on the Pi so other machines can reach it.

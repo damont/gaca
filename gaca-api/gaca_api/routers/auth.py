@@ -74,10 +74,18 @@ async def google_login(data: GoogleLoginRequest):
 
     The token arrives from the browser, so it is verified here and never
     trusted as-is: `verify_oauth2_token` checks Google's signature, that the
-    audience is *our* client id, and that it hasn't expired. Without the
+    audience is one of *our* client ids, and that it hasn't expired. Without the
     audience check, a token minted for any other Google app would be accepted.
+
+    "Our" client ids, plural: the web/Android one, and the iOS one — Google
+    Sign-In on iPhone mints tokens whose `aud` is the iOS client id.
     """
-    if not settings.google_client_id:
+    audiences = [
+        client_id
+        for client_id in (settings.google_client_id, settings.google_ios_client_id)
+        if client_id
+    ]
+    if not audiences:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Google login not configured",
@@ -85,7 +93,7 @@ async def google_login(data: GoogleLoginRequest):
 
     try:
         idinfo = google_id_token.verify_oauth2_token(
-            data.id_token, google_requests.Request(), settings.google_client_id
+            data.id_token, google_requests.Request(), audiences
         )
     except ValueError:
         # Bad signature, wrong audience, or expired — all indistinguishable to
