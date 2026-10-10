@@ -1,10 +1,11 @@
-# Production compose — deployed on gaca-api, run alongside the standalone
+# Production compose — deployed on the Hermes box (david-claw), run alongside the standalone
 # `gateway` stack (nginx + cloudflared) that lives outside this repo at
 # ~/gateway/ on the box, same split piservices uses for calendarapp.
 #
 # Differs from docker-compose.yml (local dev) in the ways that matter for
 # a box actually reachable from the internet:
-#   - nothing published to a host port — api is internal-only (`expose`),
+#   - nothing published to the network — api is internal-only (`expose`) plus a
+#     loopback-only host port for the local Hermes,
 #     frontend has no ports section at all; the gateway's nginx is the only
 #     thing that reaches either of them, over the shared gaca-proxy network
 #   - required secrets use ${VAR:?message} — fail loudly at `up` instead of
@@ -42,6 +43,11 @@ services:
       - ${GACA_FCM_CREDENTIALS_HOST_PATH:-/dev/null}:/run/secrets/fcm-service-account.json:ro
     expose:
       - "41700"
+    # Loopback-only host port so Hermes (running on this same box) can reach the
+    # API directly, without going through the gateway or the public URL. Not
+    # reachable from the network.
+    ports:
+      - "127.0.0.1:41700:41700"
     restart: unless-stopped
     init: true
     healthcheck:

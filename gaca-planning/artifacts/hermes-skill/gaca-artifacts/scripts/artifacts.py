@@ -37,7 +37,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-BASE = os.environ.get("GACA_BASE_URL", "https://goodandcheapagent.com").rstrip("/")
+BASE = os.environ.get("GACA_BASE_URL", "http://127.0.0.1:41700").rstrip("/")
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36 Hermes-Artifacts/1.0"
 ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
