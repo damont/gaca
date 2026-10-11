@@ -37,9 +37,10 @@ phone app ──https──▶ Cloudflare Tunnel ──▶ gaca-api (127.0.0.1:4
    API_SERVER_KEY=<any long random string>
    ```
    (`python3 -c "import secrets; print(secrets.token_urlsafe(32))"` makes one.)
-3. Run the gateway as a service and check that it answers:
+3. Run the gateway as a service, keep it running after you log out, and check that it answers:
    ```bash
    hermes gateway install
+   sudo loginctl enable-linger $USER     # without this, a user service stops when your last login ends
    curl http://127.0.0.1:8642/health
    ```
 
