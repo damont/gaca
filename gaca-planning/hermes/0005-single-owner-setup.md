@@ -113,3 +113,12 @@ GACA's Hermes skills live in the repo's `skills/` (`gaca`, `gaca-alerts`, `gaca-
 and `gaca-api hermes connect` for all profiles including default, and by the service for a crew member created in
 the app or discovered (named profiles only; `default` is outside the sandbox's write set). A manifest records what
 was written, so a file an agent has edited since is left alone and reported, and an unmodified one follows upstream.
+
+### Push notifications in setup (2026-10-11)
+The installer asks, per platform, whether to set up push and for what it needs: a Firebase service-account key
+(`GACA_FCM_CREDENTIALS_PATH`) for Android; an APNs `.p8` key, Key ID, Team ID and the app's bundle id
+(`GACA_APNS_*`) for iPhone. Both, either or neither. Keys are validated (shape only, never printed), copied to
+`<config dir>/secrets/` (0700/0600; the folder the system unit's sandbox may read) and only paths go in `.env`.
+Already-configured platforms are not asked again; flags cover non-interactive installs; `--no-push` skips.
+Design consequence worth remembering: push credentials belong to the developer account the app was built with, so
+self-hosters only get push with their own app build. A push relay run by the project would lift that; not built.

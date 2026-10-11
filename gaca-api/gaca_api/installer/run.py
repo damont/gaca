@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 
 from ..config import settings
 from . import hermes as hermes_mod
+from . import push as push_mod
 from . import tunnel as tunnel_mod
 from .envconfig import ensure_env
 from ..provisioning import hermes_connect
@@ -39,6 +40,14 @@ class Options:
     hermes_home: Path | None = None
     use_hermes: bool = True
     install_hermes: bool = False
+    # Push notifications (all optional; see installer/push.py). With none of these and no terminal
+    # to ask on, push is simply left off.
+    no_push: bool = False
+    fcm_credentials: Path | None = None
+    apns_key: Path | None = None
+    apns_key_id: str | None = None
+    apns_team_id: str | None = None
+    apns_topic: str | None = None
     config_dir: Path | None = None
     wait_for_claim: bool = True
     claim_wait_seconds: int = 3600
@@ -117,6 +126,93 @@ def install_hermes_skills(opts: Options, say: Say) -> None:
             say.ok(f"installed the GACA skills into Hermes profile {profile!r}")
         elif not outcome.left_alone:
             say.ok(f"GACA skills already up to date in Hermes profile {profile!r}")
+
+
+def _ask(prompt: str) -> str:
+    return input(prompt).strip()
+
+
+def _ask_valid(prompt: str, check, say: Say, *, attempts: int = 3):
+    """Ask until `check(answer)` accepts it (it returns the cleaned value or raises PushSetupError).
+    A blank answer, or too many wrong ones, gives up: None."""
+    for _ in range(attempts):
+        answer = _ask(prompt)
+        if not answer:
+            return None
+        try:
+            return check(answer)
+        except push_mod.PushSetupError as error:
+            say.warn(str(error))
+    return None
+
+
+def setup_push(opts: Options, shell: Shell, say: Say) -> None:
+    """Optional Android (Firebase) and iPhone (APNs) push, from flags or by asking at a terminal."""
+    if opts.no_push:
+        say.note("push notifications skipped (--no-push)")
+        return
+    env_file = opts.repo_root / ".env"
+    directory = push_mod.secrets_dir(opts.config_dir)
+    env = push_mod._env(env_file)
+    interactive = shell.is_tty() and not opts.yes
+    explained = False
+
+    def explain() -> None:
+        nonlocal explained
+        if not explained:
+            for line in push_mod.EXPLAIN:
+                say.note(line)
+            explained = True
+
+    try:
+        # ── Android ──
+        if opts.fcm_credentials:
+            project = push_mod.setup_android(env_file, directory, opts.fcm_credentials)
+            say.ok(f"Android push is set up (Firebase project {project})")
+        elif push_mod.android_ready(env):
+            say.ok("Android push is already set up")
+        elif interactive:
+            explain()
+            if _ask("Set up push notifications for Android? [y/N] ").lower().startswith("y"):
+                say.note("In the Firebase console: Project settings > Service accounts > Generate new private key.")
+                say.note("It must be the same Firebase project your app was built with (its google-services.json).")
+                project = _ask_valid("Path to the downloaded key file (blank to skip): ",
+                                     lambda a: (push_mod.check_fcm(Path(a)), a)[1], say)
+                if project:
+                    say.ok(f"Android push is set up (Firebase project {push_mod.setup_android(env_file, directory, Path(project))})")
+                else:
+                    say.note("Android push skipped")
+
+        # ── iPhone ──
+        flags = (opts.apns_key, opts.apns_key_id, opts.apns_team_id, opts.apns_topic)
+        if any(flags):
+            if not all(flags):
+                raise RuntimeError("iPhone push needs --apns-key, --apns-key-id, --apns-team-id and --apns-topic together")
+            push_mod.setup_ios(env_file, directory, opts.apns_key, opts.apns_key_id, opts.apns_team_id, opts.apns_topic)
+            say.ok("iPhone push is set up")
+        elif push_mod.ios_ready(env):
+            say.ok("iPhone push is already set up")
+        elif interactive:
+            explain()
+            if _ask("Set up push notifications for iPhone? [y/N] ").lower().startswith("y"):
+                say.note("From the Apple Developer portal: a Key with the Apple Push Notifications service enabled (a .p8 file),")
+                say.note("its Key ID, your Team ID, and the bundle id of the app you built.")
+                key = _ask_valid("Path to the .p8 key file (blank to skip): ",
+                                 lambda a: (push_mod.check_apns_key(Path(a)), a)[1], say)
+                key_id = key and _ask_valid("Key ID (10 characters): ", lambda a: push_mod.check_apple_id(a, "key id"), say)
+                team_id = key_id and _ask_valid("Team ID (10 characters): ", lambda a: push_mod.check_apple_id(a, "team id"), say)
+                bundle = team_id and _ask_valid("The app's bundle id (like com.example.gaca): ", push_mod.check_bundle_id, say)
+                if bundle:
+                    push_mod.setup_ios(env_file, directory, Path(key), key_id, team_id, bundle)
+                    say.ok("iPhone push is set up")
+                else:
+                    say.note("iPhone push skipped")
+    except push_mod.PushSetupError as error:
+        raise RuntimeError(f"push notification setup failed: {error}") from None
+
+    env = push_mod._env(env_file)
+    if not (push_mod.android_ready(env) or push_mod.ios_ready(env)):
+        say.note("push notifications are off: alerts show in the app when it is open. To add push later, run ./install.sh again")
 
 
 def choose_service(opts: Options, shell: Shell) -> str:
@@ -322,6 +418,9 @@ def run(opts: Options, shell: Shell | None = None, out=print) -> int:
         opts.data_dir.mkdir(parents=True, exist_ok=True)
         os.chmod(opts.data_dir, 0o700)
 
+        say.step("Push notifications")
+        setup_push(opts, shell, say)
+
         say.step("Service")
         mode = choose_service(opts, shell)
         install_service(opts, shell, say, mode)
@@ -430,6 +529,10 @@ echo "{opts.name} removed"
             if opts.data_dir.exists():
                 shutil.rmtree(opts.data_dir)
                 say.ok(f"deleted {opts.data_dir} (the database, with your chats and paired phones)")
+            secrets = push_mod.secrets_dir(opts.config_dir)
+            if secrets.exists():
+                shutil.rmtree(secrets)
+                say.ok(f"deleted {secrets} (push notification keys)")
             env_file = opts.repo_root / ".env"
             if env_file.exists():
                 env_file.unlink()

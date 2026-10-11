@@ -78,3 +78,25 @@ def test_the_old_sign_in_commands_are_gone(capsys):
     for old in ("setup-code", "reset-password"):
         with pytest.raises(SystemExit):
             cli.main([old])
+
+
+def test_status_says_which_push_channels_are_on(server, capsys, monkeypatch, tmp_path):
+    for name in ("fcm_credentials_path", "apns_key_path", "apns_key_id", "apns_team_id"):
+        monkeypatch.setattr(settings, name, None)  # not whatever this machine's own .env says
+    cli.main(["status"])
+    assert "push notifications: Android off, iPhone off (re-run ./install.sh" in capsys.readouterr().out
+    key = tmp_path / "k.json"
+    key.write_text("{}")
+    monkeypatch.setattr(settings, "fcm_credentials_path", str(key))
+    cli.main(["status"])
+    assert "push notifications: Android on, iPhone off" in capsys.readouterr().out
+    apns = tmp_path / "a.p8"
+    apns.write_text("x")
+    monkeypatch.setattr(settings, "apns_key_path", str(apns))
+    monkeypatch.setattr(settings, "apns_key_id", "ABC123DEFG")
+    monkeypatch.setattr(settings, "apns_team_id", "TEAM123456")
+    cli.main(["status"])
+    assert "Android on, iPhone on" in capsys.readouterr().out
+    monkeypatch.setattr(settings, "apns_team_id", None)  # a half-configured iPhone is off, as the server treats it
+    cli.main(["status"])
+    assert "iPhone off" in capsys.readouterr().out

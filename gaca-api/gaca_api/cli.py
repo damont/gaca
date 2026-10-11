@@ -55,6 +55,12 @@ def _parser() -> argparse.ArgumentParser:
     install.add_argument("--hermes-home", default=None, help="default: ~/.hermes")
     install.add_argument("--no-hermes", action="store_true", help="skip the Hermes requirements check (the server alone is useless to the app: it needs an agent)")
     install.add_argument("--install-hermes", action="store_true", help="if Hermes is missing, run its official installer (you still run `hermes setup` yourself)")
+    install.add_argument("--no-push", action="store_true", help="do not ask about push notifications")
+    install.add_argument("--fcm-credentials", metavar="FILE", help="Android push: your Firebase service-account key (JSON)")
+    install.add_argument("--apns-key", metavar="FILE", help="iPhone push: your Apple APNs key (.p8); also needs the next three")
+    install.add_argument("--apns-key-id", metavar="ID", help="iPhone push: the key's 10-character Key ID")
+    install.add_argument("--apns-team-id", metavar="ID", help="iPhone push: your 10-character Apple Team ID")
+    install.add_argument("--apns-topic", metavar="BUNDLE_ID", help="iPhone push: the app's bundle id")
     install.add_argument("--no-wait", action="store_true", help="do not wait for you to pair your phone")
     install.add_argument("--yes", action="store_true", help="never ask questions")
 
@@ -123,6 +129,7 @@ async def _device_revoke(device_id: str) -> int:
 
 
 async def _status() -> int:
+    _push_status()
     owner = await users_db.first()
     if owner is None:
         print("no owner yet — run `gaca-api pair` and open the app")
@@ -130,6 +137,15 @@ async def _status() -> int:
     n = len(await token_service.list_devices(owner))
     print(f"paired devices: {n}" + ("" if n else " — run `gaca-api pair`"))
     return 0
+
+
+def _push_status() -> None:
+    from pathlib import Path as _Path
+
+    android = bool(settings.fcm_credentials_path) and _Path(settings.fcm_credentials_path).is_file()
+    iphone = bool(settings.apns_key_path and settings.apns_key_id and settings.apns_team_id) and _Path(settings.apns_key_path).is_file()
+    print(f"push notifications: Android {'on' if android else 'off'}, iPhone {'on' if iphone else 'off'}"
+          + ("" if android or iphone else " (re-run ./install.sh to set them up)"))
 
 
 async def _owner_or_none(next_step: str = "pair"):
@@ -249,7 +265,9 @@ def _install(args) -> int:
         repo_root=Path(args.repo_root).resolve(), service=args.service, name=args.name,
         data_dir=maybe(args.data_dir), port=args.port, hostname=args.hostname, tunnel=args.tunnel,
         tunnel_token_file=maybe(args.tunnel_token_file), hermes_home=maybe(args.hermes_home),
-        use_hermes=not args.no_hermes, install_hermes=args.install_hermes, wait_for_claim=not args.no_wait, yes=args.yes,
+        use_hermes=not args.no_hermes, install_hermes=args.install_hermes, no_push=args.no_push, fcm_credentials=maybe(args.fcm_credentials),
+        apns_key=maybe(args.apns_key), apns_key_id=args.apns_key_id, apns_team_id=args.apns_team_id, apns_topic=args.apns_topic,
+        wait_for_claim=not args.no_wait, yes=args.yes,
     ))
 
 

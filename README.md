@@ -63,7 +63,7 @@ The installer is safe to re-run (it keeps your data and settings):
 - prints a **QR code**, waits for you to pair your phone, then gives Hermes its token for GACA.
 
 Useful options: `--tunnel token|quick|none`, `--hostname gaca.example.com`, `--service system|user`,
-`--install-hermes`, `--no-hermes` (set up only the server, e.g. to try it without an agent). `./install.sh --help`
+`--install-hermes`, `--no-push`, `--no-hermes` (set up only the server, e.g. to try it without an agent). `./install.sh --help`
 lists them all.
 
 For a permanent address, in the Cloudflare dashboard (Zero Trust → Networks → Tunnels) create a tunnel,
@@ -82,6 +82,26 @@ uv run gaca-api device revoke <id>              # unpair one
 
 A phone talks to one server at a time (**Settings → Disconnect from this server** to switch). The QR also
 works as a link, `gaca://setup?url=…&code=…`, and "Enter a code instead" takes the address and code by hand.
+
+## Push notifications (optional)
+
+Without push, alerts appear in the app whenever you open it. Push is what buzzes your phone. The installer asks
+whether to set it up for **Android**, **iPhone**, or both, and asks for the key files it needs; run `./install.sh`
+again any time to add one later.
+
+| | you provide | from |
+|---|---|---|
+| Android | a service-account key file (JSON) | Firebase console → Project settings → Service accounts → Generate new private key |
+| iPhone | a `.p8` key file, its Key ID, your Team ID, and the app's bundle id | Apple Developer portal → Keys (with the Apple Push Notifications service enabled) |
+
+**The credentials must come from the same developer account your app was built with.** A push key can only message
+the app it was made for: the Firebase project has to be the one in the app's `google-services.json`, and the Apple key has
+to belong to the team that signed the app with that bundle id. So push works when you build the app yourself;
+if you use someone else's build of the app, you still get your alerts in the app, but cannot push to it.
+
+The key files are copied to `~/.config/gaca/secrets/` (owner-only) and only their paths go in `.env`; nothing secret
+is printed. Non-interactive: `--fcm-credentials FILE`, or `--apns-key FILE --apns-key-id ID --apns-team-id ID
+--apns-topic BUNDLE_ID`; `--no-push` skips the question. `gaca-api status` shows which are on.
 
 ## Hermes
 
