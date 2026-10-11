@@ -11,7 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from gaca_api.config import DEFAULT_JWT_SECRET, settings
+from conftest import make_owner
+from gaca_api.config import settings
 from gaca_api.db import client
 from gaca_api.installer import run as run_mod
 from gaca_api.installer import tunnel as tunnel_mod
@@ -81,18 +82,18 @@ def read_env(path):
     return dict(line.split("=", 1) for line in path.read_text().splitlines() if "=" in line)
 
 
-def test_a_fresh_env_gets_everything_and_a_strong_secret(tmp_path):
+def test_a_fresh_env_gets_everything_the_server_needs(tmp_path):
     path = tmp_path / ".env"
     notes = ensure_env(path, **env_kwargs(tmp_path, hermes_bin=None))
     values = read_env(path)
-    assert len(values["GACA_JWT_SECRET"]) >= 43 and " " not in values["GACA_JWT_SECRET"]
+    assert "GACA_JWT_SECRET" not in values  # there are no sessions to sign any more
     assert values["GACA_DB_PATH"] == str(tmp_path / "data" / "gaca.db")
     assert values["GACA_AGENT_ACCESS"] == "local" and values["GACA_AGENT_ENGINE"] == "hermes"
     assert values["GACA_API_HOST"] == "127.0.0.1" and "GACA_HERMES_BIN" not in values
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600 and any("generated" in n for n in notes)
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600 and any("wrote" in n for n in notes)
 
 
-def test_rerunning_keeps_the_secret_and_everything_else(tmp_path):
+def test_rerunning_keeps_everything_as_it_was(tmp_path):
     path = tmp_path / ".env"
     ensure_env(path, **env_kwargs(tmp_path))
     path.write_text(path.read_text() + "MY_OWN_SETTING=keep-me\nGACA_API_PORT=9999\n")
@@ -101,18 +102,7 @@ def test_rerunning_keeps_the_secret_and_everything_else(tmp_path):
     after = read_env(path)
     assert after == before  # nothing changed...
     assert after["GACA_API_PORT"] == "9999" and after["MY_OWN_SETTING"] == "keep-me"  # ...including the operator's own edits
-    assert after["GACA_JWT_SECRET"] == before["GACA_JWT_SECRET"] and notes == [".env already complete"]
-
-
-@pytest.mark.parametrize("weak", [DEFAULT_JWT_SECRET, "short"])
-def test_a_placeholder_or_short_secret_is_replaced_but_a_strong_one_never_is(tmp_path, weak):
-    path = tmp_path / ".env"
-    path.write_text(f"GACA_JWT_SECRET={weak}\n")
-    notes = ensure_env(path, **env_kwargs(tmp_path))
-    assert read_env(path)["GACA_JWT_SECRET"] != weak and any("weak" in n for n in notes)
-    strong = read_env(path)["GACA_JWT_SECRET"]
-    ensure_env(path, **env_kwargs(tmp_path))
-    assert read_env(path)["GACA_JWT_SECRET"] == strong
+    assert notes == [".env already complete"]
 
 
 def test_hermes_bin_is_recorded_when_found(tmp_path):
@@ -277,11 +267,11 @@ def test_a_token_tunnel_without_a_hostname_is_a_clear_error(tmp_path, monkeypatc
 
 # ── setup info ───────────────────────────────────────────────────────
 
-def test_the_setup_info_shows_the_address_code_link_and_a_qr(capsys):
+def test_the_pairing_info_shows_the_address_code_and_a_qr(capsys):
     print_setup_info(Say(print), "https://gaca.example.com", "ABCD-EFGH-JKMN-PQRS", 41700)
     out = capsys.readouterr().out
     assert "https://gaca.example.com" in out and "ABCD-EFGH-JKMN-PQRS" in out and "█" in out
-    assert "Set up this server" in out
+    assert "Pairing code:" in out and "gaca-api pair" in out
 
 
 # ── the whole flow ───────────────────────────────────────────────────
@@ -299,11 +289,11 @@ def flow(tmp_path, monkeypatch):
                    config_dir=tmp_path / "home" / ".config" / "gaca", tunnel="none", wait_for_claim=False, yes=True)
 
 
-def test_a_fresh_install_issues_a_setup_code_and_claims_nothing(flow, capsys):
+def test_a_fresh_install_issues_a_pairing_code_and_pairs_nothing(flow, capsys):
     shell = FakeShell(sudo_n=True)
     assert run_mod.run(flow, shell) == 0
     out = capsys.readouterr().out
-    assert "Setup code:" in out and "█" in out and "Settings" in out and "Service" in out
+    assert "Pairing code:" in out and "█" in out and "Settings" in out and "Service" in out
     assert (flow.repo_root / ".env").exists() and (flow.data_dir.stat().st_mode & 0o777) == 0o700
     assert (flow.config_dir / "install-service.sh").exists() and shell.called("sudo", "-n", "bash")
 
@@ -332,34 +322,34 @@ def test_a_server_that_does_not_come_up_is_reported_not_ignored(flow, capsys):
     assert "did not come up" in capsys.readouterr().out
 
 
-def test_an_already_claimed_server_is_not_given_a_new_code(flow, capsys):
+def test_a_server_with_a_paired_phone_is_not_given_a_new_code(flow, capsys):
     flow.service = "user"
     assert run_mod.run(flow, FakeShell(claimed=lambda: True)) == 0
     out = capsys.readouterr().out
-    assert "already has an owner" in out and "Setup code" not in out
+    assert "already paired" in out and "Pairing code" not in out and "gaca-api pair" in out
 
 
-def test_the_installer_waits_for_the_claim_then_wires_hermes(flow, capsys):
+def test_the_installer_waits_for_the_first_pairing_then_wires_hermes(flow, capsys):
     (flow.hermes_home / "profiles" / "toolshed").mkdir(parents=True)
     (flow.hermes_home / ".env").write_text("OPENAI_API_KEY=keep\n")
     flow.service, flow.wait_for_claim = "user", True
     state = {"claimed": False}
     shell = FakeShell(claimed=lambda: state["claimed"])
 
-    def someone_claims_in_the_app():
+    def someone_pairs_in_the_app():
         async def create():
             await client.connect()
             try:
-                await auth_service.create_user(name="O", email="o@example.com", password="correct horse")
+                await make_owner(name="O", email="o@example.com")
             finally:
                 await client.close()
         if not state["claimed"]:
             asyncio.run(create())
             state["claimed"] = True
-    shell.on_sleep = someone_claims_in_the_app
+    shell.on_sleep = someone_pairs_in_the_app
     assert run_mod.run(flow, shell) == 0
     out = capsys.readouterr().out
-    assert "account created" in out and "scoped GACA token" in out
+    assert "phone paired" in out and "scoped GACA token" in out
     for env in (flow.hermes_home / ".env", flow.hermes_home / "profiles" / "toolshed" / ".env"):
         assert "GACA_API_TOKEN=gaca_pat_" in env.read_text()
     assert "OPENAI_API_KEY=keep" in (flow.hermes_home / ".env").read_text()
@@ -429,3 +419,10 @@ def test_purge_from_the_command_line_needs_confirmation(installed, monkeypatch, 
     code = cli.main(["uninstall", "--repo-root", str(installed.repo_root), "--data-dir", str(installed.data_dir), "--purge"])
     assert code == 1 and installed.data_dir.exists()
     assert "Not purging" in capsys.readouterr().err
+
+
+def test_the_public_address_is_saved_so_pair_can_put_it_in_the_qr_code(flow, monkeypatch):
+    flow.service = "user"
+    monkeypatch.setattr(run_mod, "setup_tunnel", lambda opts, shell, say: "https://gaca.example.com")
+    assert run_mod.run(flow, FakeShell()) == 0
+    assert read_env(flow.repo_root / ".env")["GACA_PUBLIC_URL"] == "https://gaca.example.com"

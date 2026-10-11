@@ -1,21 +1,18 @@
-"""The owner tools (`gaca-api setup-code | status | reset-password`)."""
+"""The owner tools (`gaca-api pair | device | status`). Pairing's own output is covered in test_pairing.py."""
 import asyncio
-from pathlib import Path
 
 import pytest
 
+from conftest import make_owner
 from gaca_api import cli
 from gaca_api.config import settings
 from gaca_api.db import client
-from gaca_api.db import users as users_db
-from gaca_api.services import auth as auth_service
-from gaca_api.services import setup as setup_service
-from gaca_api.utils.auth import verify_password
+from gaca_api.services import pairing as pairing_service
 
 
 @pytest.fixture
 def server(tmp_path, monkeypatch):
-    """An initialised, unclaimed server database."""
+    """An initialised server database with no owner."""
     db = tmp_path / "gaca.db"
     monkeypatch.setattr(settings, "db_path", str(db))
 
@@ -29,37 +26,21 @@ def server(tmp_path, monkeypatch):
 def test_it_refuses_to_invent_a_database(tmp_path, monkeypatch, capsys):
     ghost = tmp_path / "nowhere" / "gaca.db"
     monkeypatch.setattr(settings, "db_path", str(ghost))
-    assert cli.main(["setup-code"]) == 2
+    assert cli.main(["pair"]) == 2
     assert not ghost.exists() and not ghost.parent.exists()
     assert "No database at" in capsys.readouterr().err
 
 
-def test_setup_code_prints_a_usable_code_and_an_app_link(server, capsys):
-    assert cli.main(["setup-code", "--url", "https://gaca.example.com/"]) == 0
-    out = capsys.readouterr().out
-    code = out.split("Setup code:")[1].split()[0]
-    assert len(code.replace("-", "")) == setup_service.CODE_LENGTH
-    assert "gaca://setup?url=https%3A%2F%2Fgaca.example.com&code=" + code.replace("-", "") in out
-
-    async def claim():
-        await client.connect()
-        try:
-            return await setup_service.claim_with_password(code, "O", "o@example.com", "long enough pw")
-        finally:
-            await client.close()
-    assert asyncio.run(claim()).email == "o@example.com"
-
-
 def test_a_new_code_replaces_the_old_one(server, capsys):
-    cli.main(["setup-code"]); first = capsys.readouterr().out.split("Setup code:")[1].split()[0]
-    cli.main(["setup-code"]); second = capsys.readouterr().out.split("Setup code:")[1].split()[0]
+    cli.main(["pair", "--no-qr"]); first = capsys.readouterr().out.split("Pairing code:")[1].split()[0]
+    cli.main(["pair", "--no-qr"]); second = capsys.readouterr().out.split("Pairing code:")[1].split()[0]
 
     async def try_code(code):
         await client.connect()
         try:
-            await setup_service._check_code(code)
+            await pairing_service._check_code(code)
             return True
-        except setup_service.SetupRefused:
+        except pairing_service.PairingRefused:
             return False
         finally:
             await client.close()
@@ -67,43 +48,33 @@ def test_a_new_code_replaces_the_old_one(server, capsys):
     assert asyncio.run(try_code(first)) is False
 
 
-def test_no_code_is_issued_once_the_server_has_an_owner(server, capsys):
-    async def make_owner():
+def test_codes_are_issued_even_with_an_owner_so_more_phones_can_pair(server, capsys):
+    async def seed():
         await client.connect()
-        await auth_service.create_user(name="O", email="o@example.com", password="long enough pw")
+        await make_owner(name="O", email="o@example.com")
         await client.close()
-    asyncio.run(make_owner())
-    assert cli.main(["setup-code"]) == 1
-    assert "already has an owner" in capsys.readouterr().err
+    asyncio.run(seed())
+    assert cli.main(["pair", "--no-qr"]) == 0
+    assert "Pairing code:" in capsys.readouterr().out
+
+
+def test_status_before_and_after_pairing(server, capsys):
     assert cli.main(["status"]) == 0
-    assert "claimed: yes" in capsys.readouterr().out
+    assert "no owner yet" in capsys.readouterr().out
 
-
-def test_status_before_claiming(server, capsys):
-    assert cli.main(["status"]) == 0
-    assert "claimed: no" in capsys.readouterr().out
-
-
-def test_reset_password_changes_only_the_password(server, monkeypatch, capsys):
-    async def make_owner():
-        await client.connect()
-        await auth_service.create_user(name="O", email="o@example.com", password="old password!")
-        await client.close()
-    asyncio.run(make_owner())
-    monkeypatch.setattr(cli, "_read_new_password", lambda: "brand new password")
-    assert cli.main(["reset-password"]) == 0
-
-    async def check():
+    async def pair_one():
         await client.connect()
         try:
-            owner = await users_db.first()
-            return owner.email, verify_password("brand new password", owner.hashed_password), \
-                verify_password("old password!", owner.hashed_password)
+            code, _ = await pairing_service.issue_code()
+            await pairing_service.pair(code, "Pixel 7")
         finally:
             await client.close()
-    assert asyncio.run(check()) == ("o@example.com", True, False)
+    asyncio.run(pair_one())
+    assert cli.main(["status"]) == 0
+    assert "paired devices: 1" in capsys.readouterr().out
 
 
-def test_reset_password_needs_an_owner(server, capsys):
-    assert cli.main(["reset-password"]) == 1
-    assert "no owner yet" in capsys.readouterr().err
+def test_the_old_sign_in_commands_are_gone(capsys):
+    for old in ("setup-code", "reset-password"):
+        with pytest.raises(SystemExit):
+            cli.main([old])

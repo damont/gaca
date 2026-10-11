@@ -17,7 +17,7 @@ from .bus import event_bus
 from .db import client
 from .provisioning.base import ProvisioningError
 from .config import settings
-from .security import BodyLimitMiddleware, SecurityHeadersMiddleware, check_startup_secrets, cors_origins
+from .security import BodyLimitMiddleware, SecurityHeadersMiddleware, cors_origins
 from .routers import agent, alerts, artifacts, auth, briefings, crew, devices, lists, push, sessions, setup, tokens
 from .services import push as push_service
 from .services.exceptions import (
@@ -35,7 +35,6 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    check_startup_secrets()  # before anything is opened: a refusal must exit cleanly
     await client.connect()  # startup: open SQLite + ensure the schema
     try:
         await event_bus.connect()  # bus for read_run -> open SSE streams

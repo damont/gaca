@@ -89,8 +89,7 @@ Config comes from `${VAR}` substitution in `docker-compose.yml`, read from a
 `.env` file in this directory (or the shell environment) — the repo root
 already has one for the Nix/Hermes flake; add the `GACA_`-prefixed vars there
 too. Anything left unset falls back to a `:-default` that's fine for a
-throwaway local run but not for anything left up — `GACA_JWT_SECRET`
-especially.
+throwaway local run but not for anything left up.
 
 `docker compose down` stops it; the data directory isn't touched either way
 since it's a host bind mount, not something Compose manages — delete it

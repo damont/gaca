@@ -17,100 +17,12 @@ from ..config import settings
 from ..provisioning import hermes_connect
 from ..provisioning.base import ProvisioningError
 from ..provisioning.select import provisioner_for
-from ..utils.auth import hash_password
 from . import tokens as token_service
 from .exceptions import CrewNotConfigured, InvalidRequest, NotFound
 
 
 async def find_by_id(user_id: str) -> UserDoc | None:
     return await users_db.find(user_id)
-
-
-async def find_by_email(email: str) -> UserDoc | None:
-    # Emails are stored lowercase, so look up lowercase: a phone keyboard that capitalises the
-    # first letter must not turn a correct sign-in into a 401.
-    return await users_db.find_by_email(email.strip().lower())
-
-
-async def find_by_google_sub(google_sub: str) -> UserDoc | None:
-    return await users_db.find_by_google_sub(google_sub)
-
-
-async def resolve_google_user(*, google_sub: str, email: str) -> UserDoc | None:
-    """Sign-in only: the existing owner for this verified Google identity, or None.
-
-    Never creates an account — a server has one owner, made through the setup claim. Links the
-    Google identity onto the owner's row when the verified email matches (they claimed with a
-    password and are now using the Google button).
-    """
-    existing = await users_db.find_by_google_sub(google_sub)
-    if existing is not None:
-        return existing
-    by_email = await users_db.find_by_email(email.lower())
-    if by_email is None:
-        return None
-    linked = by_email.model_copy(update={"google_sub": google_sub, "email_verified": True})
-    await users_db.replace(linked)
-    return linked
-
-
-async def set_password(user: UserDoc, password: str) -> UserDoc:
-    """Replace the owner's password (also gives a Google-only owner one). Used by the
-    `gaca-api reset-password` command: shell access to the server is the proof of ownership."""
-    updated = user.model_copy(update={"hashed_password": hash_password(password)})
-    await users_db.replace(updated)
-    return updated
-
-
-async def upsert_google_user(
-    *, google_sub: str, email: str, name: str
-) -> UserDoc:
-    """Resolve a verified Google identity to a user, creating or linking as needed.
-
-    Three cases, in priority order:
-
-    1. We already know this `sub` — return that user.
-    2. We know the email but not the sub: the person signed up with a password
-       first and is now using the Google button. Link the two onto one row
-       rather than making a second account they'd have to keep straight.
-    3. Neither — create an account with no password at all. They can only ever
-       sign in through Google, which is why `hashed_password` is optional.
-    """
-    existing = await users_db.find_by_google_sub(google_sub)
-    if existing is not None:
-        return existing
-
-    by_email = await users_db.find_by_email(email)
-    if by_email is not None:
-        linked = by_email.model_copy(
-            update={"google_sub": google_sub, "email_verified": True}
-        )
-        await users_db.replace(linked)
-        return linked
-
-    user = UserDoc(
-        email=email,
-        display_name=name,
-        hashed_password=None,
-        google_sub=google_sub,
-        email_verified=True,
-    )
-    await users_db.insert(user)
-    return user
-
-
-async def create_user(name: str, email: str, password: str) -> UserDoc:
-    """Hash the password and persist the new user.
-
-    The plaintext stops here — it is hashed on the way in and never stored.
-    """
-    user = UserDoc(
-        email=email.strip().lower(),
-        display_name=name,
-        hashed_password=hash_password(password),
-    )
-    await users_db.insert(user)
-    return user
 
 
 async def set_agent_host(user: UserDoc, host: str) -> UserDoc:

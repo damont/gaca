@@ -1,5 +1,5 @@
 """Owner-managed API tokens: the credential Hermes skills use to post alerts, lists, briefings
-and artifacts. Needs a real sign-in session — an API token cannot create or revoke tokens.
+and artifacts. Needs a paired device — an API token cannot create or revoke tokens.
 See utils/tokens.py for what a token may call."""
 from __future__ import annotations
 

@@ -7,6 +7,7 @@ import textwrap
 
 import pytest
 
+from conftest import make_owner as _make_owner
 from gaca_api.config import settings
 from gaca_api.db import client
 from gaca_api.provisioning import envfile
@@ -59,7 +60,7 @@ def box(tmp_path, monkeypatch):
 
 
 async def make_owner():
-    return await auth_service.create_user(name="O", email="o@example.com", password="correct horse")
+    return await _make_owner(name="O", email="o@example.com")
 
 
 def env(path):

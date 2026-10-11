@@ -13,6 +13,7 @@ from urllib.parse import urlencode
 from ..config import settings
 from . import tunnel as tunnel_mod
 from .envconfig import ensure_env
+from ..provisioning.envfile import upsert_env
 from .privilege import NeedsRoot, run_as_root
 from .shell import Shell, user_systemd_env
 from .units import render, system_install_script
@@ -185,6 +186,9 @@ In the Cloudflare dashboard: Zero Trust > Networks > Tunnels > Create a tunnel >
     return f"https://{host}"
 
 
+PAIR_CODE_MINUTES = 30
+
+
 def print_setup_info(say: Say, base_url: str | None, code: str, port: int) -> None:
     import segno
 
@@ -192,12 +196,12 @@ def print_setup_info(say: Say, base_url: str | None, code: str, port: int) -> No
     link = "gaca://setup?" + urlencode({"url": shown, "code": code.replace("-", "")})
     say.out("")
     say.out(f"  Server address:  {shown}")
-    say.out(f"  Setup code:      {code}   (single use, valid 60 minutes)")
+    say.out(f"  Pairing code:    {code}   (single use, valid {PAIR_CODE_MINUTES} minutes)")
     say.out("")
     segno.make(link, error="m").terminal(compact=True)
     say.out("")
-    say.out("  On your phone, open the GACA app, scan this (or enter the address and code), then")
-    say.out('  choose "Set up this server" and create your account. The code is only for this first step.')
+    say.out("  On your phone, open the GACA app and scan this (or choose \"Enter a code instead\" and type")
+    say.out("  the address and code). To pair another phone later, run:  gaca-api pair")
 
 
 async def _wire_hermes(opts: Options) -> list:
@@ -233,17 +237,14 @@ def wire_hermes(opts: Options, shell: Shell, say: Say) -> None:
         say.ok("every Hermes profile already has a GACA token")
 
 
-async def _issue_code(opts: Options) -> str | None:
+async def _issue_code(opts: Options) -> str:
     from ..db import client
-    from ..services import setup as setup_service
+    from ..services import pairing as pairing_service
 
     settings.db_path = str(opts.data_dir / "gaca.db")
     await client.connect()
     try:
-        try:
-            code, _ = await setup_service.issue_code()
-        except setup_service.SetupRefused:
-            return None
+        code, _ = await pairing_service.issue_code(PAIR_CODE_MINUTES)
         return code
     finally:
         await client.close()
@@ -270,36 +271,37 @@ def run(opts: Options, shell: Shell | None = None, out=print) -> int:
         say.step("Internet access")
         base_url = setup_tunnel(opts, shell, say)
 
-        say.step("Your account")
+        if base_url:
+            # So `gaca-api pair` can put the address in its QR code later.
+            upsert_env(opts.repo_root / ".env", {"GACA_PUBLIC_URL": base_url})
+
+        say.step("Your phone")
         claimed = server_claimed(shell, opts.port)
         if claimed:
-            say.ok("this server already has an owner: open the app and sign in")
+            say.ok("a phone is already paired with this server; to pair another, run: gaca-api pair")
             say.step("Hermes")
             wire_hermes(opts, shell, say)
             return 0
         code = asyncio.run(_issue_code(opts))
-        if code is None:
-            say.ok("this server already has an owner: open the app and sign in")
-            return 0
         print_setup_info(say, base_url, code, opts.port)
 
         if opts.wait_for_claim and opts.use_hermes and opts.hermes_home.is_dir():
-            say.step("Waiting for you to finish in the app (Ctrl-C to skip; then run `gaca-api hermes connect` later)")
+            say.step("Waiting for you to pair your phone (Ctrl-C to skip; then run `gaca-api hermes connect` later)")
             waited = 0
             try:
                 while waited < opts.claim_wait_seconds:
                     if server_claimed(shell, opts.port):
-                        say.ok("account created")
+                        say.ok("phone paired")
                         wire_hermes(opts, shell, say)
                         break
                     shell.sleep(3)
                     waited += 3
                 else:
-                    say.warn("timed out waiting. Once you have signed in, run: gaca-api hermes connect")
+                    say.warn("timed out waiting. Once your phone is paired, run: gaca-api hermes connect")
             except KeyboardInterrupt:
-                say.note("skipped. Once you have signed in, run: gaca-api hermes connect")
+                say.note("skipped. Once your phone is paired, run: gaca-api hermes connect")
         else:
-            say.note("after you have signed in, run `gaca-api hermes connect` if you use Hermes on this machine")
+            say.note("after your phone is paired, run `gaca-api hermes connect` if you use Hermes on this machine")
         say.step("Done")
         say.note(f"logs:    journalctl -u {opts.name}" + ("  (--user)" if mode == "user" else ""))
         say.note("update:  git pull && ./install.sh   (keeps your secrets and data)")
@@ -366,11 +368,11 @@ echo "{opts.name} removed"
 
             if opts.data_dir.exists():
                 shutil.rmtree(opts.data_dir)
-                say.ok(f"deleted {opts.data_dir} (the database, with your chats and account)")
+                say.ok(f"deleted {opts.data_dir} (the database, with your chats and paired phones)")
             env_file = opts.repo_root / ".env"
             if env_file.exists():
                 env_file.unlink()
-                say.ok("deleted .env (including the JWT secret)")
+                say.ok("deleted .env")
         else:
             say.step("Kept")
             say.note(f"your data ({opts.data_dir}) and settings ({opts.repo_root / '.env'}) are untouched; add --purge to delete them")

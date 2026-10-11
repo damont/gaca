@@ -1,5 +1,6 @@
-"""Tests for the auth service: create a user, find one by email."""
+"""Tests for the auth service: the owner record and the per-owner crew config."""
 import asyncio
+import json
 import sqlite3
 
 import pytest
@@ -11,7 +12,7 @@ from gaca_api.models.user import SSHConnection, UserDoc
 from gaca_api.provisioning import ssh as ssh_provisioning
 from gaca_api.services import auth as auth_service
 from gaca_api.services.exceptions import CrewNotConfigured, InvalidRequest, NotFound
-from gaca_api.utils.auth import hash_password, verify_password
+from conftest import make_owner
 
 
 def _run(factory):
@@ -25,256 +26,82 @@ def _run(factory):
     return asyncio.run(main())
 
 
-def test_create_user_persists_and_is_findable(tmp_path):
+def test_a_stored_owner_is_findable_by_id(tmp_path):
     settings.db_path = str(tmp_path / "t.db")
 
     async def main():
         await client.connect()
         try:
-            created = await auth_service.create_user(
-                name="David", email="david@example.com", password="hunter2"
-            )
-            found = await auth_service.find_by_email("david@example.com")
-            return created, found
+            created = await make_owner("David", "David@Example.com")
+            return created, await auth_service.find_by_id(created.id)
         finally:
             await client.close()
 
     created, found = asyncio.run(main())
-    assert found is not None
-    assert found.id == created.id
-    assert found.display_name == "David"
-    assert found.is_active is True
-
-
-def test_password_is_hashed_never_stored_plaintext(tmp_path):
-    settings.db_path = str(tmp_path / "t.db")
-
-    async def main():
-        await client.connect()
-        try:
-            await auth_service.create_user(
-                name="David", email="david@example.com", password="hunter2"
-            )
-            found = await auth_service.find_by_email("david@example.com")
-            # Read the raw stored JSON too — the model could hide a field, the
-            # row cannot.
-            async with client.connection().execute(
-                "SELECT doc FROM users WHERE email = ?", ("david@example.com",)
-            ) as cursor:
-                row = await cursor.fetchone()
-            return found, row["doc"]
-        finally:
-            await client.close()
-
-    found, raw = asyncio.run(main())
-    assert "hunter2" not in raw
-    assert found.hashed_password != "hunter2"
-    assert verify_password("hunter2", found.hashed_password)
-
-
-def test_find_by_email_unknown_returns_none(tmp_path):
-    settings.db_path = str(tmp_path / "t.db")
-
-    async def main():
-        await client.connect()
-        try:
-            return await auth_service.find_by_email("nobody@example.com")
-        finally:
-            await client.close()
-
-    assert asyncio.run(main()) is None
-
-
-# ── Google sign-in ──────────────────────────────────────────────────
-
-def test_google_login_creates_a_passwordless_account(tmp_path):
-    settings.db_path = str(tmp_path / "t.db")
-
-    async def main():
-        await client.connect()
-        try:
-            return await auth_service.upsert_google_user(
-                google_sub="google-123", email="david@example.com", name="David"
-            )
-        finally:
-            await client.close()
-
-    user = asyncio.run(main())
-    assert user.google_sub == "google-123"
-    assert user.hashed_password is None  # can only ever sign in via Google
-    assert user.email_verified is True
-
-
-def test_google_login_is_idempotent_for_a_known_sub(tmp_path):
-    settings.db_path = str(tmp_path / "t.db")
-
-    async def main():
-        await client.connect()
-        try:
-            first = await auth_service.upsert_google_user(
-                google_sub="google-123", email="david@example.com", name="David"
-            )
-            second = await auth_service.upsert_google_user(
-                google_sub="google-123", email="david@example.com", name="David"
-            )
-            return first, second
-        finally:
-            await client.close()
-
-    first, second = asyncio.run(main())
-    assert first.id == second.id
-
-
-def test_google_links_onto_an_existing_password_account(tmp_path):
-    """Same person, one row — not a second account they have to keep straight."""
-    settings.db_path = str(tmp_path / "t.db")
-
-    async def main():
-        await client.connect()
-        try:
-            original = await auth_service.create_user(
-                name="David", email="david@example.com", password="hunter2"
-            )
-            linked = await auth_service.upsert_google_user(
-                google_sub="google-123", email="david@example.com", name="David"
-            )
-            return original, linked, await auth_service.find_by_email("david@example.com")
-        finally:
-            await client.close()
-
-    original, linked, reloaded = asyncio.run(main())
-    assert linked.id == original.id
-    assert reloaded.google_sub == "google-123"
-    # Linking must not cost them their password — both routes still work.
-    assert verify_password("hunter2", reloaded.hashed_password)
-
-
-def test_a_google_only_account_cannot_be_password_logged_in(tmp_path):
-    """The login route's `not user.hashed_password` guard is what stops this.
-
-    Without it, verify_password would be handed None and the failure mode would
-    be a 500 rather than a clean rejection.
-    """
-    settings.db_path = str(tmp_path / "t.db")
-
-    async def main():
-        await client.connect()
-        try:
-            await auth_service.upsert_google_user(
-                google_sub="google-123", email="david@example.com", name="David"
-            )
-            return await auth_service.find_by_email("david@example.com")
-        finally:
-            await client.close()
-
-    user = asyncio.run(main())
-    assert not user.hashed_password
-
-
-def test_google_sub_is_unique_but_absent_subs_do_not_collide(tmp_path):
-    """The partial index is why two password-only users can coexist.
-
-    A plain UNIQUE index would treat their NULL google_sub values as colliding
-    in some engines; `WHERE google_sub IS NOT NULL` scopes it to rows that
-    actually have one.
-    """
-    settings.db_path = str(tmp_path / "t.db")
-
-    async def main():
-        await client.connect()
-        try:
-            await auth_service.create_user(
-                name="A", email="a@example.com", password="pw"
-            )
-            await auth_service.create_user(
-                name="B", email="b@example.com", password="pw"
-            )  # second NULL google_sub — must not raise
-
-            await auth_service.upsert_google_user(
-                google_sub="google-123", email="c@example.com", name="C"
-            )
-            with pytest.raises(sqlite3.IntegrityError):
-                await users_db.insert(
-                    UserDoc(
-                        email="d@example.com",
-                        display_name="D",
-                        google_sub="google-123",  # duplicate sub
-                    )
-                )
-        finally:
-            await client.close()
-
-    asyncio.run(main())
-
-
-def test_missing_columns_are_added_to_a_pre_existing_database(tmp_path):
-    """A database created before google_sub existed still gets the column.
-
-    CREATE TABLE IF NOT EXISTS does nothing when the table is already there, so
-    without the migration the schema would be right on a fresh machine and
-    quietly wrong on one that had been running for a while.
-    """
-    db = tmp_path / "old.db"
-    settings.db_path = str(db)
-
-    legacy = sqlite3.connect(db)
-    legacy.execute(
-        "CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, "
-        "created_at TEXT NOT NULL, doc TEXT NOT NULL)"
-    )
-    legacy.commit()
-    legacy.close()
-
-    async def main():
-        await client.connect()
-        try:
-            async with client.connection().execute("PRAGMA table_info(users)") as cur:
-                columns = {row["name"] for row in await cur.fetchall()}
-            # and the table is usable afterwards
-            await auth_service.upsert_google_user(
-                google_sub="google-123", email="david@example.com", name="David"
-            )
-            return columns
-        finally:
-            await client.close()
-
-    assert "google_sub" in asyncio.run(main())
+    assert found is not None and found.id == created.id
+    assert found.display_name == "David" and found.email == "david@example.com" and found.is_active is True
 
 
 def test_duplicate_email_rejected_by_the_database(tmp_path):
-    """The route checks for a taken email first, but two requests can race it.
-
-    The UNIQUE index on users.email is the backstop that makes a duplicate
-    impossible rather than merely unlikely.
-    """
+    """The UNIQUE index on users.email is the backstop that makes a duplicate impossible."""
     settings.db_path = str(tmp_path / "t.db")
 
     async def main():
         await client.connect()
         try:
-            await auth_service.create_user(
-                name="David", email="david@example.com", password="hunter2"
-            )
+            await make_owner("David", "david@example.com")
             with pytest.raises(sqlite3.IntegrityError):
-                await users_db.insert(
-                    UserDoc(
-                        email="david@example.com",
-                        display_name="Impostor",
-                        hashed_password=hash_password("other"),
-                    )
-                )
+                await users_db.insert(UserDoc(email="david@example.com", display_name="Impostor"))
         finally:
             await client.close()
 
     asyncio.run(main())
+
+
+@pytest.mark.parametrize("with_google", [True, False])
+def test_old_passwords_and_google_identities_are_scrubbed_on_startup(tmp_path, with_google):
+    """A database from the sign-in era still holds an Argon2 hash and a Google id: they are removed
+    when the server next opens it, and the rest of the owner's record is untouched."""
+    db = tmp_path / "old.db"
+    settings.db_path = str(db)
+
+    async def seed():
+        await client.connect()
+        await client.close()
+    asyncio.run(seed())
+
+    legacy_doc = {
+        "id": "u1", "email": "david@example.com", "display_name": "David",
+        "hashed_password": "$argon2id$v=19$m=65536,t=3,p=4$abc$def", "google_sub": "g-123",
+        "email_verified": True, "is_active": True, "created_at": "2026-01-01T00:00:00+00:00",
+        "agent_host": "http://david-claw", "crew": [], "default_crew": None,
+    }
+    if not with_google:  # the oldest shape: a password, and none of the Google fields at all
+        del legacy_doc["google_sub"], legacy_doc["email_verified"]
+    con = sqlite3.connect(db)
+    con.execute(
+        "INSERT INTO users (id, email, google_sub, created_at, doc) VALUES (?, ?, ?, ?, ?)",
+        ("u1", "david@example.com", "g-123" if with_google else None, "2026-01-01T00:00:00+00:00", json.dumps(legacy_doc)),
+    )
+    con.commit()
+    con.close()
+
+    asyncio.run(seed())  # the server starting up again
+
+    con = sqlite3.connect(db)
+    row = con.execute("SELECT google_sub, doc FROM users").fetchone()
+    con.close()
+    assert row[0] is None
+    doc = json.loads(row[1])
+    assert "hashed_password" not in doc and "google_sub" not in doc and "email_verified" not in doc
+    assert doc["agent_host"] == "http://david-claw" and doc["display_name"] == "David"
+
 
 
 # ── per-user crew config ────────────────────────────────────────────
 
 async def _new_user() -> UserDoc:
-    return await auth_service.create_user(
-        name="David", email="david@example.com", password="hunter2"
-    )
+    return await make_owner(name="David", email="david@example.com")
 
 
 def test_set_agent_host_persists(tmp_path):

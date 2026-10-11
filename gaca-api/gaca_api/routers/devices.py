@@ -11,9 +11,9 @@ from ..models.user import UserDoc
 from ..schemas.devices import DeviceInfo, PairRequest, PairResponse
 from ..security import rate_limit
 from ..services import pairing as pairing_service
+from ..services.pairing import PairingRefused
 from ..services import tokens as token_service
 from ..services.exceptions import NotFound
-from ..services.setup import SetupRefused
 from ..utils.auth import get_session_user, oauth2_scheme
 from ..utils import tokens as token_utils
 
@@ -32,7 +32,7 @@ async def pair(data: PairRequest):
     """Trade the one-time code for a device credential."""
     try:
         doc, secret = await pairing_service.pair(data.code, data.name)
-    except SetupRefused as error:
+    except PairingRefused as error:
         raise HTTPException(status_code=_STATUS.get(error.reason, 400), detail=error.detail)
     return PairResponse(access_token=secret, device_id=doc.id)
 

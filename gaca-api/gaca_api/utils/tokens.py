@@ -2,7 +2,7 @@
 
 An API token is for software acting for the owner (Hermes skills posting alerts, lists,
 briefings, artifacts) — not for a person, and not for the app. It is deliberately narrower than
-a sign-in session:
+a paired device (the app), which has the owner's full access:
 
   * it can only call the endpoints its scopes name, below; everything else (chat, crew, the agent
     connection, push, account, and token management itself) answers 403;

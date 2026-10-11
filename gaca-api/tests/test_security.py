@@ -1,12 +1,11 @@
-"""What used to be nginx's job, now the API's own: headers, request size, rate limits, CORS, and
-refusing to start with a placeholder secret."""
+"""What used to be nginx's job, now the API's own: headers, request size, rate limits and CORS."""
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from starlette.requests import Request as StarletteRequest
 
 from gaca_api import security
-from gaca_api.config import DEFAULT_JWT_SECRET, settings
+from gaca_api.config import settings
 from gaca_api.main import app
 from gaca_api.security import BodyLimitMiddleware, RateLimiter, SecurityHeadersMiddleware, client_ip
 
@@ -48,14 +47,14 @@ def test_a_route_that_sets_its_own_header_keeps_it():
 
 def test_an_oversized_body_is_refused_before_it_reaches_the_app(http):
     big = b"x" * (settings.max_body_bytes + 1)
-    r = http.post("/api/setup/claim", content=big, headers={"content-type": "application/json"})
+    r = http.post("/api/devices/pair", content=big, headers={"content-type": "application/json"})
     assert r.status_code == 413 and r.json() == {"detail": "Request body is too large"}
     assert r.headers["x-content-type-options"] == "nosniff"
 
 
 def test_a_body_just_under_the_limit_gets_through(http):
     ok = b"{" + b" " * (settings.max_body_bytes - 100) + b"}"
-    r = http.post("/api/setup/claim", content=ok, headers={"content-type": "application/json"})
+    r = http.post("/api/devices/pair", content=ok, headers={"content-type": "application/json"})
     assert r.status_code == 422  # reached the validator, not the size gate
 
 
@@ -63,7 +62,7 @@ def test_a_streamed_body_without_a_content_length_is_still_capped(http):
     def chunks():
         for _ in range(40):
             yield b"x" * (100 * 1024)  # 4 MiB, no Content-Length
-    r = http.post("/api/setup/claim", content=chunks(), headers={"content-type": "application/json"})
+    r = http.post("/api/devices/pair", content=chunks(), headers={"content-type": "application/json"})
     assert r.status_code == 413
 
 
@@ -113,27 +112,13 @@ def test_limiter_keys_are_independent_and_memory_is_bounded():
     assert len(lim._hits) < 10_000
 
 
-def test_login_is_rate_limited_per_client(http, monkeypatch):
+def test_pairing_is_rate_limited_per_client(http, monkeypatch):
     monkeypatch.setattr(settings, "auth_attempts_per_minute", 3)
-    body = {"email": "nobody@example.com", "password": "wrong password"}
-    codes = [http.post("/api/auth/login", json=body).status_code for _ in range(5)]
-    assert codes == [401, 401, 401, 429, 429]
-    r = http.post("/api/auth/login", json=body)
+    body = {"code": "AAAA-BBBB", "name": "Phone"}
+    codes = [http.post("/api/devices/pair", json=body).status_code for _ in range(5)]
+    assert codes == [403, 403, 403, 429, 429]
+    r = http.post("/api/devices/pair", json=body)
     assert r.status_code == 429 and int(r.headers["retry-after"]) >= 1 and "Too many attempts" in r.json()["detail"]
-
-
-def test_the_first_run_claim_and_google_sign_in_are_limited_too(http, monkeypatch):
-    monkeypatch.setattr(settings, "auth_attempts_per_minute", 2)
-    claim = {"code": "AAAA-BBBB", "name": "x", "email": "x@example.com", "password": "password123"}
-    assert [http.post("/api/setup/claim", json=claim).status_code for _ in range(3)] == [403, 403, 429]
-    google = {"id_token": "t"}
-    assert [http.post("/api/auth/google", json=google).status_code for _ in range(3)][-1] == 429
-
-
-def test_login_and_claim_have_separate_budgets(http, monkeypatch):
-    monkeypatch.setattr(settings, "auth_attempts_per_minute", 1)
-    assert http.post("/api/auth/login", json={"email": "a@example.com", "password": "x" * 9}).status_code == 401
-    assert http.post("/api/setup/claim", json={"code": "A", "name": "x", "email": "x@example.com", "password": "password123"}).status_code == 403
 
 
 def _request(peer, headers=None):
@@ -163,34 +148,3 @@ def test_cross_origin_calls_get_no_cors_permission_by_default(http):
 def test_cors_origin_list_parsing():
     assert security.cors_origins("") == []
     assert security.cors_origins(" https://a.example/ , https://b.example ,, ") == ["https://a.example", "https://b.example"]
-
-
-# ── refusing to start with a placeholder secret ──────────────────────
-
-@pytest.mark.parametrize("secret", [DEFAULT_JWT_SECRET, "short", "x" * 31, ""])
-def test_startup_refuses_a_placeholder_or_short_secret(secret, monkeypatch):
-    monkeypatch.setattr(settings, "dev", False)
-    monkeypatch.setattr(settings, "jwt_secret", secret)
-    with pytest.raises(RuntimeError, match="GACA_JWT_SECRET"):
-        security.check_startup_secrets()
-
-
-def test_startup_accepts_a_strong_secret_and_dev_bypasses(monkeypatch):
-    monkeypatch.setattr(settings, "dev", False)
-    monkeypatch.setattr(settings, "jwt_secret", "k" * 32)
-    security.check_startup_secrets()
-    monkeypatch.setattr(settings, "jwt_secret", DEFAULT_JWT_SECRET)
-    monkeypatch.setattr(settings, "dev", True)
-    security.check_startup_secrets()
-
-
-def test_the_app_will_not_start_with_the_placeholder_and_opens_nothing(tmp_path, monkeypatch):
-    monkeypatch.setattr(settings, "dev", False)
-    monkeypatch.setattr(settings, "jwt_secret", DEFAULT_JWT_SECRET)
-    db = tmp_path / "never-created.db"
-    monkeypatch.setattr(settings, "db_path", str(db))
-    monkeypatch.setattr(settings, "agent_engine", "hermes")
-    with pytest.raises(RuntimeError, match="forge a login"):
-        with TestClient(app):
-            pass
-    assert not db.exists()  # the refusal happens before the database is touched

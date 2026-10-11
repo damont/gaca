@@ -22,8 +22,8 @@ How the limits are kept (each one has a test in tests/provisioning/test_local.py
     profile directories that are symlinks are refused outright;
   * reads are size-capped;
   * commands go through exec with an argv list — no shell anywhere — with
-    stdin closed and a scrubbed environment, so gaca-api's own secrets (JWT
-    secret, FCM path) are never handed to a child process;
+    stdin closed and a scrubbed environment, so gaca-api's own secrets (FCM
+    path, database location) are never handed to a child process;
   * default_soul.py is evaluated by a whitelist AST walker, not imported.
 
 This is an in-process boundary: it limits what *this code* does. The OS-level
