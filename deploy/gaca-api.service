@@ -1,20 +1,15 @@
-# GACA API as a host process next to Hermes (GACA_AGENT_ACCESS=local).
-#
-# Install as a SYSTEM unit (needs root once), running as your normal user:
-#   sed -e 's#@USER@#youruser#g' -e 's#@HOME@#/home/youruser#g' deploy/gaca-api.service \
-#     | sudo tee /etc/systemd/system/gaca-api.service
-#   sudo systemctl daemon-reload && sudo systemctl enable --now gaca-api
-# Then check the sandbox really applies:  sudo ./deploy/check-sandbox.sh
+# The GACA API as a sandboxed system service. Rendered and installed by `./install.sh`
+# (placeholders in @…@ are filled in); you normally never touch this file by hand.
 #
 # Why a system unit and not `systemctl --user`: the filesystem sandbox below needs a mount
 # namespace. A user manager can only build one with an unprivileged user namespace, which
 # Ubuntu 24.04+ blocks by default (kernel.apparmor_restrict_unprivileged_userns=1). There the
-# options are accepted and then silently NOT applied — the process can still read ~/.ssh.
+# options are accepted and then silently NOT applied — the process could still read ~/.ssh.
+# `sudo ./deploy/check-sandbox.sh` proves the sandbox really applies on your machine.
 #
-# What the sandbox allows: read the code, read Hermes' home, write the GACA data dir and
-# Hermes' profiles/ directory (so `hermes profile create` works) and the socket directory. Everything else under the
-# home directory is invisible. If `hermes profile create` needs another path on your install,
-# add it to BindPaths and re-run check-sandbox.sh.
+# What it can touch: read the code, read Hermes' home, write the GACA data directory and
+# Hermes' profiles/ directory (so creating a crew member works). Everything else under your
+# home directory is invisible to it. A leading '-' means "skip if the path doesn't exist".
 [Unit]
 Description=GACA API
 After=network-online.target
@@ -22,20 +17,10 @@ Wants=network-online.target
 
 [Service]
 User=@USER@
-WorkingDirectory=@HOME@/gaca/gaca-api
-EnvironmentFile=@HOME@/gaca/.env
-Environment=GACA_AGENT_ENGINE=hermes
-Environment=GACA_AGENT_ACCESS=local
-Environment=GACA_HERMES_HOME=@HOME@/.hermes
-Environment=GACA_HERMES_BIN=@HOME@/.local/bin/hermes
-Environment=GACA_DB_PATH=@HOME@/gaca-data/gaca.db
-# TCP is loopback only (Hermes skills use it). The frontend container uses the Unix socket below.
-Environment=GACA_API_HOST=127.0.0.1
-Environment=GACA_API_PORT=41700
-# The frontend container's nginx reaches the API through this socket (mount its directory).
-Environment=GACA_API_SOCKET=@HOME@/gaca-run/api.sock
+WorkingDirectory=@REPO@/gaca-api
+EnvironmentFile=@REPO@/.env
 Environment=PYTHONDONTWRITEBYTECODE=1
-ExecStart=@HOME@/gaca/gaca-api/.venv/bin/gaca-api
+ExecStart=@REPO@/gaca-api/.venv/bin/gaca-api
 Restart=on-failure
 RestartSec=3
 
@@ -45,8 +30,8 @@ PrivateTmp=yes
 UMask=0077
 ProtectSystem=strict
 ProtectHome=tmpfs
-BindReadOnlyPaths=@HOME@/gaca @HOME@/.hermes @HOME@/.local -@HOME@/gaca-secrets
-BindPaths=@HOME@/gaca-data @HOME@/gaca-run @HOME@/.hermes/profiles
+BindReadOnlyPaths=@REPO@ -@HERMES_HOME@ -@HOME@/.local -@CONFIG_DIR@/secrets
+BindPaths=@DATA_DIR@ -@HERMES_HOME@/profiles
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
