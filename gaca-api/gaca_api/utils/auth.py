@@ -56,6 +56,14 @@ async def _resolve(request: Request | None, token: str, *, allow_api_token: bool
     raise credentials_exception
 
 
+async def device_id_for(token: str) -> str | None:
+    """The paired-device id behind a bearer credential, or None if it is not a (live) device."""
+    if not token_utils.looks_like_device(token):
+        return None
+    found = await token_service.authenticate(token)
+    return found[1].id if found and token_service.is_device(found[1]) else None
+
+
 async def get_current_user(token: str = Depends(oauth2_scheme), request: Request = None) -> UserDoc:
     """Dependency: the owner — via a paired device, or an API token within its scopes."""
     return await _resolve(request, token, allow_api_token=True)

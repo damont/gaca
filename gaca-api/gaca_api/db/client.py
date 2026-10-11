@@ -215,6 +215,8 @@ CREATE TABLE IF NOT EXISTS briefing_sections (
 # so we look before we leap.
 _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("users", "google_sub", "TEXT"),
+    # Which paired device registered a push token, so revoking the device removes it.
+    ("push_tokens", "device_id", "TEXT"),
     # Sessions predate multi-user auth entirely (the original chat feature
     # had no user concept at all) — `user_id` lived only inside `doc` until
     # GET /sessions (listing "my" sessions for the Chat tab) needed it as a
@@ -231,6 +233,8 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
 _LATE_INDEXES = """
 CREATE UNIQUE INDEX IF NOT EXISTS ux_users_google_sub
     ON users (google_sub) WHERE google_sub IS NOT NULL;
+CREATE INDEX IF NOT EXISTS ix_push_tokens_device
+    ON push_tokens (device_id) WHERE device_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS ix_sessions_user
     ON sessions (user_id, created_at);
 """

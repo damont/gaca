@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends
 from ..models.user import UserDoc
 from ..schemas.push import PushTokenRegister, PushTokenUnregister
 from ..services import push as push_service
-from ..utils.auth import get_current_user
+from ..utils.auth import device_id_for, get_current_user, oauth2_scheme
 
 router = APIRouter(prefix="/push", tags=["push"])
 
@@ -15,6 +15,7 @@ router = APIRouter(prefix="/push", tags=["push"])
 async def register(
     body: PushTokenRegister,
     user: UserDoc = Depends(get_current_user),
+    credential: str = Depends(oauth2_scheme),
 ) -> None:
     """Register (or move) a device's push token to this account.
 
@@ -23,7 +24,8 @@ async def register(
     hands the app a new token — tokens rotate, so this is a "keep me current,"
     not a one-time call. Idempotent: registering the same token again is a no-op.
     """
-    await push_service.register_token(user.id, body.token, body.platform, body.environment)
+    # Remember which paired device registered it, so unpairing that device removes the token too.
+    await push_service.register_token(user.id, body.token, body.platform, body.environment, await device_id_for(credential))
 
 
 @router.post("/unregister", status_code=204)

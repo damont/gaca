@@ -14,7 +14,7 @@ from ..services import pairing as pairing_service
 from ..services.pairing import PairingRefused
 from ..services import tokens as token_service
 from ..services.exceptions import NotFound
-from ..utils.auth import get_session_user, oauth2_scheme
+from ..utils.auth import device_id_for, get_session_user, oauth2_scheme
 from ..utils import tokens as token_utils
 
 router = APIRouter(prefix="/devices", tags=["devices"])
@@ -37,11 +37,7 @@ async def pair(data: PairRequest):
     return PairResponse(access_token=secret, device_id=doc.id)
 
 
-async def _current_device_id(token: str) -> str | None:
-    if not token_utils.looks_like_device(token):
-        return None
-    found = await token_service.authenticate(token)
-    return found[1].id if found else None
+_current_device_id = device_id_for
 
 
 @router.get("", response_model=list[DeviceInfo])

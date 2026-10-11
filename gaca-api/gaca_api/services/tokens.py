@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from ..db import api_tokens as tokens_db
+from ..db import push_tokens as push_tokens_db
 from ..db import users as users_db
 from ..models.api_token import ApiTokenDoc
 from ..models.base import utcnow
@@ -56,8 +57,11 @@ async def list_devices(user: UserDoc) -> list[ApiTokenDoc]:
 
 
 async def revoke(user: UserDoc, token_id: str) -> None:
+    """Revoke a credential. If it was a paired device, the push tokens it registered go with it: an
+    unpaired (lost, stolen, or switched-away) phone must stop receiving this server's alerts."""
     if not await tokens_db.revoke(user.id, token_id, utcnow()):
         raise NotFound("token", token_id)
+    await push_tokens_db.delete_by_device(token_id)
 
 
 async def revoke_older_with_name(user: UserDoc, name: str, *, keep_id: str) -> int:
