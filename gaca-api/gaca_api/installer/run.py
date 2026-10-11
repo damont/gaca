@@ -404,7 +404,7 @@ def print_setup_info(say: Say, base_url: str | None, code: str, port: int) -> No
     say.out("  the address and code). To pair another phone later, run:  gaca-api pair")
 
 
-async def _wire_hermes(opts: Options) -> list:
+async def _wire_hermes(opts: Options) -> tuple[list, list[str] | None]:
     from ..db import client
     from ..db import users as users_db
     from ..provisioning import hermes_connect
@@ -412,12 +412,17 @@ async def _wire_hermes(opts: Options) -> list:
     settings.db_path = str(opts.data_dir / "gaca.db")
     settings.hermes_home = str(opts.hermes_home)
     settings.api_port = opts.port
+    settings.agent_access = "local"
     await client.connect()
     try:
         owner = await users_db.first()
         if owner is None:
-            return []
-        return await hermes_connect.connect_profiles(opts.hermes_home, hermes_connect.gaca_base_url(), owner)
+            return [], None  # nobody has paired yet, so there is nothing to wire or register
+        wired = await hermes_connect.connect_profiles(opts.hermes_home, hermes_connect.gaca_base_url(), owner)
+        from ..services import auth as auth_service
+
+        updated = await auth_service.ensure_crew_discovered(owner)  # the default profile becomes the default crew member
+        return wired, [c.name + (" (default)" if c.name == updated.default_crew else "") for c in updated.crew]
     finally:
         await client.close()
 
@@ -428,8 +433,12 @@ def wire_hermes(opts: Options, shell: Shell, say: Say) -> None:
     if not opts.hermes_home.is_dir():
         say.note(f"no Hermes found at {opts.hermes_home}; skipping. Install Hermes, then run: gaca-api hermes connect")
         return
-    wired = asyncio.run(_wire_hermes(opts))
+    wired, crew = asyncio.run(_wire_hermes(opts))
     fresh = [c for c in wired if c.token_id is not None]
+    if crew:
+        say.ok(f"crew in the app: {', '.join(crew)}")
+    elif crew is not None:
+        say.warn("no Hermes profile has its API server enabled, so the app has no crew yet (see the README's Hermes steps)")
     if fresh:
         say.ok(f"gave {len(fresh)} Hermes profile(s) a scoped GACA token: {', '.join(c.profile for c in fresh)}")
         say.warn("restart Hermes so running agents pick it up (e.g. `systemctl --user restart hermes-gateway`)")

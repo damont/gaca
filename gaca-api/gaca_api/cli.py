@@ -223,6 +223,19 @@ async def _token_revoke(token_id: str) -> int:
     return 0
 
 
+async def _register_crew(home: Path) -> None:
+    """Make the Hermes profiles show up as crew members in the app (the `default` profile first)."""
+    from .services import auth as auth_service
+
+    if settings.agent_access != "local" or home.resolve() != Path(settings.hermes_home).expanduser().resolve():
+        print("Crew: not registered (this needs GACA_AGENT_ACCESS=local and the Hermes home GACA is configured for).")
+        return
+    owner = await users_db.first()
+    updated = await auth_service.discover_crew(owner)
+    names = ", ".join(c.name + (" (default)" if c.name == updated.default_crew else "") for c in updated.crew)
+    print(f"Crew in the app: {names or 'none found; is the API server enabled in a profile\'s .env?'}")
+
+
 async def _hermes_connect(hermes_home: str | None, base_url: str | None, rotate: bool = False) -> int:
     owner = await _owner_or_none()
     if owner is None:
@@ -242,6 +255,7 @@ async def _hermes_connect(hermes_home: str | None, base_url: str | None, rotate:
         print("Restart Hermes so running agents pick up the new token (e.g. `systemctl --user restart hermes-gateway`).")
     else:
         print("Every profile already has a GACA token; nothing to do. (`--rotate` replaces them.)")
+    await _register_crew(home)
     print("GACA skills:")
     for profile, outcome in hermes_connect.install_skills(home).items():
         if isinstance(outcome, str):

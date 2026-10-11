@@ -55,9 +55,10 @@ def crew_out(user: UserDoc) -> CrewOut:
 async def list_crew(user: UserDoc = Depends(get_current_user)):
     """This user's shared host and every crew member configured under it.
 
-    Never returns a key — same rule as a password.
+    Never returns a key — same rule as a password. When GACA runs on the Hermes machine, Hermes profiles
+    not yet registered (the `default` one on a fresh install) are registered first.
     """
-    return crew_out(user)
+    return crew_out(await auth_service.ensure_crew_discovered(user))
 
 
 def _as_connection(access) -> SSHConnection | None:

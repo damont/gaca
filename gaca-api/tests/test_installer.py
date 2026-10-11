@@ -363,6 +363,7 @@ def test_the_installer_waits_for_the_first_pairing_then_wires_hermes(flow, capsy
     assert run_mod.run(flow, shell) == 0
     out = capsys.readouterr().out
     assert "phone paired" in out and "scoped GACA token" in out
+    assert "crew in the app: default (default)" in out  # the default profile is registered, nobody ran a discovery step
     for env in (flow.hermes_home / ".env", flow.hermes_home / "profiles" / "toolshed" / ".env"):
         assert "GACA_API_TOKEN=gaca_pat_" in env.read_text()
     assert "OPENAI_API_KEY=keep" in (flow.hermes_home / ".env").read_text()
@@ -924,3 +925,27 @@ def test_the_interactive_token_prompt_uses_the_current_cloudflare_wording(tmp_pa
     out = capsys.readouterr().out
     assert "Tunnels & Mesh" in out and "Published application routes" in out and "HTTP  localhost:41700" in out
     assert "Public hostnames" not in out and "Zero Trust" not in out
+
+
+def test_with_no_api_server_the_installer_says_the_app_has_no_crew_yet(flow, capsys):
+    flow.hermes_home.mkdir(parents=True)
+    (flow.hermes_home / ".env").write_text("OPENAI_API_KEY=keep\n")  # Hermes without its API server switched on
+    flow.use_hermes, flow.service = True, "user"
+
+    async def pair_someone():
+        await client.connect()
+        try:
+            await make_owner(name="O", email="o@example.com")
+        finally:
+            await client.close()
+    asyncio.run(pair_someone())
+    run_mod.wire_hermes(flow, FakeShell(hermes="v0.21.5"), Say(print))
+    out = capsys.readouterr().out
+    assert "the app has no crew yet" in out and "crew in the app:" not in out
+
+
+def test_before_anyone_has_paired_the_installer_does_not_claim_there_is_no_crew(flow, capsys):
+    flow.hermes_home.mkdir(parents=True)
+    flow.use_hermes = True
+    run_mod.wire_hermes(flow, FakeShell(hermes="v0.21.5"), Say(print))
+    assert "no crew" not in capsys.readouterr().out

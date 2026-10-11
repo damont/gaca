@@ -374,3 +374,26 @@ def test_the_module_has_no_shell_or_dynamic_code_paths():
 
 def test_local_errors_are_provisioning_errors_so_they_map_to_502():
     assert issubclass(LocalError, ProvisioningError)
+
+
+
+# ── the API server settings Hermes itself accepts ────────────────────
+
+from gaca_api.provisioning.local import _api_server_settings  # noqa: E402
+
+
+def test_an_unset_api_server_port_means_hermes_default_8642():
+    """The README tells people to add only ENABLED and KEY; Hermes then serves on 8642, so discovery must too."""
+    key = "k" * 32
+    assert _api_server_settings(f"API_SERVER_ENABLED=true\nAPI_SERVER_KEY={key}\n") == {"port": 8642, "api_key": key}
+    assert _api_server_settings(f"API_SERVER_ENABLED=true\nAPI_SERVER_PORT=\nAPI_SERVER_KEY={key}\n")["port"] == 8642
+    assert _api_server_settings(f"API_SERVER_ENABLED=true\nAPI_SERVER_PORT=9000\nAPI_SERVER_KEY={key}\n")["port"] == 9000
+
+
+def test_other_api_server_settings_are_still_refused():
+    key = "k" * 32
+    for text in (f"API_SERVER_ENABLED=false\nAPI_SERVER_KEY={key}\n", f"API_SERVER_KEY={key}\n", "API_SERVER_ENABLED=true\n",
+                 f"API_SERVER_ENABLED=true\nAPI_SERVER_PORT=abc\nAPI_SERVER_KEY={key}\n",
+                 f"API_SERVER_ENABLED=true\nAPI_SERVER_PORT=70000\nAPI_SERVER_KEY={key}\n",
+                 f"API_SERVER_ENABLED=true\nAPI_SERVER_PORT=0\nAPI_SERVER_KEY={key}\n", None, ""):
+        assert _api_server_settings(text) is None, text

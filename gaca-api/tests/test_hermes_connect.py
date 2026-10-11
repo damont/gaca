@@ -234,3 +234,30 @@ def test_connect_reports_a_profile_that_cannot_take_the_skills(server, hermes_ho
     assert "toolshed" in out and "NOT installed" in out
     assert list(outside.iterdir()) == []
     assert (hermes_home / "profiles" / "trading" / "skills" / "gaca" / "gaca-alerts" / "SKILL.md").is_file()  # the others still got theirs
+
+
+# ── connect also puts the profiles in the app as crew ────────────────
+
+def test_connect_registers_the_default_profile_as_the_default_crew_member(server, hermes_home, monkeypatch, capsys):
+    (hermes_home / ".env").write_text("API_SERVER_ENABLED=true\nAPI_SERVER_KEY=" + "d" * 32 + "\n")  # just what the README says to add
+    monkeypatch.setattr(settings, "agent_access", "local")
+    monkeypatch.setattr(settings, "hermes_home", str(hermes_home))
+    assert cli.main(["hermes", "connect", "--hermes-home", str(hermes_home)]) == 0
+    assert "Crew in the app: default (default)" in capsys.readouterr().out
+
+    async def crew():
+        from gaca_api.db import users as users_db
+        owner = await users_db.first()
+        return [c.name for c in owner.crew], owner.default_crew
+    assert run(crew) == (["default"], "default")
+
+
+def test_connect_says_when_it_cannot_register_crew(server, hermes_home, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(settings, "agent_access", "local")
+    monkeypatch.setattr(settings, "hermes_home", str(tmp_path / "somewhere-else"))
+    assert cli.main(["hermes", "connect", "--hermes-home", str(hermes_home)]) == 0
+    assert "Crew: not registered" in capsys.readouterr().out
+    monkeypatch.setattr(settings, "agent_access", "ssh")
+    monkeypatch.setattr(settings, "hermes_home", str(hermes_home))
+    cli.main(["hermes", "connect", "--hermes-home", str(hermes_home)])
+    assert "Crew: not registered" in capsys.readouterr().out
