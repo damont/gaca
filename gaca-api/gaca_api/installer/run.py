@@ -365,9 +365,9 @@ def setup_tunnel(opts: Options, shell: Shell, say: Say) -> str | None:
         token = os.environ["GACA_TUNNEL_TOKEN"]
     elif sys.stdin.isatty():
         say.out(f"""
-In the Cloudflare dashboard: Zero Trust > Networks > Tunnels > Create a tunnel > Cloudflared.
-  1. Copy the token from the install command it shows (the long string after `--token`).
-  2. Under "Public hostnames" add your hostname with service  HTTP  localhost:{opts.port}""")
+In the Cloudflare dashboard: Networks > Tunnels & Mesh > create a tunnel (Cloudflared).
+  1. Copy the token from the install command it shows (the long string after `--token`); do not run that command.
+  2. On the tunnel's "Published application routes" tab, add your hostname with service  HTTP  localhost:{opts.port}""")
         token = getpass.getpass("Paste the tunnel token (input is hidden): ")
     if not token:
         raise RuntimeError("tunnel mode 'token' needs --tunnel-token-file, GACA_TUNNEL_TOKEN, or a terminal to paste into")

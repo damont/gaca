@@ -913,3 +913,14 @@ def test_http_get_sends_a_browser_like_user_agent(monkeypatch):
     assert shell_mod.Shell().http_get("https://gaca.example.com/api/health") == (200, "ok")
     assert seen["ua"].startswith("Mozilla/5.0") and "Python-urllib" not in seen["ua"]
     assert seen["url"] == "https://gaca.example.com/api/health"
+
+
+def test_the_interactive_token_prompt_uses_the_current_cloudflare_wording(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr("sys.stdin", type("TTY", (), {"isatty": lambda self: True, "fileno": lambda self: 0})())
+    monkeypatch.setattr(run_mod.getpass, "getpass", lambda prompt="": "eyJhIjoiMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAiLCJ0IjoiYWJj")
+    monkeypatch.setattr("builtins.input", lambda prompt="": "gaca.example.com")
+    opts = Options(repo_root=REPO, tunnel="token", config_dir=tmp_path / "cfg", port=41700)
+    assert run_mod.setup_tunnel(opts, FakeShell(), Say(print)) == "https://gaca.example.com"
+    out = capsys.readouterr().out
+    assert "Tunnels & Mesh" in out and "Published application routes" in out and "HTTP  localhost:41700" in out
+    assert "Public hostnames" not in out and "Zero Trust" not in out

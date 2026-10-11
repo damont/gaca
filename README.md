@@ -48,6 +48,30 @@ The GACA installer checks all of this before it changes anything, and stops with
 is missing. `./install.sh --install-hermes` will run Hermes's installer for you if it is not there (you still
 run `hermes setup` yourself, because that is where your model credentials go).
 
+## Get an address (Cloudflare)
+
+Your phone reaches the server through a Cloudflare Tunnel: the server makes an outbound connection to Cloudflare, so
+you open no ports and need no static IP. You choose how permanent the address is:
+
+| | needs | address |
+|---|---|---|
+| **A permanent address** (recommended) | a free Cloudflare account and a domain whose DNS is on Cloudflare (buy one there, or add yours) | yours, e.g. `gaca.example.com`, never changes |
+| **A temporary address** (to try it out) | nothing | a random `*.trycloudflare.com` that changes if the tunnel restarts: `--tunnel quick` |
+| **None** | nothing | only reachable from this machine: `--tunnel none` |
+
+For a permanent address, do this once in the Cloudflare dashboard **before** running the installer:
+
+1. Open **Networks → Tunnels & Mesh** and create a tunnel (a *Cloudflared* tunnel). Name it anything. Copy its **token**: the long
+   string after `--token` in the install command the page shows. Do not run that command; GACA's installer starts the tunnel itself.
+2. Open the tunnel, go to its **Published application routes** tab, and choose **Add a published application route**. Pick your domain
+   (and a subdomain if you want one), set the service type to **HTTP** and the URL to **`localhost:41700`**. Cloudflare creates the
+   DNS record for you.
+3. Give the installer the token and the hostname (it asks, or see the flags below).
+
+Cloudflare rearranges these screens from time to time; the names to look for are *Tunnels*, *token*, and *published application
+route* (older screens call it a *public hostname*). When the installer finishes it checks `https://<your hostname>/api/health`
+itself and says if it does not answer.
+
 ## Install
 
 ```bash
@@ -67,8 +91,34 @@ Useful options: `--tunnel token|quick|none`, `--hostname gaca.example.com`, `--s
 `--install-hermes`, `--no-push`, `--no-hermes` (set up only the server, e.g. to try it without an agent). `./install.sh --help`
 lists them all.
 
-For a permanent address, in the Cloudflare dashboard (Zero Trust → Networks → Tunnels) create a tunnel,
-copy its token, and add a published application route (public hostname) whose service is **HTTP `localhost:41700`**.
+### Handing the install to an agent
+
+This README is written so that you, or an AI agent working for you, can follow it top to bottom. An agent cannot do four things
+for you, so have these ready or be at hand for them: **the Cloudflare steps** (above), **a sudo password** (unless sudo is passwordless;
+or use `--service user`), **`hermes setup`** (your model provider sign-in), and **scanning the pairing QR code with your phone**.
+Everything else runs without questions. On the machine itself, in the cloned repo:
+
+```bash
+# put the tunnel token in a file only you can read; never on a command line or in a chat
+install -m 600 /dev/null ~/tunnel.token && $EDITOR ~/tunnel.token
+
+./install.sh --yes --no-wait --no-push --tunnel token --hostname gaca.example.com --tunnel-token-file ~/tunnel.token
+```
+
+Add `--install-hermes` if Hermes is not installed yet, `--service user` if the machine has no sudo (no filesystem sandbox, said plainly),
+and `--fcm-credentials FILE` or `--apns-key FILE --apns-key-id ID --apns-team-id ID --apns-topic BUNDLE_ID` for push. `--no-wait` stops
+the installer waiting for a phone to pair, which an agent should not sit through.
+
+It is always safe to run again. What the exit code means:
+
+| code | meaning | what to do |
+|---|---|---|
+| 0 | done | `gaca-api doctor`, then `gaca-api pair` and have the person scan the QR (or open the printed `gaca://setup` link) |
+| 1 | failed | the message says why |
+| 3 | one step needs root | run the single command it prints (`sudo bash ~/.config/gaca/install-service.sh`), then run `./install.sh` again |
+| 4 | Hermes is not ready | the message lists exactly what is missing and the fix; do it, then run `./install.sh` again |
+
+`gaca-api doctor` is the check: exit status 0 means everything works, and each problem it reports comes with the fix.
 
 ## Pair your phone
 
