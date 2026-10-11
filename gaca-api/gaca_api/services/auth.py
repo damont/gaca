@@ -13,72 +13,16 @@ from ..agent import runtime as agent_runtime
 from ..agent.base import AgentBackend
 from ..db import users as users_db
 from ..models.user import CREW_COLOR_PALETTE, CrewMember, SSHConnection, UserDoc
-from ..provisioning import ssh as ssh_provisioning
-from ..utils.auth import hash_password
+from ..config import settings
+from ..provisioning import hermes_connect
+from ..provisioning.base import ProvisioningError
+from ..provisioning.select import provisioner_for
+from . import tokens as token_service
 from .exceptions import CrewNotConfigured, InvalidRequest, NotFound
 
 
 async def find_by_id(user_id: str) -> UserDoc | None:
     return await users_db.find(user_id)
-
-
-async def find_by_email(email: str) -> UserDoc | None:
-    return await users_db.find_by_email(email)
-
-
-async def find_by_google_sub(google_sub: str) -> UserDoc | None:
-    return await users_db.find_by_google_sub(google_sub)
-
-
-async def upsert_google_user(
-    *, google_sub: str, email: str, name: str
-) -> UserDoc:
-    """Resolve a verified Google identity to a user, creating or linking as needed.
-
-    Three cases, in priority order:
-
-    1. We already know this `sub` — return that user.
-    2. We know the email but not the sub: the person signed up with a password
-       first and is now using the Google button. Link the two onto one row
-       rather than making a second account they'd have to keep straight.
-    3. Neither — create an account with no password at all. They can only ever
-       sign in through Google, which is why `hashed_password` is optional.
-    """
-    existing = await users_db.find_by_google_sub(google_sub)
-    if existing is not None:
-        return existing
-
-    by_email = await users_db.find_by_email(email)
-    if by_email is not None:
-        linked = by_email.model_copy(
-            update={"google_sub": google_sub, "email_verified": True}
-        )
-        await users_db.replace(linked)
-        return linked
-
-    user = UserDoc(
-        email=email,
-        display_name=name,
-        hashed_password=None,
-        google_sub=google_sub,
-        email_verified=True,
-    )
-    await users_db.insert(user)
-    return user
-
-
-async def create_user(name: str, email: str, password: str) -> UserDoc:
-    """Hash the password and persist the new user.
-
-    The plaintext stops here — it is hashed on the way in and never stored.
-    """
-    user = UserDoc(
-        email=email,
-        display_name=name,
-        hashed_password=hash_password(password),
-    )
-    await users_db.insert(user)
-    return user
 
 
 async def set_agent_host(user: UserDoc, host: str) -> UserDoc:
@@ -190,11 +134,12 @@ async def provision_crew_member(
     whether the name collides there too, surfaced as SSHError (mapped to
     502) if so.
     """
-    if access is not None:
+    if access is not None and settings.agent_access == "ssh":
         user = await set_ssh_connection(
             user, access.host, access.port, access.username, access.private_key
         )
-    if user.ssh is None:
+    provisioner = provisioner_for(user)
+    if provisioner is None:
         raise CrewNotConfigured(
             "gaca-api has no access to create a crew member on this box yet "
             "— include `access` on this call"
@@ -204,9 +149,19 @@ async def provision_crew_member(
 
     # `candidate_port` is only used if this Hermes runs a gateway per profile; if it serves
     # every profile from one gateway, create_profile reports that address instead.
-    candidate_port = await ssh_provisioning.next_free_port(user.ssh)
+    candidate_port = await provisioner.next_free_port()
     api_key = secrets.token_hex(32)
-    port, path = await ssh_provisioning.create_profile(user.ssh, name, candidate_port, api_key)
+    # Local mode hands the new profile its GACA token in the same write as its own settings, so
+    # its skills work from the first moment and nobody has to run a wiring command per profile.
+    minted, extra_env = None, None
+    if provisioner.can_wire_gaca:
+        minted, extra_env = await hermes_connect.mint_profile_env(user, name)
+    try:
+        port, path = await provisioner.create_profile(name, candidate_port, api_key, extra_env=extra_env)
+    except BaseException:
+        if minted is not None:  # nobody holds that secret now: don't leave it valid
+            await token_service.revoke(user, minted.id)
+        raise
     return await add_crew_member(user, name, port, api_key, color, path=path)
 
 
@@ -373,6 +328,20 @@ async def set_ssh_connection(
     return updated
 
 
+async def _wire_unwired_profiles(user: UserDoc, provisioner) -> None:
+    """Give profiles that have no GACA token yet (e.g. made by hand with `hermes profile create`)
+    one, as the app discovers them. Best-effort: wiring must never make discovery fail."""
+    for profile in await provisioner.profiles_missing_gaca_token():
+        minted = None
+        try:
+            minted, env = await hermes_connect.mint_profile_env(user, profile)
+            await provisioner.write_gaca_env(profile, env)
+            await token_service.revoke_older_with_name(user, minted.name, keep_id=minted.id)
+        except (ProvisioningError, OSError, ValueError):
+            if minted is not None:
+                await token_service.revoke(user, minted.id)
+
+
 async def discover_crew(
     user: UserDoc, access: SSHConnection | None = None
 ) -> UserDoc:
@@ -395,17 +364,18 @@ async def discover_crew(
     and `default_crew` to "default" if that name was found and nothing was
     already the default.
     """
-    if access is not None:
+    if access is not None and settings.agent_access == "ssh":
         user = await set_ssh_connection(
             user, access.host, access.port, access.username, access.private_key
         )
-    if user.ssh is None:
+    provisioner = provisioner_for(user)
+    if provisioner is None:
         raise CrewNotConfigured(
             "gaca-api has no access to discover crew members on this box "
             "yet — include `access` on this call"
         )
 
-    found = await ssh_provisioning.discover_profiles(user.ssh)
+    found = await provisioner.discover_profiles()
 
     updated = user
     for name, info in found.items():
@@ -430,9 +400,12 @@ async def discover_crew(
         )
         updated = updated.model_copy(update={"crew": [*updated.crew, member]})
 
+    if provisioner.can_wire_gaca:
+        await _wire_unwired_profiles(user, provisioner)
+
     update_fields: dict = {}
     if updated.agent_host is None:
-        update_fields["agent_host"] = f"http://{user.ssh.host}"
+        update_fields["agent_host"] = provisioner.default_agent_host
     if updated.default_crew is None and find_crew_member(updated, "default") is not None:
         update_fields["default_crew"] = "default"
     if update_fields:

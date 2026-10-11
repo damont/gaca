@@ -66,12 +66,23 @@ def connect() -> None:
     _app = firebase_admin.initialize_app(cred)
 
 
-async def close() -> None:
+def close() -> None:
+    """Shut Firebase down (sync — see aclose for why it runs in a thread)."""
     global _app
     if _app is not None:
         firebase_admin.delete_app(_app)
         _app = None
-    await apns.close()
+
+
+async def aclose() -> None:
+    """Shut push down from async code. firebase_admin's cleanup calls asyncio.run() once its
+    messaging client exists (after the first push), which raises inside a running event loop, so
+    it has to run in a worker thread that has no loop of its own. The APNs client is async and
+    closes here; a failure closing Firebase must not leave it open."""
+    try:
+        await asyncio.to_thread(close)
+    finally:
+        await apns.close()
 
 
 async def _send_to_user(

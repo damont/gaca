@@ -16,14 +16,17 @@ def test_every_route_is_mounted_under_api():
         assert path.startswith("/api/"), f"{path} is unreachable through nginx"
 
 
-def test_schema_lists_the_auth_and_session_paths():
+def test_schema_lists_the_pairing_and_session_paths():
     paths = app.openapi()["paths"]
     for expected in (
-        "/api/auth/register",
-        "/api/auth/login",
+        "/api/setup",
+        "/api/devices",
+        "/api/devices/pair",
+        "/api/devices/me",
+        "/api/devices/{device_id}",
         "/api/auth/me",
-        "/api/auth/google",
-        "/api/auth/agent-token",
+        "/api/tokens",
+        "/api/tokens/{token_id}",
         "/api/agent",
         "/api/agent/connect",
         "/api/crew",
@@ -59,15 +62,20 @@ def test_schema_lists_the_auth_and_session_paths():
 
 def test_discovery_urls_are_where_the_agent_guide_says():
     assert app.openapi_url == "/api/openapi.json"
+    # Not /api/agent: that is the real "is an agent connected" route (see the test below).
     assert app.docs_url == "/api/docs"
     assert app.redoc_url is None
 
 
-def test_get_agent_is_the_resource_not_the_docs_page():
-    """Swagger UI used to be mounted at /api/agent, which shadowed GET /api/agent
-    (the agent status every client reads) with an HTML page."""
-    from fastapi.testclient import TestClient
+def test_the_docs_page_does_not_shadow_the_agent_status_route():
+    """/api/agent is the real "is an agent connected" endpoint. The Swagger UI used to be mounted
+    there, so the app got an HTML page, without credentials, instead of its JSON."""
+    assert app.docs_url != "/api/agent"
+    assert "get" in app.openapi()["paths"]["/api/agent"]
 
-    with TestClient(app) as client:
-        response = client.get("/api/agent")
-    assert "text/html" not in response.headers.get("content-type", "")
+
+def test_there_is_no_sign_in_left():
+    """Phones pair; there are no passwords, Google logins or registrations to attack."""
+    paths = app.openapi()["paths"]
+    for gone in ("/api/auth/login", "/api/auth/google", "/api/auth/register", "/api/setup/claim", "/api/setup/claim/google"):
+        assert gone not in paths

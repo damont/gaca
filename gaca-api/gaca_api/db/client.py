@@ -23,10 +23,25 @@ from ..config import settings
 _conn: aiosqlite.Connection | None = None
 
 _SCHEMA = """
+CREATE TABLE IF NOT EXISTS server_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS api_tokens (
+    id           TEXT PRIMARY KEY,
+    user_id      TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    token_hash   TEXT NOT NULL UNIQUE,
+    scopes       TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    last_used_at TEXT,
+    expires_at   TEXT,
+    revoked_at   TEXT
+);
 CREATE TABLE IF NOT EXISTS users (
     id         TEXT PRIMARY KEY,
     email      TEXT NOT NULL UNIQUE,
-    google_sub TEXT,
+    google_sub TEXT,  -- unused since sign-in was removed; kept so existing databases need no migration
     created_at TEXT NOT NULL,
     doc        TEXT NOT NULL
 );
@@ -247,6 +262,17 @@ async def _backfill_session_user_ids(conn: aiosqlite.Connection) -> None:
             )
 
 
+async def _scrub_old_credentials(conn: aiosqlite.Connection) -> None:
+    """Passwords and Google identities are gone from the product; take any left in an existing
+    database out of it, so a stale hash does not outlive the feature. Idempotent."""
+    await conn.execute(
+        "UPDATE users SET google_sub = NULL, "
+        "doc = json_remove(doc, '$.hashed_password', '$.google_sub', '$.email_verified') "
+        "WHERE google_sub IS NOT NULL OR doc LIKE '%hashed_password%' OR doc LIKE '%google_sub%' "
+        "OR doc LIKE '%email_verified%'"
+    )
+
+
 async def connect() -> None:
     """Open the shared connection and ensure the schema exists (startup).
 
@@ -261,6 +287,7 @@ async def connect() -> None:
     await _conn.executescript(_SCHEMA)
     await _add_missing_columns(_conn)
     await _backfill_session_user_ids(_conn)
+    await _scrub_old_credentials(_conn)
     await _conn.executescript(_LATE_INDEXES)
     await _conn.commit()
 

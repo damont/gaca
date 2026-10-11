@@ -5,7 +5,8 @@ health probe, and the session router.
 """
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+import logging
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
 from fastapi.exception_handlers import request_validation_exception_handler
@@ -16,8 +17,10 @@ from fastapi.responses import JSONResponse
 from .agent import runtime as agent_runtime
 from .bus import event_bus
 from .db import client
-from .provisioning.ssh import SSHError
-from .routers import agent, alerts, artifacts, auth, briefings, crew, lists, push, sessions
+from .provisioning.base import ProvisioningError
+from .config import settings
+from .security import BodyLimitMiddleware, SecurityHeadersMiddleware, cors_origins
+from .routers import agent, alerts, artifacts, auth, briefings, crew, devices, lists, push, sessions, setup, tokens
 from .services import push as push_service
 from .services.exceptions import (
     BadRequest,
@@ -31,17 +34,32 @@ from .services.exceptions import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await client.connect()  # startup: open SQLite + ensure the schema
-    await event_bus.connect()  # bus for read_run -> open SSE streams
-    agent_runtime.connect()  # resolve the configured engine module
-    push_service.connect()  # Firebase Admin SDK / APNs client, whichever is configured
+    try:
+        await event_bus.connect()  # bus for read_run -> open SSE streams
+        agent_runtime.connect()  # resolve the configured engine module
+        push_service.connect()  # Firebase Admin SDK / APNs client, whichever is configured
+    except BaseException:
+        # A failed startup must not leave the SQLite worker thread running: it is non-daemon,
+        # so the process would hang instead of exiting and a supervisor would never restart it.
+        with suppress(Exception):
+            await event_bus.aclose()
+        with suppress(Exception):
+            await client.close()
+        raise
     yield
-    await push_service.close()  # shutdown, reverse order
-    await agent_runtime.close()
-    await event_bus.aclose()
-    await client.close()
+    # Shutdown, reverse order. Every step is attempted even if an earlier one fails: not being
+    # able to close Firebase must not skip closing the database.
+    for step in (push_service.aclose, agent_runtime.close, event_bus.aclose, client.close):
+        try:
+            await step()
+        except Exception:
+            logger.exception("shutdown step %s failed", getattr(step, "__qualname__", step))
 
 
 app = FastAPI(
@@ -49,23 +67,24 @@ app = FastAPI(
     description="GACA API — used by the Android app, the web UI, and AI agents",
     version="0.1.0",
     lifespan=lifespan,
-    docs_url="/api/docs",  # Swagger UI, under /api so nginx proxies it (not /api/agent: that's the agent resource)
+    docs_url="/api/docs",  # Swagger UI. Not /api/agent: that is the real "is an agent connected" route, which the docs page shadowed
     openapi_url="/api/openapi.json",  # machine-readable schema for agents
     redoc_url=None,  # one docs UI is enough
 )
 
 
-# Matches calendarapp and toolshed. In practice both dev and production serve
-# the frontend and API from one origin — Vite proxies /api locally, nginx does
-# it in production — so browsers never make a cross-origin request. This is
-# here for direct API callers and to keep the app shape consistent.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS is off unless GACA_CORS_ORIGINS names origins: the phone app is not a browser, and there is
+# no web frontend any more. No credentials are ever sent cross-origin (tokens travel in a header).
+if cors_origins(settings.cors_origins):
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins(settings.cors_origins),
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
+app.add_middleware(BodyLimitMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 @app.exception_handler(NotFound)
@@ -124,8 +143,8 @@ async def handle_crew_not_configured(
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
-@app.exception_handler(SSHError)
-async def handle_ssh_error(request: Request, exc: SSHError) -> JSONResponse:
+@app.exception_handler(ProvisioningError)
+async def handle_provisioning_error(request: Request, exc: ProvisioningError) -> JSONResponse:
     """Map a failed provisioning call to HTTP 502 — gaca-api reached out to
     the user's own box on their behalf and that failed; not a client error,
     and not gaca-api's own fault either, hence 502 rather than 500."""
@@ -156,7 +175,10 @@ async def get_schema():
 
 # Routers carry their resource prefix ("/auth", "/sessions"); the "/api" mount
 # point is applied here, matching how calendarapp and toolshed mount theirs.
+app.include_router(setup.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
+app.include_router(tokens.router, prefix="/api")
+app.include_router(devices.router, prefix="/api")
 app.include_router(agent.router, prefix="/api")
 app.include_router(crew.router, prefix="/api")
 app.include_router(alerts.router, prefix="/api")
@@ -174,8 +196,7 @@ def run() -> None:
     environment (GACA_API_HOST / GACA_API_PORT). No --reload here — that's a
     dev-only convenience you still get from running uvicorn by hand.
     """
-    import uvicorn
-
     from .config import settings
+    from .serve import run_app
 
-    uvicorn.run(app, host=settings.api_host, port=settings.api_port)
+    run_app(app, settings.api_host, settings.api_port, settings.api_socket)

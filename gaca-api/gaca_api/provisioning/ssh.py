@@ -1,4 +1,6 @@
-"""SSH access to a user's Hermes box.
+"""SSH access to a user's Hermes box — only used when GACA_AGENT_ACCESS=ssh (Hermes on a
+different machine from gaca-api). On the same machine, provisioning/local.py is used
+instead and none of this runs.
 
 This is a materially bigger grant than a `CrewMember.api_key`: that key
 reaches one scoped Hermes gateway over HTTP; an `SSHConnection` can run
@@ -26,9 +28,10 @@ import shlex
 import asyncssh
 
 from ..models.user import SSHConnection
+from .base import ProvisioningError
 
 
-class SSHError(Exception):
+class SSHError(ProvisioningError):
     """Wraps any asyncssh failure (auth, connect, non-zero exit) into one
     exception type the caller doesn't need to know asyncssh's own hierarchy
     to catch."""
@@ -358,3 +361,34 @@ async def create_profile(
             f"provisioning {name!r} failed at {result.get('stage')}: {result.get('error')}"
         )
     return int(result["port"]), result.get("path", "")
+
+
+class SshProvisioner:
+    """The module-level functions above, bound to one stored connection, so callers can
+    treat SSH and local access the same way (see base.Provisioner)."""
+
+    can_wire_gaca = False
+
+    def __init__(self, conn: SSHConnection):
+        self.conn = conn
+        self.default_agent_host = f"http://{conn.host}"
+
+    async def discover_profiles(self) -> dict[str, dict]:
+        return await discover_profiles(self.conn)
+
+    async def read_profile_files(self, name: str) -> dict | None:
+        return await read_profile_files(self.conn, name)
+
+    async def next_free_port(self) -> int:
+        return await next_free_port(self.conn)
+
+    async def create_profile(
+        self, name: str, port: int, api_key: str, extra_env: dict[str, str] | None = None
+    ) -> tuple[int, str]:
+        return await create_profile(self.conn, name, port, api_key)  # extra_env: not supported over SSH
+
+    async def profiles_missing_gaca_token(self) -> list[str]:
+        return []
+
+    async def write_gaca_env(self, name: str, values: dict[str, str]) -> None:
+        raise ProvisioningError("wiring GACA tokens is only supported in local mode")

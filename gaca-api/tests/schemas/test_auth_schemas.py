@@ -10,26 +10,10 @@ from pydantic import ValidationError
 from gaca_api.schemas.auth import (
     AgentConnect,
     AgentHostUpdate,
-    AgentTokenRequest,
     CrewAccess,
     CrewMemberCreate,
     CrewMemberUpdate,
 )
-
-
-def test_default_expiry_is_thirty_days():
-    assert AgentTokenRequest().expires_in_days == 30
-
-
-def test_bounds_are_inclusive():
-    assert AgentTokenRequest(expires_in_days=1).expires_in_days == 1
-    assert AgentTokenRequest(expires_in_days=365).expires_in_days == 365
-
-
-@pytest.mark.parametrize("bad", [0, -1, 366, 10_000])
-def test_out_of_range_expiry_rejected(bad):
-    with pytest.raises(ValidationError):
-        AgentTokenRequest(expires_in_days=bad)
 
 
 # ── AgentConnect / AgentHostUpdate ────────────────────────────────────

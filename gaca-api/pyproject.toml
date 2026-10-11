@@ -11,24 +11,20 @@ dependencies = [
     "sse-starlette>=2.1",
     # The http2 extra (h2) is for APNs, which only speaks HTTP/2 (services/apns.py).
     "httpx[http2]>=0.27",
-    # Auth. PyJWT mints/validates the bearer tokens; argon2-cffi hashes
-    # passwords; email-validator is what pydantic's EmailStr needs at runtime.
-    # The crypto extra adds ES256, which APNs provider tokens are signed with.
+    # Signs APNs provider tokens (ES256, hence the crypto extra).
     "pyjwt[crypto]>=2.8",
-    "argon2-cffi>=23.1",
-    "email-validator>=2.1",
-    # Verifies the signature and audience of Google ID tokens server-side.
-    "google-auth[requests]>=2.29.0",
     # Sends push notifications via Firebase Cloud Messaging (services/push.py).
     "firebase-admin>=6.5",
     "asyncssh>=2.24.0",
+    "segno>=1.6.6",
 ]
 
-# Console entry point. `gaca-api` on PATH starts the server via main:run().
+# Console entry point. `gaca-api` on PATH starts the server (via cli.main -> main.run) and
+# also carries the owner tools: setup-code, status, reset-password.
 # uv installs this into .venv/bin; Nix installs it into the packaged venv, and
 # that same binary is what a systemd ExecStart will point at on the Pi.
 [project.scripts]
-gaca-api = "gaca_api.main:run"
+gaca-api = "gaca_api.cli:main"
 
 [dependency-groups]
 dev = [

@@ -9,6 +9,7 @@ import asyncio
 
 from ..agent.base import AgentBackend, ProfileReadError
 from ..models.user import CrewMember, UserDoc
+from ..provisioning.select import provisioner_for
 from ..schemas.crew_profile import CrewProfile, ProfilePurpose
 from ..utils.purpose import build_purpose
 from . import auth as auth_service
@@ -19,11 +20,12 @@ async def _purpose(user: UserDoc, member: CrewMember, backend: AgentBackend) -> 
     """What the crew member is for, or None if it can't be read (no direct access to the
     box configured, unreachable, timed out). Never raises: the rest of the profile is
     still worth showing."""
-    if user.ssh is None:
+    provisioner = provisioner_for(user)
+    if provisioner is None:
         return None
     try:
         info = await asyncio.wait_for(
-            backend.describe_purpose(name=member.name, access=user.ssh), timeout=12.0
+            backend.describe_purpose(name=member.name, provisioner=provisioner), timeout=12.0
         )
     except (ProfileReadError, asyncio.TimeoutError):
         return None

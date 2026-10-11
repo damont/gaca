@@ -6,40 +6,32 @@ GACA_) or a local .env file. This starts tiny on purpose — we add fields
 """
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env", env_prefix="GACA_", extra="ignore"
+        env_file=("../.env", ".env"), env_prefix="GACA_", extra="ignore"
     )
 
-    # --- Auth ---------------------------------------------------------
-    # Signing key for every token we mint (browser sessions now, agent tokens
-    # next). MUST be overridden in production: anyone holding this value can
-    # forge a token for any user. Rotating it is also the only revocation we
-    # have — it invalidates every outstanding token at once.
-    # Keep any real value at 32+ bytes: PyJWT raises InsecureKeyLengthWarning
-    # below that for HS256 (RFC 7518 §3.2). See .env.example for a generator.
-    jwt_secret: str = "change-me-this-default-is-not-secret-and-too-short"
-    jwt_algorithm: str = "HS256"
+    # Requests over this many bytes are refused with 413 (the 2 MiB photo cap plus multipart
+    # framing). Used to be nginx's client_max_body_size.
+    max_body_bytes: int = 3 * 1024 * 1024
 
-    # Browser session lifetime. Agent tokens pass their own, much longer expiry
-    # per request rather than reading this.
-    jwt_expire_minutes: int = 10080  # 7 days
+    # Attempts per minute, per client, on the endpoints a stranger can reach without
+    # credentials: pairing a device with a code.
+    auth_attempts_per_minute: int = 10
 
-    # Google OAuth. One Client ID serves both sides: the API verifies the `aud`
-    # claim on incoming ID tokens with it, and the frontend renders its button
-    # with the same value (as VITE_GOOGLE_CLIENT_ID). Not a secret — it's public
-    # by design. Leaving both this and google_ios_client_id unset disables
-    # Google sign-in entirely.
-    google_client_id: str | None = None
+    # Browser origins allowed to call the API cross-origin, comma-separated. Empty (the default)
+    # means none: the phone app is not a browser, and nothing here is meant to be called from a web page.
+    cors_origins: str = ""
 
-    # The iOS OAuth client id (Google Cloud console → Credentials → an "iOS"
-    # client for the app's bundle id). Google Sign-In on iPhone issues ID tokens
-    # whose `aud` is THIS id, not the web one, so the API accepts either. Public,
-    # not a secret — it's also baked into the iOS app's Info.plist.
-    google_ios_client_id: str | None = None
+    # The address phones reach this server at (e.g. https://gaca.example.com). The server cannot
+    # work it out for itself — a Cloudflare tunnel token does not say which hostname it serves — so
+    # the installer asks once and saves it. `gaca-api pair` puts it in the QR code.
+    public_url: str = ""
 
     # Interface this service binds to. Loopback by default (safe for local dev);
     # set GACA_API_HOST=0.0.0.0 on the Pi so other machines can reach it.
@@ -47,6 +39,11 @@ class Settings(BaseSettings):
 
     # Port this service binds to (intentionally uncommon, not 8080/8000).
     api_port: int = 41700
+
+    # Also listen on this Unix socket (in addition to api_host:api_port). Used when the API
+    # runs as a host process and the frontend's nginx container proxies to it through a
+    # mounted directory — see serve.py. Unset = TCP only.
+    api_socket: str | None = None
 
     # Embedded SQLite is the system of record (sessions, messages; later audit,
     # events). One file, no server. Override per deployment with GACA_DB_PATH —
@@ -67,10 +64,22 @@ class Settings(BaseSettings):
     # a long but active run won't trip it.
     agent_stream_idle_timeout: float = 180.0
 
+    # How gaca-api reaches the machine Hermes runs on, for discovering and creating crew
+    # members and reading what a crew member is for. "local": gaca-api runs on that same
+    # machine (the supported setup) and reads/acts on HERMES_HOME directly through
+    # provisioning/local.py, which can read a fixed set of Hermes files and run only
+    # `hermes profile create` / `hermes --version`. "ssh": Hermes is on another machine and
+    # each user supplies an SSH login (legacy; stores a private key per user).
+    agent_access: Literal["ssh", "local"] = "ssh"
+    hermes_home: str = "~/.hermes"
+    # The hermes executable for local mode: a name looked up on PATH (and ~/.local/bin) or an
+    # absolute path.
+    hermes_bin: str = "hermes"
+
     # --- Push notifications --------------------------------------------
     # Path to a Firebase service-account JSON key (Firebase console → Project
     # settings → Service accounts → Generate new private key). Unlike
-    # google_client_id, this IS a secret — a real credential the server signs
+    # an inline setting, this IS a secret — a real credential the server signs
     # requests with — so it's a file path, not an inline value, matching how
     # the Cloudflare Tunnel token is handled: never committed, mounted in at
     # deploy time. Push is best-effort everywhere it's used: leaving this
@@ -78,20 +87,16 @@ class Settings(BaseSettings):
     # alert creation or delegation, which must never depend on it.
     fcm_credentials_path: str | None = None
 
-    # APNs (iPhones), sent directly to Apple rather than through FCM — see
-    # services/apns.py. Path to the .p8 auth key from the Apple Developer
-    # portal (Certificates, Identifiers & Profiles → Keys, with "Apple Push
-    # Notifications service" enabled). A secret like fcm_credentials_path, so
-    # likewise a file path mounted in at deploy time. The key id is shown next
-    # to the key in the portal; the team id is the 10-character id on the
-    # Membership page. Neither of those two is secret on its own. All three
-    # must be set or iOS push is disabled (no-op), exactly like FCM.
+    # iPhone push goes straight to Apple (APNs), not through Firebase: token-based
+    # auth with a .p8 key from Apple Developer -> Certificates, Identifiers &
+    # Profiles -> Keys (Apple Push Notifications service enabled). The key file is
+    # a real secret — a path, mounted at deploy time, like the FCM one. iOS push is
+    # disabled (services/apns.py no-ops) unless key path, key id and team id are all
+    # set; Android/FCM is unaffected either way.
     apns_key_path: str | None = None
     apns_key_id: str | None = None
     apns_team_id: str | None = None
-
-    # The iOS app's bundle id — APNs routes by it (the apns-topic header) and
-    # rejects a token that belongs to a different app (DeviceTokenNotForTopic).
+    # The iOS app's bundle id. APNs rejects a token sent under any other topic.
     apns_topic: str = "dev.monts.gaca"
 
 
