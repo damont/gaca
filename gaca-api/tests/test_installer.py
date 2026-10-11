@@ -966,3 +966,4 @@ def test_the_interactive_token_prompt_uses_the_current_cloudflare_wording(tmp_pa
     out = capsys.readouterr().out
     assert "Tunnels & Mesh" in out and "Published application routes" in out and "HTTP  localhost:41700" in out
     assert "Public hostnames" not in out and "Zero Trust" not in out
+    assert "Waiting for your Tunnel to connect" in out and "that is normal" in out

@@ -367,7 +367,8 @@ def setup_tunnel(opts: Options, shell: Shell, say: Say) -> str | None:
         say.out(f"""
 In the Cloudflare dashboard: Networks > Tunnels & Mesh > create a tunnel (Cloudflared).
   1. Copy the token from the install command it shows (the long string after `--token`); do not run that command.
-  2. On the tunnel's "Published application routes" tab, add your hostname with service  HTTP  localhost:{opts.port}""")
+  2. On the tunnel's "Published application routes" tab, add your hostname with service  HTTP  localhost:{opts.port}
+Cloudflare's page says "Waiting for your Tunnel to connect" until this installer has started the tunnel: that is normal.""")
         token = getpass.getpass("Paste the tunnel token (input is hidden): ")
     if not token:
         raise RuntimeError("tunnel mode 'token' needs --tunnel-token-file, GACA_TUNNEL_TOKEN, or a terminal to paste into")
