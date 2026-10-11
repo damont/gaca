@@ -122,3 +122,10 @@ The installer asks, per platform, whether to set up push and for what it needs: 
 Already-configured platforms are not asked again; flags cover non-interactive installs; `--no-push` skips.
 Design consequence worth remembering: push credentials belong to the developer account the app was built with, so
 self-hosters only get push with their own app build. A push relay run by the project would lift that; not built.
+
+### The CLI after setup (2026-10-11)
+`gaca-api` is linked into `~/.local/bin` by the installer, which also adds that directory to the login shell's
+startup file (one guarded line, only if the file does not already handle `~/.local/bin`, never through a symlink),
+and settings are found from any directory. Everyday tools in `gaca_api/ops.py`: `doctor`, `push status|android|ios|remove`
+(set up or turn off push after installing), `service status|restart|logs`, `backup` (sqlite online backup to a 0600
+file), `public-url`. Not built, considered: `gaca-api update` (git pull + install + restart), `gaca-api config`.

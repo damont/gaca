@@ -779,3 +779,113 @@ def test_a_setting_that_points_at_a_deleted_key_is_asked_about_again(flow, tmp_p
     assert run_mod.run(flow, FakeShell(tty=True)) == 0
     assert asked[0].startswith("Set up push notifications for Android?")
     assert "already set up" not in capsys.readouterr().out
+
+
+# ── `gaca-api` on the PATH ───────────────────────────────────────────
+
+def fake_venv(flow):
+    exe = flow.repo_root / "gaca-api" / ".venv" / "bin" / "gaca-api"
+    exe.parent.mkdir(parents=True, exist_ok=True)
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+    return exe
+
+
+def test_the_install_puts_gaca_api_on_the_path_and_lists_the_everyday_commands(flow, capsys, monkeypatch):
+    flow.service = "user"
+    exe = fake_venv(flow)
+    monkeypatch.setenv("SHELL", "/bin/bash")
+    assert run_mod.run(flow, FakeShell()) == 0
+    link = Path.home() / ".local" / "bin" / "gaca-api"
+    assert link.is_symlink() and link.resolve() == exe.resolve()
+    out = capsys.readouterr().out
+    assert "added ~/.local/bin to your PATH" in out and "open a new shell" in out
+    for command in ("gaca-api doctor", "gaca-api pair", "gaca-api push", "gaca-api service", "gaca-api backup"):
+        assert command in out
+    assert run_mod.run(flow, FakeShell()) == 0  # again: already linked, no complaint
+    assert "left alone" not in capsys.readouterr().out
+
+
+def test_a_gaca_api_command_that_is_not_ours_is_never_replaced(flow, capsys):
+    flow.service = "user"
+    fake_venv(flow)
+    mine = Path.home() / ".local" / "bin" / "gaca-api"
+    mine.parent.mkdir(parents=True)
+    mine.write_text("#!/bin/sh\necho mine\n")
+    assert run_mod.run(flow, FakeShell()) == 0
+    assert mine.read_text() == "#!/bin/sh\necho mine\n" and "left alone" in capsys.readouterr().out
+
+
+def test_uninstall_removes_only_its_own_link(flow, capsys):
+    flow.service = "user"
+    fake_venv(flow)
+    run_mod.run(flow, FakeShell())
+    link = Path.home() / ".local" / "bin" / "gaca-api"
+    assert link.is_symlink()
+    run_mod.uninstall(flow, FakeShell())
+    assert not link.exists()
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.write_text("not ours")
+    run_mod.uninstall(flow, FakeShell())
+    assert link.read_text() == "not ours"
+
+
+# ── ~/.local/bin is added to the PATH automatically ──────────────────
+
+def path_lines(rc):
+    return [l for l in rc.read_text().splitlines() if ".local/bin" in l and not l.startswith("#")]
+
+
+@pytest.mark.parametrize("shell, rc_name", [("/bin/bash", ".bashrc"), ("/usr/bin/zsh", ".zshrc"), ("/bin/dash", ".profile")])
+def test_the_path_line_goes_in_the_right_startup_file_once(flow, monkeypatch, capsys, shell, rc_name):
+    monkeypatch.setenv("SHELL", shell)
+    rc = Path.home() / rc_name
+    rc.write_text("alias ll='ls -l'\nexport EDITOR=vim")  # no trailing newline, to check it is not glued to ours
+    run_mod.ensure_on_path(Say(print))
+    text = rc.read_text()
+    assert text.startswith("alias ll='ls -l'\nexport EDITOR=vim\n") and len(path_lines(rc)) == 1
+    assert 'export PATH="$HOME/.local/bin:$PATH"' in text and run_mod._PATH_MARK in text
+    out = capsys.readouterr().out
+    assert f"added ~/.local/bin to your PATH in {rc}" in out and f"source {rc}" in out
+    run_mod.ensure_on_path(Say(print))  # again: nothing more is written
+    assert rc.read_text() == text and "already set up" in capsys.readouterr().out
+
+
+def test_a_missing_startup_file_is_created(flow, monkeypatch):
+    monkeypatch.setenv("SHELL", "/bin/bash")
+    run_mod.ensure_on_path(Say(lambda *_: None))
+    assert len(path_lines(Path.home() / ".bashrc")) == 1
+
+
+def test_fish_gets_fish_syntax(flow, monkeypatch):
+    monkeypatch.setenv("SHELL", "/usr/bin/fish")
+    run_mod.ensure_on_path(Say(lambda *_: None))
+    assert path_lines(Path.home() / ".config" / "fish" / "config.fish") == ["fish_add_path -g $HOME/.local/bin"]
+
+
+def test_a_startup_file_that_already_handles_local_bin_is_left_alone(flow, monkeypatch, capsys):
+    monkeypatch.setenv("SHELL", "/bin/bash")
+    rc = Path.home() / ".bashrc"
+    rc.write_text('. "$HOME/.local/bin/env"\n')  # what the uv installer writes
+    before = rc.read_text()
+    run_mod.ensure_on_path(Say(print))
+    assert rc.read_text() == before and "already set up" in capsys.readouterr().out
+
+
+def test_a_symlinked_startup_file_is_never_edited(flow, monkeypatch, capsys, tmp_path):
+    monkeypatch.setenv("SHELL", "/bin/bash")
+    dotfiles = tmp_path / "dotfiles-bashrc"
+    dotfiles.write_text("# managed elsewhere\n")
+    (Path.home() / ".bashrc").symlink_to(dotfiles)
+    run_mod.ensure_on_path(Say(print))
+    assert dotfiles.read_text() == "# managed elsewhere\n"
+    out = capsys.readouterr().out
+    assert "is a symlink" in out and 'export PATH="$HOME/.local/bin:$PATH"' in out
+
+
+def test_the_install_adds_the_path_automatically(flow, monkeypatch):
+    flow.service = "user"
+    fake_venv(flow)
+    monkeypatch.setenv("SHELL", "/bin/bash")
+    assert run_mod.run(flow, FakeShell()) == 0
+    assert len(path_lines(Path.home() / ".bashrc")) == 1

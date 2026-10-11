@@ -6,14 +6,17 @@ GACA_) or a local .env file. This starts tiny on purpose — we add fields
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    # The repo's own .env first (so `gaca-api ...` works from any directory, not just gaca-api/),
+    # then the older relative spots; later files win.
     model_config = SettingsConfigDict(
-        env_file=("../.env", ".env"), env_prefix="GACA_", extra="ignore"
+        env_file=(str(Path(__file__).resolve().parents[2] / ".env"), "../.env", ".env"), env_prefix="GACA_", extra="ignore"
     )
 
     # Requests over this many bytes are refused with 413 (the 2 MiB photo cap plus multipart

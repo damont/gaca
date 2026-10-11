@@ -75,9 +75,9 @@ Install the app, open it, tap **Scan QR code**, and scan the code `gaca-api pair
 server any time you want to add a phone:
 
 ```bash
-cd gaca/gaca-api && uv run gaca-api pair        # a one-time code + QR, valid 10 minutes
-uv run gaca-api device list                     # paired phones
-uv run gaca-api device revoke <id>              # unpair one
+gaca-api pair                # a one-time code + QR, valid 10 minutes
+gaca-api device list         # paired phones
+gaca-api device revoke <id>  # unpair one
 ```
 
 A phone talks to one server at a time (**Settings → Disconnect from this server** to switch). The QR also
@@ -105,7 +105,7 @@ is printed. Non-interactive: `--fcm-credentials FILE`, or `--apns-key FILE --apn
 
 ## Hermes
 
-Two things connect Hermes to GACA, both done by the installer and redone by `uv run gaca-api hermes connect`:
+Two things connect Hermes to GACA, both done by the installer and redone by `gaca-api hermes connect`:
 
 - **A token per profile.** Each Hermes profile gets its own scoped, revocable token (alerts, lists, briefings,
   artifacts only) in its `.env`. Hermes talks to GACA over `127.0.0.1`, never the public address.
@@ -123,6 +123,25 @@ Two things connect Hermes to GACA, both done by the installer and redone by `uv 
 Profiles you create later, in the app or by hand, get both automatically. Re-running `./install.sh` (or
 `gaca-api hermes connect`) after a `git pull` updates the skills; a skill file that an agent has edited is left
 alone and reported, never overwritten. `gaca-api token list|revoke` manages the tokens.
+
+## Day to day: the `gaca-api` command
+
+The installer puts `gaca-api` on your PATH (it adds `~/.local/bin` to your shell's startup file; open a new
+shell the first time) and it works from any directory.
+
+| command | does |
+|---|---|
+| `gaca-api doctor` | checks everything (service, API, public address, paired phones, Hermes, its tokens and skills, push) and says how to fix what is wrong |
+| `gaca-api pair` | a one-time code and QR code to pair another phone; `gaca-api device list` / `revoke <id>` |
+| `gaca-api push status` | which push channels are on |
+| `gaca-api push android` / `push ios` | set up (or replace) push after installing: asks for the key info, or take `--key FILE` (and for iPhone `--key-id`, `--team-id`, `--bundle-id`); `--restart` restarts the server for you |
+| `gaca-api push remove android\|ios` | turn one off and delete its key |
+| `gaca-api service status` / `restart` / `logs [-f]` | the systemd service, without remembering `systemctl` / `journalctl` flags (restart asks for sudo if it is a system service) |
+| `gaca-api backup [FILE]` | a consistent copy of the database (your chats and paired phones) to a private file, safe while the server runs; default `~/gaca-backups/` |
+| `gaca-api public-url [URL]` | show or set the address phones are told to use (it goes in the pairing QR code) |
+| `gaca-api hermes connect` | redo the Hermes tokens and skills (also after `git pull`) |
+| `gaca-api token list` / `create` / `revoke` | the scoped tokens Hermes uses |
+| `gaca-api status` | owner, paired phones, push channels at a glance |
 
 ## Update and uninstall
 

@@ -100,3 +100,12 @@ def test_status_says_which_push_channels_are_on(server, capsys, monkeypatch, tmp
     monkeypatch.setattr(settings, "apns_team_id", None)  # a half-configured iPhone is off, as the server treats it
     cli.main(["status"])
     assert "iPhone off" in capsys.readouterr().out
+
+
+def test_settings_find_the_repos_env_from_any_directory():
+    from pathlib import Path
+
+    from gaca_api.config import Settings
+
+    first = Path(Settings.model_config["env_file"][0])
+    assert first.is_absolute() and first.name == ".env" and first.parent == Path(__file__).resolve().parents[2]

@@ -153,7 +153,7 @@ def setup_push(opts: Options, shell: Shell, say: Say) -> None:
         return
     env_file = opts.repo_root / ".env"
     directory = push_mod.secrets_dir(opts.config_dir)
-    env = push_mod._env(env_file)
+    env = push_mod.read_env(env_file)
     interactive = shell.is_tty() and not opts.yes
     explained = False
 
@@ -210,9 +210,61 @@ def setup_push(opts: Options, shell: Shell, say: Say) -> None:
     except push_mod.PushSetupError as error:
         raise RuntimeError(f"push notification setup failed: {error}") from None
 
-    env = push_mod._env(env_file)
+    env = push_mod.read_env(env_file)
     if not (push_mod.android_ready(env) or push_mod.ios_ready(env)):
         say.note("push notifications are off: alerts show in the app when it is open. To add push later, run ./install.sh again")
+
+
+_PATH_MARK = "# gaca installer: put ~/.local/bin on the PATH (where the `gaca-api` command lives)"
+
+
+def ensure_on_path(say: Say) -> None:
+    """Make sure new shells find ~/.local/bin: append one guarded line to the login shell's startup file.
+
+    Only appends (nothing existing is rewritten), only once, and never through a symlink (a dotfile
+    manager's file is the user's to edit: the line is printed instead). If the file already mentions
+    ~/.local/bin (the uv installer, Ubuntu's defaults and many people's own setup do), it is left alone.
+    """
+    home = Path.home()
+    shell_name = Path(os.environ.get("SHELL", "")).name
+    if shell_name == "fish":
+        rc, line = home / ".config" / "fish" / "config.fish", "fish_add_path -g $HOME/.local/bin"
+    else:
+        name = ".zshrc" if shell_name == "zsh" else ".bashrc" if shell_name == "bash" else ".profile"
+        rc = home / name
+        line = 'case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac'
+    existing = rc.read_text(errors="replace") if rc.exists() else ""
+    if _PATH_MARK in existing or ".local/bin" in existing:
+        say.ok(f"~/.local/bin is already set up on your PATH ({rc})")
+        return
+    if rc.is_symlink():
+        say.warn(f"{rc} is a symlink, so it was not edited. Add this line to it yourself:")
+        say.note(f"    {line}")
+        return
+    rc.parent.mkdir(parents=True, exist_ok=True)
+    with open(rc, "a") as handle:
+        handle.write(f"\n{_PATH_MARK}\n{line}\n")
+    say.ok(f"added ~/.local/bin to your PATH in {rc}")
+    say.note(f"open a new shell (or run `source {rc}`) and `gaca-api` will be found")
+
+
+def link_cli(opts: Options, say: Say) -> None:
+    """Put `gaca-api` on the PATH (~/.local/bin) so every command works from any directory."""
+    target = opts.repo_root / "gaca-api" / ".venv" / "bin" / "gaca-api"
+    if not target.exists():
+        return
+    bin_dir = Path.home() / ".local" / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    link = bin_dir / "gaca-api"
+    if link.is_symlink() and Path(os.readlink(link)) == target:
+        pass
+    elif link.exists() or link.is_symlink():
+        say.warn(f"{link} already exists and is not this install's, so it was left alone; use {target} instead")
+        return
+    else:
+        link.symlink_to(target)
+    say.ok(f"`gaca-api` is available as {link}")
+    ensure_on_path(say)
 
 
 def choose_service(opts: Options, shell: Shell) -> str:
@@ -463,7 +515,11 @@ def run(opts: Options, shell: Shell | None = None, out=print) -> int:
         else:
             say.note("after your phone is paired, run `gaca-api hermes connect` if you use Hermes on this machine")
         say.step("Done")
-        say.note(f"logs:    journalctl -u {opts.name}" + ("  (--user)" if mode == "user" else ""))
+        link_cli(opts, say)
+        say.note("check:   gaca-api doctor       (is everything working, and how to fix what is not)")
+        say.note("phones:  gaca-api pair         (add another phone)    gaca-api device list|revoke")
+        say.note("push:    gaca-api push android|ios   (set up or change push notifications)")
+        say.note("service: gaca-api service status|restart|logs      backup: gaca-api backup")
         say.note("update:  git pull && ./install.sh   (keeps your secrets and data)")
         return 0
     except NeedsRoot as needed:
@@ -521,6 +577,11 @@ echo "{opts.name} removed"
                 say.note("no tunnel configuration found")
         else:
             say.note("Docker is not available here; if a tunnel container is running, remove it yourself")
+
+        link = Path.home() / ".local" / "bin" / "gaca-api"
+        if link.is_symlink() and Path(os.readlink(link)) == opts.repo_root / "gaca-api" / ".venv" / "bin" / "gaca-api":
+            link.unlink()
+            say.ok("removed the `gaca-api` command from ~/.local/bin")
 
         if purge:
             say.step("Data")

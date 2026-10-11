@@ -36,6 +36,36 @@ def _parser() -> argparse.ArgumentParser:
     unpair.add_argument("device_id")
     sub.add_parser("status", help="does this server have an owner yet, and how many phones are paired?")
 
+    def named(parser):
+        parser.add_argument("--name", default="gaca-api", help="service name (default: gaca-api)")
+        return parser
+
+    named(sub.add_parser("doctor", help="check that everything is working and say how to fix what is not"))
+    push = sub.add_parser("push", help="push notifications: set up Android or iPhone after installing, or turn one off").add_subparsers(dest="push_command", required=True)
+    push.add_parser("status", help="which push channels are on")
+    android = named(push.add_parser("android", help="set up (or replace) Android push with a Firebase service-account key"))
+    android.add_argument("--key", metavar="FILE", help="the key file (asked for at a terminal if omitted)")
+    android.add_argument("--restart", action="store_true", help="restart the server afterwards")
+    ios = named(push.add_parser("ios", help="set up (or replace) iPhone push with an Apple APNs key"))
+    ios.add_argument("--key", metavar="FILE", help="the .p8 key file")
+    ios.add_argument("--key-id", metavar="ID")
+    ios.add_argument("--team-id", metavar="ID")
+    ios.add_argument("--bundle-id", metavar="BUNDLE_ID", help="the app's bundle id")
+    ios.add_argument("--restart", action="store_true", help="restart the server afterwards")
+    remove = named(push.add_parser("remove", help="turn one platform's push off and delete its key"))
+    remove.add_argument("platform", choices=["android", "ios"])
+    remove.add_argument("--restart", action="store_true", help="restart the server afterwards")
+    service = sub.add_parser("service", help="the systemd service: status, restart, logs").add_subparsers(dest="service_command", required=True)
+    named(service.add_parser("status", help="is it running and answering?"))
+    named(service.add_parser("restart", help="restart it (asks for sudo if it is a system service)"))
+    logs = named(service.add_parser("logs", help="show the server's log"))
+    logs.add_argument("-f", "--follow", action="store_true", help="keep following new lines (Ctrl-C to stop)")
+    logs.add_argument("-n", "--lines", type=int, default=100, help="how many recent lines (default 100)")
+    backup = sub.add_parser("backup", help="save a consistent copy of the database (chats, paired phones) to a private file")
+    backup.add_argument("file", nargs="?", help="where to write it (default: ~/gaca-backups/gaca-<time>.db)")
+    url = sub.add_parser("public-url", help="show or set the address phones are told to use (goes in the pairing QR code)")
+    url.add_argument("url", nargs="?", help="e.g. https://gaca.example.com; omit to show the current one")
+
     uninstall = sub.add_parser("uninstall", help="stop and remove the service and tunnel (keeps your data unless --purge)")
     uninstall.add_argument("--repo-root", required=True)
     uninstall.add_argument("--name", default="gaca-api")
@@ -271,6 +301,40 @@ def _install(args) -> int:
     ))
 
 
+def _ops(args) -> int:
+    from . import ops
+    from .installer.run import Say
+    from .installer.shell import Shell
+
+    shell, say, paths = Shell(), Say(), ops.default_paths()
+    if args.command == "doctor":
+        return ops.doctor(shell, say, args.name, paths)
+    if args.command == "public-url":
+        return ops.public_url(say, paths, args.url)
+    if args.command == "backup":
+        try:
+            target = ops.backup_database(Path(settings.db_path), Path(args.file) if args.file else None, paths.home)
+        except (FileNotFoundError, FileExistsError, OSError) as error:
+            print(error, file=sys.stderr)
+            return 1
+        print(f"Saved {target} ({target.stat().st_size // 1024} KiB). It holds your chats and paired-phone records: keep it private.")
+        return 0
+    if args.command == "service":
+        if args.service_command == "status":
+            return ops.service_status(shell, say, args.name, paths)
+        if args.service_command == "restart":
+            return ops.service_restart(shell, say, args.name, paths)
+        return ops.service_logs(shell, args.name, paths, follow=args.follow, lines=args.lines)
+    if args.push_command == "status":
+        return ops.push_status(say, paths)
+    if args.push_command == "android":
+        return ops.push_android(shell, say, args.name, paths, Path(args.key) if args.key else None, restart=args.restart)
+    if args.push_command == "ios":
+        return ops.push_ios(shell, say, args.name, paths, Path(args.key) if args.key else None,
+                            args.key_id, args.team_id, args.bundle_id, restart=args.restart)
+    return ops.push_remove(shell, say, args.name, paths, args.platform, restart=args.restart)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command in (None, "serve"):
@@ -287,6 +351,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "device":
         handlers = {"list": _device_list, "revoke": lambda: _device_revoke(args.device_id)}
         return asyncio.run(_with_database(handlers[args.device_command]))
+    if args.command in ("doctor", "push", "service", "backup", "public-url"):
+        return _ops(args)
     if args.command == "status":
         return asyncio.run(_with_database(_status))
     if args.command == "token":

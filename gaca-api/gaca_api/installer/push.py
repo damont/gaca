@@ -23,7 +23,7 @@ import stat
 import tempfile
 from pathlib import Path
 
-from ..provisioning.envfile import read_text, upsert_env
+from ..provisioning.envfile import read_text, remove_env, upsert_env
 
 FCM_FILE = "fcm-service-account.json"
 APNS_FILE = "apns-key.p8"
@@ -111,7 +111,7 @@ def install_secret(source: Path, directory: Path, name: str) -> Path:
     return target
 
 
-def _env(path: Path) -> dict[str, str]:
+def read_env(path: Path) -> dict[str, str]:
     values = {}
     for line in read_text(path).splitlines():
         match = re.match(r"^([A-Z][A-Z0-9_]*)=(.*)$", line)
@@ -154,3 +154,40 @@ def setup_ios(env_file: Path, directory: Path, source: Path, key_id: str, team_i
         "GACA_APNS_KEY_PATH": str(target), "GACA_APNS_KEY_ID": key_id,
         "GACA_APNS_TEAM_ID": team_id, "GACA_APNS_TOPIC": bundle_id,
     })
+
+
+def remove_android(env_file: Path, directory: Path) -> bool:
+    """Turn Android push off: drop the setting and delete our copy of the key. True if it was on."""
+    removed = remove_env(env_file, ["GACA_FCM_CREDENTIALS_PATH"])
+    (directory / FCM_FILE).unlink(missing_ok=True)
+    return bool(removed)
+
+
+def remove_ios(env_file: Path, directory: Path) -> bool:
+    removed = remove_env(env_file, ["GACA_APNS_KEY_PATH", "GACA_APNS_KEY_ID", "GACA_APNS_TEAM_ID", "GACA_APNS_TOPIC"])
+    (directory / APNS_FILE).unlink(missing_ok=True)
+    return bool(removed)
+
+
+def describe_android(env: dict[str, str]) -> str:
+    """One line for `push status`: on (with the Firebase project), off, or broken."""
+    path = env.get("GACA_FCM_CREDENTIALS_PATH", "")
+    if not path:
+        return "off"
+    try:
+        return f"on (Firebase project {check_fcm(Path(path))})"
+    except PushSetupError as error:
+        return f"BROKEN: {error}"
+
+
+def describe_ios(env: dict[str, str]) -> str:
+    path = env.get("GACA_APNS_KEY_PATH", "")
+    if not (path or env.get("GACA_APNS_KEY_ID") or env.get("GACA_APNS_TEAM_ID")):
+        return "off"
+    try:
+        check_apns_key(Path(path))
+        if not (env.get("GACA_APNS_KEY_ID") and env.get("GACA_APNS_TEAM_ID")):
+            raise PushSetupError("the Key ID or Team ID is missing")
+    except PushSetupError as error:
+        return f"BROKEN: {error}"
+    return f"on (key {env['GACA_APNS_KEY_ID']}, team {env['GACA_APNS_TEAM_ID']}, app {env.get('GACA_APNS_TOPIC') or 'default'})"
