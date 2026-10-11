@@ -83,11 +83,21 @@ async def _resolve(request: Request | None, token: str, *, allow_api_token: bool
         headers={"WWW-Authenticate": "Bearer"},
     )
 
+    if token_utils.looks_like_device(token):
+        # A paired device is the owner, with full access. The reserved scope check is belt and
+        # braces: only pairing ever mints this prefix.
+        found = await token_service.authenticate(token)
+        if found is None or not token_service.is_device(found[1]):
+            raise credentials_exception
+        return found[0]
+
     if token_utils.looks_like_token(token):
         found = await token_service.authenticate(token)
         if found is None:
             raise credentials_exception
         user, record = found
+        if token_service.is_device(record):
+            raise credentials_exception
         # No request to check the scopes against (a direct call, not through FastAPI) -> deny.
         if (
             not allow_api_token

@@ -55,6 +55,11 @@ class Settings(BaseSettings):
     # means none: the phone app is not a browser, and nothing here is meant to be called from a web page.
     cors_origins: str = ""
 
+    # The address phones reach this server at (e.g. https://gaca.example.com). The server cannot
+    # work it out for itself — a Cloudflare tunnel token does not say which hostname it serves — so
+    # the installer asks once and saves it. `gaca-api pair` puts it in the QR code.
+    public_url: str = ""
+
     # Interface this service binds to. Loopback by default (safe for local dev);
     # set GACA_API_HOST=0.0.0.0 on the Pi so other machines can reach it.
     api_host: str = "127.0.0.1"

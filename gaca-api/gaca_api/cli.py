@@ -19,6 +19,7 @@ from .db import users as users_db
 from .models.base import utcnow
 from .provisioning import hermes_connect
 from .services import auth as auth_service
+from .services import pairing as pairing_service
 from .services import setup as setup_service
 from .services import tokens as token_service
 from .services.exceptions import InvalidRequest, NotFound
@@ -33,6 +34,14 @@ def _parser() -> argparse.ArgumentParser:
     code.add_argument("--ttl", type=int, default=setup_service.DEFAULT_TTL_MINUTES, metavar="MINUTES")
     code.add_argument("--url", help="the server's public https URL, to also print an app link")
     code.add_argument("--qr", action="store_true", help="also print a QR code of the app link (needs --url)")
+    pair = sub.add_parser("pair", help="print a one-time code and QR code to pair a phone with this server")
+    pair.add_argument("--ttl", type=int, default=pairing_service.DEFAULT_TTL_MINUTES, metavar="MINUTES")
+    pair.add_argument("--url", help="the server's public https URL (default: GACA_PUBLIC_URL)")
+    pair.add_argument("--no-qr", action="store_true", help="print the code and link only")
+    device = sub.add_parser("device", help="manage paired phones").add_subparsers(dest="device_command", required=True)
+    device.add_parser("list", help="list paired devices")
+    unpair = device.add_parser("revoke", help="unpair a device by id")
+    unpair.add_argument("device_id")
     sub.add_parser("status", help="is this server claimed yet?")
 
     uninstall = sub.add_parser("uninstall", help="stop and remove the service and tunnel (keeps your data unless --purge)")
@@ -104,6 +113,53 @@ async def _setup_code(ttl: int, url: str | None, qr: bool = False) -> int:
     return 0
 
 
+async def _pair(ttl: int, url: str | None, show_qr: bool) -> int:
+    code, _ = await pairing_service.issue_code(ttl)
+    server = (url or settings.public_url).strip().rstrip("/")
+    print(f"Pairing code:  {code}   (single use, valid {ttl} minutes)")
+    if not server:
+        print(
+            "This server doesn't know its public address, so there is no QR code. In the app choose\n"
+            "\"Enter code instead\", type the address and this code. To get QR codes, set GACA_PUBLIC_URL\n"
+            "in the server's .env (or pass --url).",
+            file=sys.stderr,
+        )
+        return 0
+    link = f"gaca://setup?{urlencode({'url': server, 'code': code.replace('-', '')})}"
+    if show_qr:
+        import segno
+
+        segno.make(link, error="m").terminal(compact=True)
+        print("Open GACA on your phone and scan this code.")
+    print(f"Or open this link on the phone:  {link}")
+    return 0
+
+
+async def _device_list() -> int:
+    owner = await _owner_or_none("pair")
+    if owner is None:
+        return 1
+    devices = await token_service.list_devices(owner)
+    if not devices:
+        print("No paired devices. Run `gaca-api pair`.")
+    for d in devices:
+        used = d.last_used_at.isoformat(timespec="seconds") if d.last_used_at else "never"
+        print(f"{d.id}  {d.name:24}  paired {d.created_at.date()}  last used: {used}")
+    return 0
+
+
+async def _device_revoke(device_id: str) -> int:
+    owner = await _owner_or_none("pair")
+    if owner is None:
+        return 1
+    if device_id not in {d.id for d in await token_service.list_devices(owner)}:
+        print(f"No paired device {device_id!r}.", file=sys.stderr)
+        return 1
+    await token_service.revoke(owner, device_id)
+    print(f"Unpaired {device_id}.")
+    return 0
+
+
 async def _status() -> int:
     claimed = await setup_service.is_claimed()
     print("claimed: yes — sign in with the owner account" if claimed else "claimed: no — run `gaca-api setup-code`")
@@ -120,10 +176,10 @@ async def _reset_password() -> int:
     return 0
 
 
-async def _owner_or_none():
+async def _owner_or_none(next_step: str = "setup-code"):
     owner = await users_db.first()
     if owner is None:
-        print("This server has no owner yet; use `gaca-api setup-code`.", file=sys.stderr)
+        print(f"This server has no owner yet; use `gaca-api {next_step}`.", file=sys.stderr)
     return owner
 
 
@@ -244,6 +300,11 @@ def main(argv: list[str] | None = None) -> int:
         return _uninstall(args)
     if args.command == "setup-code":
         return asyncio.run(_with_database(lambda: _setup_code(args.ttl, args.url, args.qr)))
+    if args.command == "pair":
+        return asyncio.run(_with_database(lambda: _pair(args.ttl, args.url, not args.no_qr)))
+    if args.command == "device":
+        handlers = {"list": _device_list, "revoke": lambda: _device_revoke(args.device_id)}
+        return asyncio.run(_with_database(handlers[args.device_command]))
     if args.command == "status":
         return asyncio.run(_with_database(_status))
     if args.command == "token":
