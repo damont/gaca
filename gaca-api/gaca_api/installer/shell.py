@@ -10,6 +10,10 @@ import urllib.error
 import urllib.request
 
 
+# Looks like a browser so Cloudflare does not mistake a health check for a bot.
+USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131 Safari/537.36 gaca-api"
+
+
 class Shell:
     def run(self, argv: list[str], *, timeout: float = 120, env: dict | None = None,
             inherit: bool = False) -> subprocess.CompletedProcess:
@@ -32,8 +36,11 @@ class Shell:
 
     def http_get(self, url: str, timeout: float = 8) -> tuple[int, str]:
         """(status, body); status 0 if the request could not be made at all."""
+        # Cloudflare answers 403 (error 1010) to Python's default User-Agent, which made a perfectly
+        # working public address look broken. A browser-like one gets through.
+        request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "*/*"})
         try:
-            with urllib.request.urlopen(url, timeout=timeout) as response:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
                 return response.status, response.read(4096).decode("utf-8", "replace")
         except urllib.error.HTTPError as error:
             return error.code, ""
