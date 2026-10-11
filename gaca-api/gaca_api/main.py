@@ -18,7 +18,7 @@ from .db import client
 from .provisioning.base import ProvisioningError
 from .config import settings
 from .security import BodyLimitMiddleware, SecurityHeadersMiddleware, check_startup_secrets, cors_origins
-from .routers import agent, alerts, artifacts, auth, briefings, crew, lists, push, sessions, setup, tokens
+from .routers import agent, alerts, artifacts, auth, briefings, crew, devices, lists, push, sessions, setup, tokens
 from .services import push as push_service
 from .services.exceptions import (
     Conflict,
@@ -161,6 +161,7 @@ async def get_schema():
 app.include_router(setup.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
 app.include_router(tokens.router, prefix="/api")
+app.include_router(devices.router, prefix="/api")
 app.include_router(agent.router, prefix="/api")
 app.include_router(crew.router, prefix="/api")
 app.include_router(alerts.router, prefix="/api")

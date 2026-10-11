@@ -17,6 +17,10 @@ import re
 import secrets
 
 PREFIX = "gaca_pat_"
+# A paired device (the app) holds this kind instead: the owner's own full access, individually
+# revocable. Different prefix and a reserved scope so the two kinds can never be mistaken for each other.
+DEVICE_PREFIX = "gaca_dev_"
+DEVICE_SCOPE = "device"
 
 # scope -> [(method or "*", fullmatch regex on the request path)]
 SCOPE_RULES: dict[str, list[tuple[str, str]]] = {
@@ -38,8 +42,16 @@ def generate() -> str:
     return PREFIX + secrets.token_urlsafe(32)
 
 
+def generate_device() -> str:
+    return DEVICE_PREFIX + secrets.token_urlsafe(32)
+
+
 def looks_like_token(value: str) -> bool:
     return value.startswith(PREFIX)
+
+
+def looks_like_device(value: str) -> bool:
+    return value.startswith(DEVICE_PREFIX)
 
 
 def digest(token: str) -> str:

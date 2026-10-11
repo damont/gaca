@@ -34,8 +34,25 @@ async def create(
     return doc, plaintext
 
 
+async def create_device(user: UserDoc, name: str) -> tuple[ApiTokenDoc, str]:
+    """A credential for one paired device. Never expires; revoke it to unpair the device."""
+    plaintext = token_utils.generate_device()
+    doc = ApiTokenDoc(user_id=user.id, name=name, scopes=[token_utils.DEVICE_SCOPE])
+    await tokens_db.insert(doc, token_utils.digest(plaintext))
+    return doc, plaintext
+
+
+def is_device(doc: ApiTokenDoc) -> bool:
+    return token_utils.DEVICE_SCOPE in doc.scopes
+
+
 async def list_tokens(user: UserDoc) -> list[ApiTokenDoc]:
-    return await tokens_db.list_for_user(user.id)
+    """Software credentials (Hermes skills etc.) — paired devices are listed by `list_devices`."""
+    return [t for t in await tokens_db.list_for_user(user.id) if not is_device(t)]
+
+
+async def list_devices(user: UserDoc) -> list[ApiTokenDoc]:
+    return [t for t in await tokens_db.list_for_user(user.id) if is_device(t) and t.revoked_at is None]
 
 
 async def revoke(user: UserDoc, token_id: str) -> None:
