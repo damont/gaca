@@ -32,7 +32,6 @@ checks = [  # (description, actual, expected)
  ("read ~/.hermes/.env", can_read(h / ".hermes" / ".env"), True),
  ("write ~/.hermes/profiles", can_write(h / ".hermes" / "profiles" / ".gaca-probe"), True),
  ("write the data dir", can_write(h / "gaca-data" / ".gaca-probe"), True),
- ("write the socket dir", can_write(h / "gaca-run" / ".gaca-probe"), True),
 ]
 bad = 0
 for what, actual, expected in checks:
@@ -44,7 +43,7 @@ PY
 chmod 644 "$PROBE"
 systemd-run --wait --pipe --quiet --uid="$U" \
   -p NoNewPrivileges=yes -p PrivateTmp=yes -p ProtectSystem=strict -p ProtectHome=tmpfs \
-  -p BindReadOnlyPaths="$H/gaca $H/.hermes $H/.local" -p BindPaths="$H/gaca-data $H/gaca-run $H/.hermes/profiles" \
+  -p BindReadOnlyPaths="$H/gaca $H/.hermes $H/.local" -p BindPaths="$H/gaca-data $H/.hermes/profiles" \
   -p ProtectKernelTunables=yes -p ProtectKernelModules=yes -p ProtectControlGroups=yes \
   -p RestrictSUIDSGID=yes -p LockPersonality=yes -p CapabilityBoundingSet= \
   /usr/bin/python3 "$PROBE"
