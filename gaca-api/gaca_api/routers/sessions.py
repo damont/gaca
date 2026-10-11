@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, Request, Response
 from sse_starlette.sse import EventSourceResponse
 
 from ..models.user import UserDoc
-from ..schemas.message import MessageAccepted, MessageCreate, MessageOut
+from ..schemas.message import MessageAccepted, MessageCreate
 from ..schemas.session import SessionCreate, SessionDetail, SessionList, SessionOut
 from ..schemas.message import AttachmentOut
 from ..services import attachments as attachment_service
@@ -44,7 +44,11 @@ async def list_sessions(user: UserDoc = Depends(get_current_user)) -> SessionLis
     return SessionList(
         sessions=[
             SessionOut.model_validate(s).model_copy(
-                update={"summary": labels.summary, "preview": labels.preview}
+                update={
+                    "summary": labels.summary,
+                    "preview": labels.preview,
+                    "last_activity_at": labels.last_activity_at or s.created_at,
+                }
             )
             for s, labels in rows
         ]
@@ -55,15 +59,7 @@ async def list_sessions(user: UserDoc = Depends(get_current_user)) -> SessionLis
 async def get_session(
     session_id: str, user: UserDoc = Depends(get_current_user)
 ) -> SessionDetail:
-    session, messages, labels = await session_service.get_with_messages(
-        user.id, session_id
-    )
-    return SessionDetail(
-        **SessionOut.model_validate(session).model_dump(exclude={"summary", "preview"}),
-        summary=labels.summary,
-        preview=labels.preview,
-        messages=[MessageOut.model_validate(m) for m in messages],
-    )
+    return await session_service.get_detail(user.id, session_id)
 
 
 @router.post("/{session_id}/messages", status_code=202)

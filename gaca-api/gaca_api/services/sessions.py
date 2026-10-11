@@ -3,11 +3,18 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime
 
+from ..db import events as events_db
 from ..db import messages as messages_db
 from ..db import sessions as sessions_db
 from ..models.message import MessageDoc
 from ..models.session import SessionDoc
+from ..schemas.artifact import ArtifactRefOut
+from ..schemas.message import MessageOut
+from ..schemas.session import SessionDetail, SessionOut
+from ..utils import artifact_links
+from . import artifact_refs, runs
 from .exceptions import NotFound
 
 
@@ -25,14 +32,20 @@ PREVIEW_MAX = 100
 
 @dataclass(frozen=True)
 class Labels:
-    """How a client should label a session: a headline and a last-message line."""
+    """How a client should label a session: a headline, a last-message line, and
+    when that last message was (None with no messages — then it's the session's
+    own creation time)."""
     summary: str | None
     preview: str | None
+    last_activity_at: datetime | None = None
 
 
 def tidy(text: str, limit: int) -> str | None:
     """One line, markdown noise dropped, cut at a word boundary with an ellipsis."""
     text = re.sub(r"```.*?```", " ", text, flags=re.S)
+    # List markers at the start of a line ("- ", "* ", "1. ") would read as stray
+    # dashes once the lines are joined.
+    text = re.sub(r"(?m)^\s*(?:[-+*]|\d+[.)])\s+", "", text)
     text = re.sub(r"[*_`#>]+", "", text)
     text = re.sub(r"\s+", " ", text).strip()
     if not text:
@@ -60,13 +73,13 @@ def labels_for(
     it's the user's."""
     summary = tidy(title, SUMMARY_MAX) if title else None
     if summary is None and first_user is not None:
-        summary = tidy(first_user.content, SUMMARY_MAX) or _photo_label(first_user)
+        summary = tidy(artifact_links.strip(first_user.content), SUMMARY_MAX) or _photo_label(first_user)
     preview = None
     if last is not None:
-        preview = tidy(last.content, PREVIEW_MAX) or _photo_label(last)
+        preview = tidy(artifact_links.strip(last.content), PREVIEW_MAX) or _photo_label(last)
         if preview and last.role == "user":
             preview = f"You: {preview}"
-    return Labels(summary, preview)
+    return Labels(summary, preview, last.created_at if last is not None else None)
 
 
 async def list_for_user(user_id: str) -> list[tuple[SessionDoc, Labels]]:
@@ -98,3 +111,63 @@ async def get_with_messages(
     first_user = next((m for m in messages if m.role == "user"), None)
     last = messages[-1] if messages else None
     return session, messages, labels_for(session.title, first_user, last)
+
+
+async def messages_out(user_id: str, messages: list[MessageDoc]) -> list[MessageOut]:
+    """The transcript as clients get it, with each message's artifact links
+    resolved to chips. All the transcript's artifacts are looked up in one query,
+    scoped to the session's owner — a link to someone else's artifact resolves
+    exactly like a deleted one (missing), never to their title."""
+    links = {m.id: artifact_links.find(m.content) for m in messages}
+    refs = await artifact_refs.resolve(
+        user_id, {link.artifact_id: None for found in links.values() for link in found}
+    )
+
+    def chips(message_links: list[artifact_links.ArtifactLink]) -> list[ArtifactRefOut]:
+        # A missing artifact is titled from this message's own link text.
+        return [
+            refs[l.artifact_id].model_copy(update={"title": l.label or "Page"})
+            if refs[l.artifact_id].missing
+            else refs[l.artifact_id]
+            for l in message_links
+        ]
+
+    return [
+        MessageOut.model_validate(m).model_copy(update={"artifacts": chips(links[m.id])})
+        for m in messages
+    ]
+
+
+async def resume_point(session_id: str) -> tuple[tuple[str, datetime] | None, int]:
+    """(the in-flight run if any, the Last-Event-ID to open the stream with).
+
+    With a run in flight that's one before the run's first persisted event, or
+    the session's latest seq if it hasn't emitted any yet; otherwise just the
+    latest seq. Either way the replay holds the live run's events and no older
+    ones — finished runs are already in the transcript.
+    """
+    active = runs.active_run(session_id)
+    if active is not None:
+        first = await events_db.min_seq_for_run(session_id, active[0])
+        if first is not None:
+            return active, first - 1
+    return active, await events_db.max_seq(session_id)
+
+
+async def get_detail(user_id: str, session_id: str) -> SessionDetail:
+    """GET /sessions/{id}: the session, its labels, its rendered transcript, and
+    whether a run is in flight (with where to resume its stream)."""
+    session, messages, labels = await get_with_messages(user_id, session_id)
+    active, resume_seq = await resume_point(session_id)
+    return SessionDetail(
+        **SessionOut.model_validate(session).model_dump(
+            exclude={"summary", "preview", "last_activity_at"}
+        ),
+        summary=labels.summary,
+        preview=labels.preview,
+        last_activity_at=labels.last_activity_at or session.created_at,
+        messages=await messages_out(user_id, messages),
+        running=active is not None,
+        run_started_at=active[1] if active else None,
+        resume_seq=resume_seq,
+    )

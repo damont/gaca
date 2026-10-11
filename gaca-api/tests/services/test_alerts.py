@@ -1003,3 +1003,110 @@ def test_an_explicit_crew_choice_beats_the_alerts_own_crew(tmp_path, monkeypatch
         return (await session_service.ensure_owned("u1", session_id)).crew
 
     assert _run(go) == "toolshed"
+
+
+# ── one-call delegation (POST /alerts/delegations) ───────────────────
+
+def test_delegate_new_raises_and_delegates_in_one_step(tmp_path, monkeypatch):
+    """Same rules the Android app applied itself: kind manual.delegation, titled
+    with the instruction's first line (max 120), body = the instruction, and
+    attributed to whoever handles it — then delegated with that instruction."""
+    settings.db_path = str(tmp_path / "t.db")
+    calls = _install_recording_backend(monkeypatch)
+    instruction = "  " + "x" * 130 + "\r\nthen tell me how it went  "
+
+    async def go():
+        alert = await alert_service.delegate_new(
+            _multi_crew_user(default_crew="trading"), instruction, crew="toolshed"
+        )
+        await _drain_background()
+        return alert, await messages_db.find_by_session(alert.session_id)
+
+    # The service is handed the schema-trimmed instruction, as the route does.
+    from gaca_api.schemas.alert import DelegationCreate
+
+    instruction = DelegationCreate(instruction=instruction).instruction
+    alert, msgs = _run(go)
+    assert alert.status == "delegated" and alert.session_id
+    assert (alert.kind, alert.title, alert.body) == ("manual.delegation", "x" * 120, instruction)
+    assert (alert.crew, alert.source) == ("toolshed", "app")
+    # (resolved twice: once up front, so nothing is stored if it can't be reached)
+    assert set(calls) == {("http://agent.example.com:8643", "toolshed-key")}
+    assert msgs[0].content == instruction  # what the crew member was sent
+
+
+def test_delegate_new_defaults_the_crew_and_stores_nothing_on_a_bad_one(tmp_path, monkeypatch):
+    settings.db_path = str(tmp_path / "t.db")
+    _install_recording_backend(monkeypatch)
+
+    async def go():
+        user = _multi_crew_user(default_crew="trading")
+        default = await alert_service.delegate_new(user, "check the logs")
+        await _drain_background()
+        with pytest.raises(InvalidRequest):
+            await alert_service.delegate_new(user, "nope", crew="nonexistent")
+        with pytest.raises(CrewNotConfigured):
+            await alert_service.delegate_new(_user("u2", crew_configured=False), "nope")
+        return default, await alert_service.list_for_user("u1"), await alert_service.list_for_user("u2")
+
+    default, u1_alerts, u2_alerts = _run(go)
+    assert default.crew == "trading"
+    assert [a.id for a in u1_alerts] == [default.id]  # no orphan alert from the bad call
+    assert u2_alerts == []
+
+
+def test_delegation_instruction_must_not_be_blank():
+    from pydantic import ValidationError
+
+    from gaca_api.schemas.alert import DelegationCreate
+
+    with pytest.raises(ValidationError):
+        DelegationCreate(instruction="  \n ")
+    assert DelegationCreate(instruction=" do it ").instruction == "do it"
+
+
+# ── AlertOut: data_rows and the resolved artifact ────────────────────
+
+def test_data_rows_render_every_shape_in_order():
+    from gaca_api.schemas.alert import AlertOut
+
+    doc = AlertDoc(user_id="u1", kind="k", title="t", data={
+        "mount": "/", "used_pct": 91, "free_gb": 12.4, "ok": False, "note": None,
+        "disk": {"name": "sda", "tags": ["ssd", 2], "meta": {"x": True}},
+        "hosts": ["a", {"b": 1}],
+    })
+    out = AlertOut(**doc.model_dump(), effective_status="new")
+    assert [(r.key, r.value) for r in out.data_rows] == [
+        ("mount", "/"), ("used_pct", "91"), ("free_gb", "12.4"), ("ok", "false"), ("note", "null"),
+        ("disk", "name: sda, tags: ssd, 2, meta: x: true"),
+        ("hosts", "a, b: 1"),
+    ]
+
+
+def test_alerts_carry_their_resolved_artifact(tmp_path):
+    from gaca_api.schemas.artifact import ArtifactCreate
+    from gaca_api.services import artifacts as artifact_service
+
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        page = await artifact_service.create(
+            "u1", ArtifactCreate(title="Week", html="<p>", description="Calendar", crew="hermes")
+        )
+        with_page, _ = await alert_service.create("u1", _payload(artifact_id=page.id))
+        without, _ = await alert_service.create("u1", _payload())
+        # The page is deleted after the alert pointed at it: the chip stays, as missing.
+        gone_page = await artifact_service.create("u1", ArtifactCreate(title="Gone", html="<p>"))
+        gone, _ = await alert_service.create("u1", _payload(artifact_id=gone_page.id))
+        await artifact_service.delete("u1", gone_page.id)
+        outs = await alert_service.to_out("u1", [with_page, without, gone])
+        return page.id, gone_page.id, outs
+
+    page_id, gone_id, (with_page, without, gone) = _run(go)
+    assert with_page.artifact.model_dump() == {
+        "id": page_id, "title": "Week", "description": "Calendar", "crew": "hermes", "missing": False
+    }
+    assert without.artifact is None
+    assert gone.artifact.model_dump() == {
+        "id": gone_id, "title": "Page", "description": None, "crew": None, "missing": True
+    }

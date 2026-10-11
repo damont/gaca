@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -410,8 +410,9 @@ dependencies = [
     { name = "asyncssh" },
     { name = "fastapi" },
     { name = "firebase-admin" },
-    { name = "httpx" },
+    { name = "httpx", extra = ["http2"] },
     { name = "pydantic-settings" },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "segno" },
     { name = "sse-starlette" },
     { name = "uvicorn", extra = ["standard"] },
@@ -428,8 +429,9 @@ requires-dist = [
     { name = "asyncssh", specifier = ">=2.24.0" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "firebase-admin", specifier = ">=6.5" },
-    { name = "httpx", specifier = ">=0.27" },
+    { name = "httpx", extras = ["http2"], specifier = ">=0.27" },
     { name = "pydantic-settings", specifier = ">=2.6" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.8" },
     { name = "segno", specifier = ">=1.6.6" },
     { name = "sse-starlette", specifier = ">=2.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },

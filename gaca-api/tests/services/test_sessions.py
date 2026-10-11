@@ -219,3 +219,85 @@ def test_get_with_messages_returns_labels(tmp_path):
 
     _, _, labels = _run(go)
     assert (labels.summary, labels.preview) == ("hello there", "hi!")
+
+
+# --- rendered transcript: display_content + artifact chips ------------------
+
+def test_messages_resolve_artifact_links_for_the_owner_only(tmp_path):
+    """Owned artifacts resolve to their real title/description/crew; a link to
+    nothing — or to someone ELSE's artifact — still shows, as missing, titled
+    from the link text (or "Page"), without leaking the other user's title."""
+    from gaca_api.schemas.artifact import ArtifactCreate
+    from gaca_api.services import artifacts as artifact_service
+
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def scenario():
+        s = await session_service.create("u1", None, "hermes")
+        mine = await artifact_service.create(
+            "u1", ArtifactCreate(title="Groceries", html="<p>", description="Weekly list", crew="hermes")
+        )
+        theirs = await artifact_service.create("u2", ArtifactCreate(title="Secret", html="<p>"))
+        gone = "f" * 32
+        await messages_db.insert(MessageDoc(
+            session_id=s.id, role="assistant",
+            content=(
+                f"Made it: [My list](gaca://artifact/{mine.id})\n\n"
+                f"Also [Theirs](gaca://artifact/{theirs.id}) gaca://artifact/{gone} "
+                f"gaca://artifact/{mine.id}"
+            ),
+        ))
+        return mine.id, theirs.id, gone, await session_service.get_detail("u1", s.id)
+
+    mine_id, theirs_id, gone, detail = _run(scenario)
+    message = detail.messages[0]
+    assert message.display_content == "Made it:\n\nAlso"
+    assert [a.model_dump() for a in message.artifacts] == [
+        {"id": mine_id, "title": "Groceries", "description": "Weekly list", "crew": "hermes", "missing": False},
+        {"id": theirs_id, "title": "Theirs", "description": None, "crew": None, "missing": True},
+        {"id": gone, "title": "Page", "description": None, "crew": None, "missing": True},
+    ]
+    assert message.activity is None  # no run activity stored on this message
+
+
+def test_labels_do_not_show_raw_artifact_links(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def scenario():
+        s = await session_service.create("u1", None, "hermes")
+        await messages_db.insert(MessageDoc(
+            session_id=s.id, role="assistant", content=f"Here you go [List](gaca://artifact/{'a' * 32})"
+        ))
+        return await session_service.get_detail("u1", s.id)
+
+    assert _run(scenario).preview == "Here you go"
+
+
+def test_last_activity_is_the_latest_message_else_creation(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+    later = datetime(2030, 1, 1, tzinfo=timezone.utc)
+
+    async def scenario():
+        quiet = await session_service.create("u1", None, "hermes")
+        busy = await session_service.create("u1", None, "hermes")
+        await messages_db.insert(MessageDoc(session_id=busy.id, role="user", content="hi", created_at=later))
+        return (
+            quiet,
+            await session_service.get_detail("u1", quiet.id),
+            await session_service.get_detail("u1", busy.id),
+            await session_service.list_for_user("u1"),
+        )
+
+    quiet, quiet_detail, busy_detail, listed = _run(scenario)
+    assert [labels.last_activity_at for _, labels in listed] == [later, None]  # None -> created_at
+    assert quiet_detail.last_activity_at == quiet.created_at
+    assert busy_detail.last_activity_at == later
+
+
+def test_tidy_drops_list_markers():
+    from gaca_api.services.sessions import tidy
+
+    text = "Here's what I found:\n\n- **9:30** Standup\n* Lunch\n1. Dentist\n2) Gym"
+    assert tidy(text, 200) == "Here's what I found: 9:30 Standup Lunch Dentist Gym"
+    # A dash inside a sentence stays.
+    assert tidy("Cleared 12GB - should hold", 200) == "Cleared 12GB - should hold"

@@ -16,4 +16,7 @@ class PushTokenDoc(BaseModel):
     # FCM reports as unregistered gets deleted here (services/push.py).
     token: str
     platform: str = "android"
+    # APNs environment ("sandbox" | "production") for an ios token; None means
+    # production (services/apns.py). Always None for FCM tokens.
+    environment: str | None = None
     created_at: datetime = Field(default_factory=utcnow)

@@ -9,7 +9,10 @@ dependencies = [
     "pydantic-settings>=2.6",
     "aiosqlite>=0.20",
     "sse-starlette>=2.1",
-    "httpx>=0.27",
+    # The http2 extra (h2) is for APNs, which only speaks HTTP/2 (services/apns.py).
+    "httpx[http2]>=0.27",
+    # Signs APNs provider tokens (ES256, hence the crypto extra).
+    "pyjwt[crypto]>=2.8",
     # Sends push notifications via Firebase Cloud Messaging (services/push.py).
     "firebase-admin>=6.5",
     "asyncssh>=2.24.0",
@@ -43,5 +46,7 @@ build-backend = "hatchling.build"
 # Tell hatchling exactly which package directory to put in the wheel. (It would
 # usually infer gaca_api/ from the project name, but being explicit is clearer
 # and avoids surprises if we add more top-level modules later.)
+# Everything under gaca_api/ ships, not just .py — including static/artifact-sdk.js,
+# which services/artifact_page.py reads via importlib.resources at runtime.
 [tool.hatch.build.targets.wheel]
 packages = ["gaca_api"]

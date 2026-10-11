@@ -1,11 +1,16 @@
-"""Push notification fan-out via Firebase Cloud Messaging.
+"""Push notification fan-out: Firebase Cloud Messaging, plus APNs for iPhones.
+
+Android (and anything that isn't platform "ios") goes through FCM; iOS tokens
+go straight to Apple via services/apns.py. Callers don't care which — they
+call notify()/notify_chat() and every device the user registered gets it.
 
 Best-effort everywhere it's called: alert creation and delegation settlement
 must never fail or slow down because a push couldn't be sent. Leaving
 GACA_FCM_CREDENTIALS_PATH unset disables sending entirely — connect() no-ops,
 notify() no-ops — which is the same posture as the app already has without
 this file: the Android client's own polling is still the source of truth,
-push is purely a "tell me sooner" nicety on top of it.
+push is purely a "tell me sooner" nicety on top of it. APNs follows the same
+rule with its own settings (GACA_APNS_*); either can be on without the other.
 """
 from __future__ import annotations
 
@@ -17,6 +22,7 @@ from firebase_admin import credentials, messaging
 from ..config import settings
 from ..db import push_tokens as push_tokens_db
 from ..models.push_token import PushTokenDoc
+from . import apns
 
 _app: firebase_admin.App | None = None
 
@@ -33,8 +39,12 @@ _DEFAULT_CHANNEL = "alerts_standard"
 CHAT_CHANNEL = "chat_replies"
 
 
-async def register_token(user_id: str, token: str, platform: str) -> None:
-    await push_tokens_db.upsert(PushTokenDoc(user_id=user_id, token=token, platform=platform))
+async def register_token(
+    user_id: str, token: str, platform: str, environment: str | None = None
+) -> None:
+    await push_tokens_db.upsert(
+        PushTokenDoc(user_id=user_id, token=token, platform=platform, environment=environment)
+    )
 
 
 async def unregister_token(user_id: str, token: str) -> None:
@@ -47,8 +57,9 @@ async def unregister_token(user_id: str, token: str) -> None:
 
 
 def connect() -> None:
-    """Initialize the Firebase Admin SDK (startup), if configured."""
+    """Initialize the Firebase Admin SDK and the APNs client (startup), each if configured."""
     global _app
+    apns.connect()
     if not settings.fcm_credentials_path:
         return
     cred = credentials.Certificate(settings.fcm_credentials_path)
@@ -56,6 +67,7 @@ def connect() -> None:
 
 
 def close() -> None:
+    """Shut Firebase down (sync — see aclose for why it runs in a thread)."""
     global _app
     if _app is not None:
         firebase_admin.delete_app(_app)
@@ -63,21 +75,53 @@ def close() -> None:
 
 
 async def aclose() -> None:
-    """Shut Firebase down from async code. firebase_admin's cleanup calls asyncio.run() once its
+    """Shut push down from async code. firebase_admin's cleanup calls asyncio.run() once its
     messaging client exists (after the first push), which raises inside a running event loop, so
-    it has to run in a worker thread that has no loop of its own."""
-    await asyncio.to_thread(close)
+    it has to run in a worker thread that has no loop of its own. The APNs client is async and
+    closes here; a failure closing Firebase must not leave it open."""
+    try:
+        await asyncio.to_thread(close)
+    finally:
+        await apns.close()
 
 
 async def _send_to_user(
-    user_id: str, *, title: str, body: str, data: dict[str, str], channel_id: str
+    user_id: str,
+    *,
+    title: str,
+    body: str,
+    data: dict[str, str],
+    channel_id: str,
+    collapse_id: str,
+    thread_id: str,
+    time_sensitive: bool = False,
 ) -> None:
     """Push to every device this user has registered. Best effort, never raises:
     an unregistered/invalid token is deleted so it stops being tried, anything
-    else is swallowed — the contract is "tell me sooner," not "delivered"."""
-    if _app is None:
-        return
+    else is swallowed — the contract is "tell me sooner," not "delivered".
+
+    `channel_id` only means something to Android; `collapse_id`, `thread_id`
+    and `time_sensitive` only to iOS. Both platforms get the same `data`.
+    """
     for push_token in await push_tokens_db.find_by_user(user_id):
+        if push_token.platform == "ios":
+            if not apns.is_configured():
+                continue
+            result = await apns.send(
+                push_token.token,
+                push_token.environment,
+                title=title,
+                body=body,
+                collapse_id=collapse_id,
+                thread_id=thread_id,
+                time_sensitive=time_sensitive,
+                custom=data,
+            )
+            if result is apns.SendResult.DEAD_TOKEN:
+                await push_tokens_db.delete_by_token(push_token.token)
+            continue
+        if _app is None:
+            continue
         message = messaging.Message(
             token=push_token.token,
             notification=messaging.Notification(title=title, body=body),
@@ -108,6 +152,11 @@ async def notify(user_id: str, *, title: str, body: str, alert_id: str, severity
         body=body,
         data={"alert_id": alert_id, "severity": severity},
         channel_id=_CHANNEL_BY_SEVERITY.get(severity, _DEFAULT_CHANNEL),
+        # One notification per alert: a re-push of the same alert replaces it.
+        collapse_id=alert_id,
+        thread_id="alerts",
+        # The iOS counterpart of Android's urgent channel: breaks through Focus.
+        time_sensitive=severity == "urgent",
     )
 
 
@@ -124,4 +173,6 @@ async def notify_chat(user_id: str, *, title: str, body: str, session_id: str) -
         body=body,
         data={"session_id": session_id, "kind": "chat"},
         channel_id=CHAT_CHANNEL,
+        collapse_id=session_id,
+        thread_id="chat",
     )
