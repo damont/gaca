@@ -17,6 +17,7 @@ from ..schemas.auth import (
     UserResponse,
 )
 from ..services import auth as auth_service
+from ..security import rate_limit
 from ..utils.auth import create_access_token, get_current_user, verify_password
 from ..utils.google import GoogleAuthError, verify_google_identity
 
@@ -34,7 +35,7 @@ async def register(request: RegisterRequest):
     )
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post("/login", response_model=TokenResponse, dependencies=[Depends(rate_limit("auth"))])
 async def login(data: UserLogin):
     """Login with email and password."""
     user = await auth_service.find_by_email(data.email)
@@ -53,7 +54,7 @@ async def login(data: UserLogin):
     return TokenResponse(access_token=token)
 
 
-@router.post("/google", response_model=TokenResponse)
+@router.post("/google", response_model=TokenResponse, dependencies=[Depends(rate_limit("auth"))])
 async def google_login(data: GoogleLoginRequest):
     """Sign in with a Google ID token — as the server's existing owner only.
 

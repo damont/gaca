@@ -110,7 +110,8 @@ def test_the_code_is_forgiving_about_case_and_dashes(http):
     assert claim(http, code="abcd-2345 efgh-6789").status_code == 201
 
 
-def test_a_wrong_code_is_refused_and_enough_wrong_ones_burn_the_real_one(http):
+def test_a_wrong_code_is_refused_and_enough_wrong_ones_burn_the_real_one(http, monkeypatch):
+    monkeypatch.setattr(settings, "auth_attempts_per_minute", 1000)  # this test is about burning, not the per-minute limit
     plant_code(http.db)
     for _ in range(setup_service.MAX_WRONG_ATTEMPTS - 1):
         assert claim(http, code="WRONG-WRONG-WRONG").status_code == 401

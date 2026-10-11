@@ -7,10 +7,11 @@ See services/setup.py for the rules around the code.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from ..config import settings
 from ..schemas.auth import TokenResponse
+from ..security import rate_limit
 from ..schemas.setup import ClaimRequest, GoogleClaimRequest, SetupStatus
 from ..services import setup as setup_service
 from ..utils.auth import create_access_token
@@ -43,7 +44,7 @@ async def setup_status():
     )
 
 
-@router.post("/claim", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/claim", response_model=TokenResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(rate_limit("claim"))])
 async def claim(data: ClaimRequest):
     """Become this server's owner with an email and password. 409 once it has an owner."""
     try:
@@ -53,7 +54,7 @@ async def claim(data: ClaimRequest):
     return TokenResponse(access_token=create_access_token(subject=user.id))
 
 
-@router.post("/claim/google", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/claim/google", response_model=TokenResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(rate_limit("claim"))])
 async def claim_with_google(data: GoogleClaimRequest):
     """Become this server's owner with a Google account (when Google sign-in is configured)."""
     try:

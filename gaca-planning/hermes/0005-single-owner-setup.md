@@ -74,8 +74,12 @@ status route (the app got an unauthenticated HTML page instead of JSON). Docs ar
 2. **Scoped, revocable Hermes token** (this PR) + `gaca-api hermes connect`. Migrating the live box,
    then rotating the JWT secret (retiring the old agent JWTs, which expire silently 2027-08-22),
    are deploy steps.
-3. **Installer**: `install.sh` (secrets, uv, venv, system unit, cloudflared with a pasted tunnel token,
-   QR/link output); remove nginx + React frontend; body-size limit + security headers in the API.
+3. **API hardening for life without nginx** (PR 3a): security headers, 3 MiB request cap, per-client
+   rate limits on sign-in/claim (real IP from `CF-Connecting-IP`, trusted only from a loopback peer),
+   CORS off by default (`GACA_CORS_ORIGINS`), refusing to start with the placeholder/short JWT secret
+   (`GACA_DEV=1` bypasses, for local dev only). **Installer** (3b): `install.sh` (secrets, uv, venv,
+   service, cloudflared with a pasted tunnel token or a quick tunnel, QR/link output). **Then** remove
+   nginx + React frontend from the repo and production (a coordinated cutover).
 4. **Android**: server-address screen, `gaca://setup` deep link, claim and sign-in screens driven by
    `/api/setup`; no baked-in server URL.
 5. **Hardening**: login/claim rate limits, refuse the default JWT secret, SECURITY.md.

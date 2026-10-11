@@ -16,6 +16,8 @@ from .agent import runtime as agent_runtime
 from .bus import event_bus
 from .db import client
 from .provisioning.base import ProvisioningError
+from .config import settings
+from .security import BodyLimitMiddleware, SecurityHeadersMiddleware, check_startup_secrets, cors_origins
 from .routers import agent, alerts, artifacts, auth, briefings, crew, lists, push, sessions, setup, tokens
 from .services import push as push_service
 from .services.exceptions import (
@@ -33,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    check_startup_secrets()  # before anything is opened: a refusal must exit cleanly
     await client.connect()  # startup: open SQLite + ensure the schema
     try:
         await event_bus.connect()  # bus for read_run -> open SSE streams
@@ -67,17 +70,18 @@ app = FastAPI(
 )
 
 
-# Matches calendarapp and toolshed. In practice both dev and production serve
-# the frontend and API from one origin — Vite proxies /api locally, nginx does
-# it in production — so browsers never make a cross-origin request. This is
-# here for direct API callers and to keep the app shape consistent.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS is off unless GACA_CORS_ORIGINS names origins: the phone app is not a browser, and there is
+# no web frontend any more. No credentials are ever sent cross-origin (tokens travel in a header).
+if cors_origins(settings.cors_origins):
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins(settings.cors_origins),
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
+app.add_middleware(BodyLimitMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 @app.exception_handler(NotFound)
