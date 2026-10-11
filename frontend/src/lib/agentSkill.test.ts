@@ -15,7 +15,7 @@ describe("agentSkill template", () => {
     // when the host has moved.
     const md = agentSkill(sample);
     expect(md).toContain("<base>/api/openapi.json");
-    expect(md).toContain("<base>/api/agent");
+    expect(md).toContain("<base>/api/docs");
   });
 
   it("strips a trailing slash from baseUrl in any literal mention", () => {

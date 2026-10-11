@@ -2,11 +2,14 @@
 auth and only ever sees the caller's own artifacts."""
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, Path, Query
 from fastapi.responses import HTMLResponse
 
 from ..models.user import UserDoc
 from ..schemas import artifact as s
+from ..services import artifact_page
 from ..services import artifacts as svc
 from ..utils.auth import get_current_user
 
@@ -67,6 +70,33 @@ async def get_html(
             "Cache-Control": "no-store",
         },
     )
+
+
+@router.get("/{artifact_id}/page", response_class=HTMLResponse)
+async def get_page(artifact_id: str, user: UserDoc = Depends(get_current_user)) -> HTMLResponse:
+    """The page ready to show in an app's web view: the current HTML wrapped with the
+    network-blocking CSP, viewport, theme CSS and the `window.app` SDK. Load it as-is; route
+    the SDK's bridge calls to POST /{artifact_id}/call."""
+    html = await artifact_page.page(user.id, artifact_id)
+    return HTMLResponse(
+        html,
+        headers={
+            "Content-Security-Policy": artifact_page.CSP,
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.post("/{artifact_id}/call")
+async def call_from_page(
+    artifact_id: str, body: s.ArtifactCall, user: UserDoc = Depends(get_current_user)
+) -> Any:
+    """Perform one of the page's `window.app.*` data calls (`data`, `state.get|set|patch`,
+    `doc.list|add|set|patch|remove|clear`, `batch`, `emit`). Answers exactly what the matching
+    endpoint above would — same JSON, same errors (`null` where that endpoint sends 204).
+    UI calls (`ask`, `openUrl`, `toast`) belong to the client: `400 unknown method`."""
+    return await artifact_page.call(user.id, artifact_id, body.method, body.args)
 
 
 @router.patch("/{artifact_id}")

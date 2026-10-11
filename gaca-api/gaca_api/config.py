@@ -87,5 +87,17 @@ class Settings(BaseSettings):
     # alert creation or delegation, which must never depend on it.
     fcm_credentials_path: str | None = None
 
+    # iPhone push goes straight to Apple (APNs), not through Firebase: token-based
+    # auth with a .p8 key from Apple Developer -> Certificates, Identifiers &
+    # Profiles -> Keys (Apple Push Notifications service enabled). The key file is
+    # a real secret — a path, mounted at deploy time, like the FCM one. iOS push is
+    # disabled (services/apns.py no-ops) unless key path, key id and team id are all
+    # set; Android/FCM is unaffected either way.
+    apns_key_path: str | None = None
+    apns_key_id: str | None = None
+    apns_team_id: str | None = None
+    # The iOS app's bundle id. APNs rejects a token sent under any other topic.
+    apns_topic: str = "dev.monts.gaca"
+
 
 settings = Settings()

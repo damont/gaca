@@ -89,7 +89,7 @@ standard OpenAPI 3.x schema. Fetch this once at the start of a session and
 work from it:
 
 - Machine-readable schema: \`<base>/api/openapi.json\`
-- Browsable Swagger UI: \`<base>/api/agent\`
+- Browsable Swagger UI: \`<base>/api/docs\`
 
 To plan a task: pull the schema, search \`paths\` for endpoints relevant to
 the task (by tag, path keyword, or method), read the request and response

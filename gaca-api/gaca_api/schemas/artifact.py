@@ -129,6 +129,18 @@ class ArtifactOut(BaseModel):
         return self
 
 
+class ArtifactRefOut(BaseModel):
+    """An artifact something points at (a chat message's link, an alert's `artifact_id`),
+    resolved so the client can draw its chip without a second request. `missing` is true
+    when it points at nothing this user owns (deleted, or a bad id from the agent): the chip
+    still shows, titled with the link's own text (or "Page"), so the link isn't silently lost."""
+    id: str
+    title: str
+    description: str | None = None
+    crew: str | None = None
+    missing: bool = False
+
+
 class ArtifactList(BaseModel):
     artifacts: list[ArtifactOut] = []
 
@@ -262,3 +274,11 @@ class EventsHandled(BaseModel):
 
 class HandledResult(BaseModel):
     handled: int
+
+
+# ── page calls ───────────────────────────────────────────────────────────────
+class ArtifactCall(BaseModel):
+    """One `window.app.*` call from an artifact page, forwarded verbatim by the client's
+    native bridge: the SDK's method name and its args object."""
+    method: str = Field(max_length=64)
+    args: dict[str, Any] = Field(default_factory=dict)

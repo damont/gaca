@@ -5,6 +5,11 @@ them to status codes, keeping HTTP concerns out of the business logic.
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pydantic import ValidationError
+
 
 class NotFound(Exception):
     """A requested resource doesn't exist. Mapped to HTTP 404."""
@@ -79,3 +84,19 @@ class PayloadTooLarge(Exception):
 class Conflict(Exception):
     """A write lost a race: the caller's `expected_version` is no longer current, or
     the thing it tried to create already exists. Mapped to HTTP 409 — refetch, then retry."""
+
+
+class BadRequest(Exception):
+    """The request asks for something that doesn't exist as an operation — e.g. an
+    artifact page calling a method the API doesn't perform. Mapped to HTTP 400."""
+
+
+class RequestInvalid(Exception):
+    """A body the service validated itself (not FastAPI) failed schema validation —
+    e.g. an artifact page call's args checked against the matching endpoint's body
+    model. Carries pydantic's errors so the 422 reads exactly like the one that
+    endpoint would have sent."""
+
+    def __init__(self, error: ValidationError) -> None:
+        super().__init__(str(error))
+        self.errors = error.errors(include_url=False)

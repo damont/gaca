@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from .message import MessageOut
 
@@ -40,11 +40,37 @@ class SessionOut(BaseModel):
     # no messages yet.
     summary: str | None = None
     preview: str | None = None
+    # When this chat last moved: its latest message's time, else when it was
+    # created. What to show as "2m ago" in the Chat list (which is sorted by it).
+    # Never null in a response: the default (unvalidated None) is filled in below,
+    # so the published schema can say plain date-time.
+    last_activity_at: datetime = None  # type: ignore[assignment]
+
+    @model_validator(mode="after")
+    def _activity_defaults_to_creation(self) -> "SessionOut":
+        if self.last_activity_at is None:
+            self.last_activity_at = self.created_at
+        return self
 
 
 class SessionDetail(SessionOut):
-    """A session plus its messages — GET /sessions/{id}."""
+    """A session plus its messages — GET /sessions/{id}.
+
+    Also says whether a run is in flight, and where to pick up its event stream:
+    open GET /sessions/{id}/events with Last-Event-ID: `resume_seq` and the
+    stream replays exactly the in-flight run's progress (nothing older — those
+    runs are already in `messages`), then continues live. So a client never has
+    to guess which replayed events are stale.
+    """
     messages: list[MessageOut] = []
+    # A run for this session is in flight in the API right now. Cleared when it
+    # completes or fails — and by a server restart, which ends the run too.
+    running: bool = False
+    run_started_at: datetime | None = None
+    # Not running: the session's latest event seq (0 if none) — resume from
+    # there and only new events arrive. Running: just before the run's first
+    # event, so its progress so far is replayed.
+    resume_seq: int = 0
 
 
 class SessionList(BaseModel):

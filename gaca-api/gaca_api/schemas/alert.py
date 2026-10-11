@@ -7,14 +7,16 @@ stored data stays permissive so an old row never fails to load.
 """
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..models.alert import AlertLink, SuggestedAction
+from .artifact import ArtifactRefOut
 
 
 MAX_LINKS = 10
@@ -44,6 +46,24 @@ def _host_label(url: str) -> str:
     """What to call a link nobody labeled: its site, without "www."."""
     host = urlsplit(url).hostname or url
     return host[4:] if host.startswith("www.") else host
+
+
+def render_value(value: Any) -> str:
+    """One `data` value as display text. `data` is whatever the poster sent, so never
+    assume its shape: strings as-is, other scalars as their JSON text, objects as
+    "k: v, k2: v2" and arrays as "a, b" — recursively. (Ported from the Android client.)"""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return ", ".join(f"{k}: {render_value(v)}" for k, v in value.items())
+    if isinstance(value, list):
+        return ", ".join(render_value(v) for v in value)
+    return json.dumps(value)
+
+
+class DataRow(BaseModel):
+    key: str
+    value: str
 
 
 class AlertCreate(BaseModel):
@@ -103,6 +123,10 @@ class AlertOut(BaseModel):
     # Every link has a label here, even if the poster didn't give one.
     links: list[AlertLink] = []
     artifact_id: str | None = None
+    # `data`'s top-level entries, in order, ready to show as label/value rows.
+    data_rows: list[DataRow] = []
+    # `artifact_id` resolved for its chip (see ArtifactRefOut) — null when there's none.
+    artifact: ArtifactRefOut | None = None
 
     status: str
     # What the client should display and filter on. Differs from `status` when a
@@ -115,10 +139,11 @@ class AlertOut(BaseModel):
     parent_alert_id: str | None = None
 
     @model_validator(mode="after")
-    def _label_every_link(self) -> "AlertOut":
+    def _derived(self) -> "AlertOut":
         self.links = [
             AlertLink(url=link.url, label=link.label or _host_label(link.url)) for link in self.links
         ]
+        self.data_rows = [DataRow(key=k, value=render_value(v)) for k, v in self.data.items()]
         return self
 
 
@@ -148,6 +173,25 @@ class AlertDelegate(BaseModel):
     instruction: str | None = Field(default=None, max_length=2000)
     suggested_action_index: int | None = Field(default=None, ge=0)
     crew: str | None = Field(default=None, max_length=100)
+
+
+class DelegationCreate(BaseModel):
+    """Body for POST /alerts/delegations — "hand this to a crew member" with nothing
+    noticed first: the API raises the alert and delegates it in one step."""
+
+    instruction: str = Field(..., max_length=2000)
+    # Who handles it (and who the alert is attributed to); omit for the account default.
+    # Same rules as delegate: naming one that isn't configured is a 422.
+    crew: str | None = Field(default=None, max_length=100)
+    source: str = Field(default="app", max_length=100)
+
+    @field_validator("instruction")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("instruction can't be blank")
+        return value
 
 
 class AlertTakeToChat(BaseModel):

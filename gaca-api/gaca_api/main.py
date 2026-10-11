@@ -9,6 +9,8 @@ import logging
 from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -21,12 +23,14 @@ from .security import BodyLimitMiddleware, SecurityHeadersMiddleware, cors_origi
 from .routers import agent, alerts, artifacts, auth, briefings, crew, devices, lists, push, sessions, setup, tokens
 from .services import push as push_service
 from .services.exceptions import (
+    BadRequest,
     Conflict,
     CrewNotConfigured,
     InvalidRequest,
     InvalidTransition,
     NotFound,
     PayloadTooLarge,
+    RequestInvalid,
 )
 
 
@@ -39,7 +43,7 @@ async def lifespan(app: FastAPI):
     try:
         await event_bus.connect()  # bus for read_run -> open SSE streams
         agent_runtime.connect()  # resolve the configured engine module
-        push_service.connect()  # Firebase Admin SDK, if GACA_FCM_CREDENTIALS_PATH is set
+        push_service.connect()  # Firebase Admin SDK / APNs client, whichever is configured
     except BaseException:
         # A failed startup must not leave the SQLite worker thread running: it is non-daemon,
         # so the process would hang instead of exiting and a supervisor would never restart it.
@@ -103,6 +107,20 @@ async def handle_invalid_request(
 ) -> JSONResponse:
     """Map a semantically-invalid request body to HTTP 422, in one place."""
     return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+
+@app.exception_handler(RequestInvalid)
+async def handle_request_invalid(request: Request, exc: RequestInvalid) -> JSONResponse:
+    """A body the service validated itself: answer with FastAPI's own 422, errors
+    located under "body" as if FastAPI had validated it — callers can't tell."""
+    errors = [{**e, "loc": ("body", *e["loc"])} for e in exc.errors]
+    return await request_validation_exception_handler(request, RequestValidationError(errors))
+
+
+@app.exception_handler(BadRequest)
+async def handle_bad_request(request: Request, exc: BadRequest) -> JSONResponse:
+    """Map a request for an operation that doesn't exist to HTTP 400, in one place."""
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
 @app.exception_handler(Conflict)

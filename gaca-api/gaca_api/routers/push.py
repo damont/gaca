@@ -16,13 +16,14 @@ async def register(
     body: PushTokenRegister,
     user: UserDoc = Depends(get_current_user),
 ) -> None:
-    """Register (or move) a device's FCM token to this account.
+    """Register (or move) a device's push token to this account.
 
-    Called on app launch and whenever FirebaseMessagingService.onNewToken()
-    fires — tokens rotate, so this is a "keep me current," not a one-time
-    call. Idempotent: registering the same token again is a no-op.
+    An FCM token from Android, or an APNs token (platform "ios", plus its
+    environment) from iPhone. Called on app launch and whenever the platform
+    hands the app a new token — tokens rotate, so this is a "keep me current,"
+    not a one-time call. Idempotent: registering the same token again is a no-op.
     """
-    await push_service.register_token(user.id, body.token, body.platform)
+    await push_service.register_token(user.id, body.token, body.platform, body.environment)
 
 
 @router.post("/unregister", status_code=204)

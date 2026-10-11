@@ -105,6 +105,20 @@ async def find_many(
     return rows[:limit]
 
 
+async def find_by_ids(user_id: str, ids: list[str]) -> list[ArtifactRow]:
+    """These artifacts, if they exist and belong to this user (archived ones
+    included); any other id is simply absent from the result. One query however
+    many ids — used to resolve every artifact link in a transcript at once."""
+    if not ids:
+        return []
+    placeholders = ", ".join("?" for _ in ids)
+    async with connection().execute(
+        f"SELECT {_META} FROM artifacts WHERE user_id = ? AND id IN ({placeholders})",
+        (user_id, *ids),
+    ) as cursor:
+        return [_row(r) for r in await cursor.fetchall()]
+
+
 async def set_positions(user_id: str, ordered_ids: list[str]) -> None:
     """Number the given artifacts 0..n-1 in that order (rows not listed are left alone)."""
     conn = connection()

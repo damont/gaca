@@ -1,6 +1,7 @@
 """Alert business logic. No FastAPI, no HTTP — just orchestration."""
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
 from ..db import alerts as alerts_db
@@ -8,8 +9,9 @@ from ..db import artifacts as artifacts_db
 from ..models.alert import AlertDoc
 from ..models.base import utcnow
 from ..models.user import UserDoc
-from ..schemas.alert import AlertCreate
+from ..schemas.alert import AlertCreate, AlertOut
 from ..schemas.event import GacaEvent, RunCompleted, RunFailed
+from . import artifact_refs
 from . import auth as auth_service
 from . import push as push_service
 from . import runs as run_service
@@ -108,6 +110,20 @@ async def create(user_id: str, payload: AlertCreate) -> tuple[AlertDoc, bool]:
         severity=alert.severity,
     )
     return alert, True
+
+
+async def to_out(user_id: str, alerts: list[AlertDoc]) -> list[AlertOut]:
+    """Alerts in the client shape: effective status derived, and each `artifact_id`
+    resolved to its chip — one artifact query for the whole list."""
+    refs = await artifact_refs.resolve(user_id, {a.artifact_id: None for a in alerts if a.artifact_id})
+    return [
+        AlertOut(
+            **a.model_dump(),
+            effective_status=effective_status(a),
+            artifact=refs.get(a.artifact_id) if a.artifact_id else None,
+        )
+        for a in alerts
+    ]
 
 
 async def get(user_id: str, alert_id: str) -> AlertDoc:
@@ -275,6 +291,39 @@ async def delegate(
 
     await run_service.start_turn(backend, session.id, prompt, on_settled=_on_settled)
     return updated
+
+
+MANUAL_DELEGATION_KIND = "manual.delegation"
+_TITLE_MAX = 120
+
+
+async def delegate_new(
+    user: UserDoc, instruction: str, *, crew: str | None = None, source: str = "app"
+) -> AlertDoc:
+    """Raise an alert for something the user asked for (rather than something an agent
+    noticed) and delegate it straight away — the app's "New delegation" screen.
+
+    It's an ordinary alert so the result lands where every delegation's does: the run
+    settles it (`completed` with the reply, or back to `new` on failure). Titled with the
+    instruction's first line; attributed to the crew member handling it, since
+    delegate() never writes the resolved crew back onto the alert and the inbox's crew
+    filter goes by this field. Who handles it — and that they're reachable — is checked
+    before anything is stored, so a bad `crew` never leaves an orphan alert behind.
+    """
+    crew_member = auth_service.resolve_crew_for_delegate(user, crew, None)
+    auth_service.backend_for_crew(user, crew_member)  # raises if there's no agent to reach
+    title = re.split(r"\r\n|\r|\n", instruction, maxsplit=1)[0][:_TITLE_MAX]
+    alert, _ = await create(
+        user.id,
+        AlertCreate(
+            kind=MANUAL_DELEGATION_KIND,
+            title=title,
+            body=instruction,
+            crew=crew_member.name,
+            source=source,
+        ),
+    )
+    return await delegate(user, alert.id, instruction=instruction, crew=crew_member.name)
 
 
 async def take_to_chat(
