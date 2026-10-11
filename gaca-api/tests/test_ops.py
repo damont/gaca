@@ -25,9 +25,9 @@ SKILLS = Path(__file__).resolve().parents[2] / "skills"
 
 class FakeShell(Shell):
     def __init__(self, *, euid=1000, tty=False, sudo_n=True, unit_active="active", restart_ok=True, api=200, public=200,
-                 hermes="v0.21.5", gateway=200):
+                 hermes="v0.21.5", gateway=200, linger="yes"):
         self._euid, self._tty, self.sudo_n, self.unit_active, self.restart_ok = euid, tty, sudo_n, unit_active, restart_ok
-        self.api, self.public, self.hermes, self.gateway = api, public, hermes, gateway
+        self.api, self.public, self.hermes, self.gateway, self.linger = api, public, hermes, gateway, linger
         self.calls, self.sleeps = [], 0
 
     def run(self, argv, *, timeout=120, env=None, inherit=False):
@@ -35,6 +35,8 @@ class FakeShell(Shell):
         rc, out = 0, ""
         if argv[:3] == ["sudo", "-n", "systemctl"] or (argv[:1] == ["sudo"] and argv[1:2] == ["systemctl"]):
             rc = 0 if (self.sudo_n or inherit) and self.restart_ok else 1
+        elif argv[:2] == ["loginctl", "show-user"]:
+            out = f"Linger={self.linger}\n"
         elif "is-active" in argv:
             out = self.unit_active + "\n"
             rc = 0 if self.unit_active == "active" else 3
@@ -568,3 +570,12 @@ def test_backup_leaves_the_live_database_and_its_wal_untouched(box, tmp_path):
     assert sqlite3.connect(target).execute("SELECT COUNT(*) FROM t").fetchone()[0] == 101  # includes what is only in the WAL
     assert (db.read_bytes(), wal.read_bytes()) == before
     live.close()
+
+
+def test_doctor_notes_when_lingering_is_off_but_does_not_fail_for_it(box, tmp_path, monkeypatch):
+    build_healthy_box(box, tmp_path, monkeypatch)
+    monkeypatch.setenv("USER", "ronna")
+    code, out = run_doctor(box, FakeShell(linger="no"))
+    assert code == 0 and "lingering is off" in out and "sudo loginctl enable-linger ronna" in out
+    code, out = run_doctor(box, FakeShell(linger="yes"))
+    assert code == 0 and "lingering is off" not in out

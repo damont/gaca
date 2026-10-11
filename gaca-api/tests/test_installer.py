@@ -486,7 +486,7 @@ def test_a_disabled_api_server_gets_the_exact_lines_to_add_and_never_echoes_a_ke
     assert run_mod.run(flow, FakeShell(hermes="v0.21.5")) == run_mod.EXIT_NEEDS_HERMES
     out = capsys.readouterr().out
     assert "API server is not switched on" in out and "API_SERVER_ENABLED=true" in out and "API_SERVER_KEY=<your long random string>" in out
-    assert "hermes gateway install" in out and "sk-super-secret" not in out and installed_nothing(flow)
+    assert "hermes gateway install" in out and "enable-linger" in out and "sk-super-secret" not in out and installed_nothing(flow)
 
 
 def test_an_enabled_api_server_without_a_key_is_not_enough(flow, capsys):
@@ -499,7 +499,7 @@ def test_a_gateway_that_is_not_running_is_reported(flow, capsys):
     ready_hermes(flow)
     assert run_mod.run(flow, FakeShell(hermes="v0.21.5", gateway=False)) == run_mod.EXIT_NEEDS_HERMES
     out = capsys.readouterr().out
-    assert "not answering on 127.0.0.1:8642" in out and "systemctl --user start hermes-gateway" in out
+    assert "not answering on 127.0.0.1:8642" in out and "systemctl --user start hermes-gateway" in out and "enable-linger" in out
 
 
 def test_a_custom_gateway_port_is_the_one_that_is_checked(flow, capsys):

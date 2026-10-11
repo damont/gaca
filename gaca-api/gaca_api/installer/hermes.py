@@ -110,6 +110,7 @@ def problems(status: Status, home: Path) -> list[Problem]:
                 "    API_SERVER_KEY=<your long random string>",
                 "Then start or restart Hermes's gateway, usually:",
                 "    hermes gateway install        # once, to run it as a background service",
+                "    sudo loginctl enable-linger $USER   # keeps it running after you log out (needed on a headless machine)",
                 "    systemctl --user restart hermes-gateway",
                 f"More: {DOCS_API_SERVER}",
             ],
@@ -120,6 +121,7 @@ def problems(status: Status, home: Path) -> list[Problem]:
             [
                 "Start it, usually:",
                 "    systemctl --user start hermes-gateway",
+                "(and, so it keeps running after you log out:  sudo loginctl enable-linger $USER)",
                 "(or run `hermes gateway` in a terminal to see why it will not start), then run ./install.sh again.",
             ],
         ))

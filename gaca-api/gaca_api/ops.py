@@ -341,6 +341,11 @@ def doctor(shell: Shell, say: Say, name: str, paths: Paths) -> int:
     else:
         _check_database(report, home, db)
 
+    if shell.which("loginctl"):
+        user = os.environ.get("USER") or paths.home.name
+        if "Linger=no" in (shell.run(["loginctl", "show-user", user, "--property=Linger"]).stdout or ""):
+            report.note("lingering is off, so services that run as you (Hermes's gateway, or GACA in user mode) stop when you log out",
+                        [f"sudo loginctl enable-linger {user}"])
     status = hermes_mod.inspect(shell, home, _hermes_bin(shell))
     found = hermes_mod.problems(status, home)
     if not found:
