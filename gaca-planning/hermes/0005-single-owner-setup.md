@@ -99,3 +99,17 @@ compose files are removed from the repo; the API listens on loopback TCP only (t
 nginx is gone). Production cutover on david-claw: cloudflared on the host network pointing at `http://localhost:41700`
 (Cloudflare dashboard: the public hostname's service changes from `http://nginx:80`). Still to do: SECURITY.md, generic
 (de-personalised) skills, APK release, licence, and the split of private planning material into its own repository.
+
+### Hermes is a requirement (2026-10-11)
+The installer checks, before it changes anything, that Hermes is on the machine and ready: the `hermes` command at
+0.21 or newer, a Hermes home (`hermes setup` makes it), the gateway API server switched on (`API_SERVER_ENABLED`,
+`API_SERVER_KEY`), and the gateway answering. Anything missing stops the install with the exact fix (exit 4; a
+re-run resumes). GACA does not install or configure Hermes itself; `--install-hermes` only runs Hermes's own
+installer, and `hermes setup` (model credentials) is always the person's. `--no-hermes` skips the checks for a
+server-only try-out.
+
+GACA's Hermes skills live in the repo's `skills/` (`gaca`, `gaca-alerts`, `gaca-briefing`, `gaca-lists`,
+`gaca-artifacts`) and are copied into every profile's `skills/gaca/` (provisioning/skill_sync.py): by the installer
+and `gaca-api hermes connect` for all profiles including default, and by the service for a crew member created in
+the app or discovered (named profiles only; `default` is outside the sandbox's write set). A manifest records what
+was written, so a file an agent has edited since is left alone and reported, and an unmodified one follows upstream.

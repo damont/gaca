@@ -3,7 +3,7 @@
 An **artifact** is an HTML page an agent (Hermes) writes, plus the data it keeps. The page is a stateless
 view; its data lives in the API, so the page can be rewritten without losing anything and the agent can
 read and write the same data while the page is closed. The app opens a page in a locked-down web view and
-gives it `window.app` (see `hermes-skill/gaca-artifacts/references/sdk.md`). **The API builds the page and
+gives it `window.app` (see `skills/gaca-artifacts/references/sdk.md`). **The API builds the page and
 performs its calls** (`/page`, `/call` below) — a client only loads HTML and relays messages, so Android,
 iPhone and web behave identically. Authoritative schema:
 `/api/openapi.json`. Everything is scoped to the caller; someone else's id is a 404.

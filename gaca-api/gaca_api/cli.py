@@ -53,7 +53,8 @@ def _parser() -> argparse.ArgumentParser:
     install.add_argument("--hostname", default=None, help="the tunnel's public hostname, e.g. gaca.example.com")
     install.add_argument("--tunnel-token-file", default=None, help="file holding the Cloudflare tunnel token (or set GACA_TUNNEL_TOKEN)")
     install.add_argument("--hermes-home", default=None, help="default: ~/.hermes")
-    install.add_argument("--no-hermes", action="store_true", help="do not look for Hermes on this machine")
+    install.add_argument("--no-hermes", action="store_true", help="skip the Hermes requirements check (the server alone is useless to the app: it needs an agent)")
+    install.add_argument("--install-hermes", action="store_true", help="if Hermes is missing, run its official installer (you still run `hermes setup` yourself)")
     install.add_argument("--no-wait", action="store_true", help="do not wait for you to pair your phone")
     install.add_argument("--yes", action="store_true", help="never ask questions")
 
@@ -195,6 +196,16 @@ async def _hermes_connect(hermes_home: str | None, base_url: str | None, rotate:
         print("Restart Hermes so running agents pick up the new token (e.g. `systemctl --user restart hermes-gateway`).")
     else:
         print("Every profile already has a GACA token; nothing to do. (`--rotate` replaces them.)")
+    print("GACA skills:")
+    for profile, outcome in hermes_connect.install_skills(home).items():
+        if isinstance(outcome, str):
+            print(f"  {profile:12} NOT installed: {outcome}")
+            continue
+        changes = len(outcome.written) + len(outcome.updated)
+        note = f"{changes} file(s) installed or updated" if changes else "up to date"
+        if outcome.left_alone:
+            note += f"; {len(outcome.left_alone)} you or an agent edited were left alone ({', '.join(outcome.left_alone)})"
+        print(f"  {profile:12} {note}")
     return 0
 
 
@@ -238,7 +249,7 @@ def _install(args) -> int:
         repo_root=Path(args.repo_root).resolve(), service=args.service, name=args.name,
         data_dir=maybe(args.data_dir), port=args.port, hostname=args.hostname, tunnel=args.tunnel,
         tunnel_token_file=maybe(args.tunnel_token_file), hermes_home=maybe(args.hermes_home),
-        use_hermes=not args.no_hermes, wait_for_claim=not args.no_wait, yes=args.yes,
+        use_hermes=not args.no_hermes, install_hermes=args.install_hermes, wait_for_claim=not args.no_wait, yes=args.yes,
     ))
 
 

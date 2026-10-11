@@ -2,11 +2,11 @@
 name: gaca-artifacts
 description: Build interactive HTML pages for the user in GACA — a Costco list they can tick off, a trip planner, a tracker, a comparison, a form, a dashboard — that open in their app, keep their data, and that you can read and update later. Use when the user asks for a page, tracker, planner, checklist with custom behavior, or anything that needs buttons, inputs or a layout a chat message can't give; or when you want to show something richer than text in a chat or alert. Not for plain shopping/gift/to-do lists (use gaca-lists).
 license: MIT
-compatibility: Requires network access to GACA and an operator-issued bearer token.
+compatibility: Requires network access to GACA and a GACA API token issued for this agent.
 required_environment_variables:
   - name: GACA_API_TOKEN
-    prompt: GACA agent bearer token
-    help: Generate a token from the Agent tokens section of the GACA profile page.
+    prompt: GACA API token
+    help: Wired in automatically by the GACA installer (run `gaca-api hermes connect` on the server to redo it); nothing to enter by hand.
     required_for: publishing pages and reading or writing their data
 metadata:
   author: GACA
@@ -54,7 +54,7 @@ Pages can call `app.emit(name, payload)` ("checked-out", "picked-friday"). Read 
 ## Showing a page on a chat or an alert
 
 - **Chat:** put the page's `link` in your reply. That's all.
-- **Alert:** post the alert with the field `"artifact_id": "<id>"` (the david-alerts helper passes it through). The alert then shows an "Open page" button. Publishing with `--alert <alert id>` also links the page back to an existing alert.
+- **Alert:** post the alert with the field `"artifact_id": "<id>"` (the gaca-alerts helper passes it through). The alert then shows an "Open page" button. Publishing with `--alert <alert id>` also links the page back to an existing alert.
 
 ## Failures
 

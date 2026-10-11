@@ -7,10 +7,13 @@ local mode, and it is deliberately small:
           .env (only the API_SERVER_* lines are parsed, nothing else leaves
           this module), SOUL.md, profile.yaml, config.yaml (one flag), and
           hermes-agent/hermes_cli/default_soul.py (parsed, never executed).
-  WRITE   only profiles/<name>/.env, atomically (never a symlink target, never `default`):
-            * on create: the profile's API_SERVER_* lines, plus GACA_BASE_URL / GACA_API_TOKEN so
-              its skills can reach GACA with no manual step;
-            * afterwards: ONLY those two GACA_* keys, into a profile that has no GACA token yet.
+  WRITE   only inside profiles/<name>/ (never `default`, never through a symlink):
+            * .env, atomically:
+                - on create: the profile's API_SERVER_* lines, plus GACA_BASE_URL / GACA_API_TOKEN
+                  so its skills can reach GACA with no manual step;
+                - afterwards: ONLY those two GACA_* keys, into a profile that has no GACA token yet;
+            * skills/gaca/: GACA's own Hermes skills, copied from the repo's skills/ directory
+              (provisioning/skill_sync.py: never overwrites a file an agent has edited).
   RUN     `hermes --version` and `hermes profile create <name> --no-alias`.
           Nothing else — `_hermes` refuses any other argv before spawning.
 
@@ -47,6 +50,7 @@ from pathlib import Path
 
 import httpx
 
+from . import skill_sync
 from .base import ProvisioningError
 from .envfile import has_gaca_token, upsert_env
 
@@ -206,8 +210,14 @@ class LocalHermes:
     # Local mode can put a GACA token into a profile's .env (create_profile / write_gaca_env).
     can_wire_gaca = True
 
-    def __init__(self, hermes_home: str | os.PathLike = "~/.hermes", hermes_bin: str = "hermes"):
+    def __init__(
+        self,
+        hermes_home: str | os.PathLike = "~/.hermes",
+        hermes_bin: str = "hermes",
+        skills_source: str | os.PathLike | None = None,
+    ):
         self.home = Path(hermes_home).expanduser()
+        self._skills_source = Path(skills_source).expanduser() if skills_source else skill_sync.default_source()
         self._bin_setting = hermes_bin
         self._bin: Path | None = None
 
@@ -415,6 +425,33 @@ class LocalHermes:
             await asyncio.to_thread(upsert_env, directory / ".env", values)
         except ValueError as error:
             raise LocalError(str(error)) from error
+
+    def _named_profiles(self) -> list[str]:
+        profiles = self._root / "profiles"
+        if profiles.is_symlink() or not profiles.is_dir():
+            return []
+        return [
+            entry.name
+            for entry in sorted(profiles.iterdir())
+            if PROFILE_NAME.fullmatch(entry.name) and not entry.is_symlink() and entry.is_dir()
+        ]
+
+    async def named_profiles(self) -> list[str]:
+        return await asyncio.to_thread(self._named_profiles)
+
+    async def install_skills(self, name: str) -> None:
+        """Copy GACA's Hermes skills into an existing named profile's `skills/gaca/` folder."""
+        if name == "default" or not (isinstance(name, str) and PROFILE_NAME.fullmatch(name)):
+            raise LocalError(f"not a valid profile name: {name!r}")
+        directory = self._profile_dir(name)
+        if directory is None:
+            raise LocalError(f"no profile called {name!r}")
+        try:
+            await asyncio.to_thread(
+                skill_sync.sync, self._skills_source, directory / "skills", create_skills_dir=True
+            )
+        except skill_sync.SkillSyncError as error:
+            raise LocalError(f"installing skills into {name!r} failed: {error}") from error
 
     async def _expects_multiplex(self) -> bool:
         config = _read_regular_file(self._root / "config.yaml", _SOURCE_LIMIT)

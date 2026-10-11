@@ -2,7 +2,7 @@
 
 Lists for anything you keep on a list — shopping (Costco, Home Depot), gifts (Christmas), to-dos.
 Everything needs the normal bearer token and is scoped to that user: someone else's list is a `404`.
-Base: `https://goodandcheapagent.com/api`.
+Base: `https://<your-server>/api`.
 
 The API owns the rules, so the app and any agent behave the same: names are matched **loosely** but never
 **guessed**, and an item can't be on a list twice. There is no sharing between users yet; it will be a

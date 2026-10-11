@@ -2,11 +2,11 @@
 name: gaca-lists
 description: Keep the user's lists in GACA — shopping lists (Costco, Home Depot, groceries), gift and Christmas lists, to-dos. Use whenever the user asks to add, remove, check off or see something on a list, or mentions needing to pick something up or get something later. GACA is where lists live; never keep them in memory or notes.
 license: MIT
-compatibility: Requires network access to GACA and an operator-issued bearer token.
+compatibility: Requires network access to GACA and a GACA API token issued for this agent.
 required_environment_variables:
   - name: GACA_API_TOKEN
-    prompt: GACA agent bearer token
-    help: Generate a token from the Agent tokens section of the GACA profile page.
+    prompt: GACA API token
+    help: Wired in automatically by the GACA installer (run `gaca-api hermes connect` on the server to redo it); nothing to enter by hand.
     required_for: reading and changing the user's lists
 metadata:
   author: GACA

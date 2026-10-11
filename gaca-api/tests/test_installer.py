@@ -28,8 +28,11 @@ REPO = Path(__file__).resolve().parents[2]
 
 class FakeShell(Shell):
     def __init__(self, *, euid=1000, tty=False, sudo_n=False, docker=True, health=True, claimed=lambda: False,
-                 logs="", public_status=200, fail=()):
+                 logs="", public_status=200, fail=(), hermes=None, gateway=True):
+        # `hermes`: the version string `hermes --version` prints, or None for "not installed".
+        # `hermes_after_install`: what appears once the official installer has run.
         self._euid, self._tty, self._sudo_n, self._docker = euid, tty, sudo_n, docker
+        self.hermes, self.gateway, self.hermes_after_install = hermes, gateway, None
         self.health, self.claimed, self.logs, self.public_status, self.fail = health, claimed, logs, public_status, fail
         self.calls, self.sleeps = [], 0
         self.on_sleep = lambda: None
@@ -43,12 +46,19 @@ class FakeShell(Shell):
             rc = 0 if self._docker else 1
         elif argv[:2] == ["docker", "logs"]:
             out = self.logs
+        elif argv[1:2] == ["--version"] and argv[0].endswith("hermes"):
+            out = f"Hermes Agent {self.hermes}\n" if self.hermes else ""
+            rc = 0 if self.hermes else 1
+        elif argv[:2] == ["bash", "-c"] and "hermes-agent.nousresearch.com" in argv[2]:
+            self.hermes = self.hermes_after_install or self.hermes
         elif any(f in " ".join(argv) for f in self.fail):
             rc = 1
         return subprocess.CompletedProcess(argv, rc, out, "boom" if rc else "")
 
     def which(self, name):
-        return f"/usr/bin/{name}" if (name != "docker" or self._docker) and name != "hermes" else None
+        if name == "hermes":
+            return "/usr/bin/hermes" if self.hermes else None
+        return f"/usr/bin/{name}" if (name != "docker" or self._docker) else None
 
     def is_tty(self): return self._tty
     def euid(self): return self._euid
@@ -62,6 +72,8 @@ class FakeShell(Shell):
             return (200, '{"service":"gaca-api"}') if self.health else (0, "")
         if url.endswith("/api/setup"):
             return 200, json.dumps({"claimed": bool(self.claimed())})
+        if url.endswith("/health") and ":8642" in url:
+            return (200, "ok") if self.gateway else (0, "")
         if url.endswith("/api/health"):
             return self.public_status, '{"service":"gaca-api"}' if self.public_status == 200 else ""
         return 0, ""
@@ -286,7 +298,8 @@ def flow(tmp_path, monkeypatch):
     (tmp_path / "home").mkdir()
     monkeypatch.setattr(settings, "db_path", str(tmp_path / "data" / "gaca.db"))
     return Options(repo_root=repo, data_dir=tmp_path / "data", hermes_home=tmp_path / "home" / ".hermes",
-                   config_dir=tmp_path / "home" / ".config" / "gaca", tunnel="none", wait_for_claim=False, yes=True)
+                   config_dir=tmp_path / "home" / ".config" / "gaca", tunnel="none", wait_for_claim=False, yes=True,
+                   use_hermes=False)  # the Hermes requirements have their own tests, below
 
 
 def test_a_fresh_install_issues_a_pairing_code_and_pairs_nothing(flow, capsys):
@@ -331,10 +344,10 @@ def test_a_server_with_a_paired_phone_is_not_given_a_new_code(flow, capsys):
 
 def test_the_installer_waits_for_the_first_pairing_then_wires_hermes(flow, capsys):
     (flow.hermes_home / "profiles" / "toolshed").mkdir(parents=True)
-    (flow.hermes_home / ".env").write_text("OPENAI_API_KEY=keep\n")
-    flow.service, flow.wait_for_claim = "user", True
+    (flow.hermes_home / ".env").write_text("OPENAI_API_KEY=keep\nAPI_SERVER_ENABLED=true\nAPI_SERVER_KEY=" + "k" * 32 + "\n")
+    flow.service, flow.wait_for_claim, flow.use_hermes = "user", True, True
     state = {"claimed": False}
-    shell = FakeShell(claimed=lambda: state["claimed"])
+    shell = FakeShell(claimed=lambda: state["claimed"], hermes="v0.21.5")
 
     def someone_pairs_in_the_app():
         async def create():
@@ -426,3 +439,142 @@ def test_the_public_address_is_saved_so_pair_can_put_it_in_the_qr_code(flow, mon
     monkeypatch.setattr(run_mod, "setup_tunnel", lambda opts, shell, say: "https://gaca.example.com")
     assert run_mod.run(flow, FakeShell()) == 0
     assert read_env(flow.repo_root / ".env")["GACA_PUBLIC_URL"] == "https://gaca.example.com"
+
+
+# ── Hermes is required, and GACA says what is missing ────────────────
+
+def ready_hermes(flow, **env_over):
+    flow.hermes_home.mkdir(parents=True, exist_ok=True)
+    env = {"API_SERVER_ENABLED": "true", "API_SERVER_KEY": "k" * 32, **env_over}
+    (flow.hermes_home / ".env").write_text("".join(f"{k}={v}\n" for k, v in env.items() if v is not None))
+    flow.use_hermes = True
+    flow.service = "user"
+
+
+def installed_nothing(flow):
+    return not (flow.repo_root / ".env").exists() and not (flow.config_dir / "install-service.sh").exists()
+
+
+def test_without_hermes_the_install_stops_first_and_says_how_to_get_it(flow, capsys):
+    flow.use_hermes, flow.service = True, "user"
+    shell = FakeShell()
+    assert run_mod.run(flow, shell) == run_mod.EXIT_NEEDS_HERMES
+    out = capsys.readouterr().out
+    assert "Hermes is not installed" in out and "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash" in out
+    assert "hermes setup" in out and "run ./install.sh again" in out
+    assert installed_nothing(flow) and not shell.called("systemctl")  # nothing was set up before the requirement was met
+
+
+def test_an_old_hermes_is_refused_with_the_version_it_found(flow, capsys):
+    ready_hermes(flow)
+    assert run_mod.run(flow, FakeShell(hermes="v0.20.3")) == run_mod.EXIT_NEEDS_HERMES
+    out = capsys.readouterr().out
+    assert "0.21 or newer (found 0.20.3)" in out and installed_nothing(flow)
+
+
+def test_a_hermes_that_was_never_set_up_is_told_to_run_hermes_setup(flow, capsys):
+    flow.use_hermes, flow.service = True, "user"
+    assert not flow.hermes_home.exists()
+    assert run_mod.run(flow, FakeShell(hermes="v0.21.5")) == run_mod.EXIT_NEEDS_HERMES
+    out = capsys.readouterr().out
+    assert "has not been set up yet" in out and "hermes setup" in out and installed_nothing(flow)
+
+
+def test_a_disabled_api_server_gets_the_exact_lines_to_add_and_never_echoes_a_key(flow, capsys):
+    ready_hermes(flow, API_SERVER_ENABLED=None, API_SERVER_KEY=None)
+    (flow.hermes_home / ".env").write_text("OPENAI_API_KEY=sk-super-secret\n")
+    assert run_mod.run(flow, FakeShell(hermes="v0.21.5")) == run_mod.EXIT_NEEDS_HERMES
+    out = capsys.readouterr().out
+    assert "API server is not switched on" in out and "API_SERVER_ENABLED=true" in out and "API_SERVER_KEY=<your long random string>" in out
+    assert "hermes gateway install" in out and "sk-super-secret" not in out and installed_nothing(flow)
+
+
+def test_an_enabled_api_server_without_a_key_is_not_enough(flow, capsys):
+    ready_hermes(flow, API_SERVER_KEY="")
+    assert run_mod.run(flow, FakeShell(hermes="v0.21.5")) == run_mod.EXIT_NEEDS_HERMES
+    assert "API server is not switched on" in capsys.readouterr().out
+
+
+def test_a_gateway_that_is_not_running_is_reported(flow, capsys):
+    ready_hermes(flow)
+    assert run_mod.run(flow, FakeShell(hermes="v0.21.5", gateway=False)) == run_mod.EXIT_NEEDS_HERMES
+    out = capsys.readouterr().out
+    assert "not answering on 127.0.0.1:8642" in out and "systemctl --user start hermes-gateway" in out
+
+
+def test_a_custom_gateway_port_is_the_one_that_is_checked(flow, capsys):
+    ready_hermes(flow, API_SERVER_PORT="9000")
+    shell = FakeShell(hermes="v0.21.5")
+    original = shell.http_get
+    shell.http_get = lambda url, timeout=8: (200, "ok") if url == "http://127.0.0.1:9000/health" else original(url, timeout)
+    assert run_mod.run(flow, shell) == 0
+    assert "answers on 127.0.0.1:9000" in capsys.readouterr().out
+
+
+def test_a_ready_hermes_passes_and_gets_the_skills(flow, capsys):
+    (flow.hermes_home / "profiles" / "research").mkdir(parents=True)
+    ready_hermes(flow)
+    assert run_mod.run(flow, FakeShell(hermes="v0.21.5")) == 0
+    out = capsys.readouterr().out
+    assert "Hermes 0.21.5 is installed and its gateway answers" in out
+    for place in (flow.hermes_home / "skills" / "gaca", flow.hermes_home / "profiles" / "research" / "skills" / "gaca"):
+        assert (place / "gaca-alerts" / "SKILL.md").is_file() and (place / "gaca-briefing" / "scripts" / "briefing.py").is_file()
+    assert "installed the GACA skills into Hermes profile 'default'" in out and "'research'" in out
+
+
+def test_a_second_run_leaves_skills_alone_and_says_so(flow, capsys):
+    ready_hermes(flow)
+    run_mod.run(flow, FakeShell(hermes="v0.21.5"))
+    capsys.readouterr()
+    mine = flow.hermes_home / "skills" / "gaca" / "gaca-alerts" / "SKILL.md"
+    mine.write_text("agent edit")
+    run_mod.run(flow, FakeShell(hermes="v0.21.5"))
+    assert mine.read_text() == "agent edit"
+    assert "edited were left alone" in capsys.readouterr().out
+
+
+def test_install_hermes_runs_only_its_official_installer_then_still_asks_for_setup(flow, capsys):
+    flow.use_hermes, flow.service, flow.install_hermes = True, "user", True
+    shell = FakeShell()
+    shell.hermes_after_install = "v0.21.5"
+    assert run_mod.run(flow, shell) == run_mod.EXIT_NEEDS_HERMES  # installed, but never set up
+    out = capsys.readouterr().out
+    assert [c for c in shell.called("bash", "-c")][0][2] == "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash"
+    assert "hermes setup" in out and installed_nothing(flow)
+
+
+def test_install_hermes_carries_on_when_the_install_leaves_everything_ready(flow, capsys):
+    ready_hermes(flow)
+    flow.install_hermes = True
+    shell = FakeShell()  # not installed yet; the installer makes it so
+    shell.hermes_after_install = "v0.21.5"
+    assert run_mod.run(flow, shell) == 0
+    assert shell.called("bash", "-c") and "Hermes 0.21.5 is installed" in capsys.readouterr().out
+
+
+def test_without_the_flag_nothing_third_party_runs(flow, capsys):
+    flow.use_hermes, flow.service = True, "user"
+    shell = FakeShell()
+    assert run_mod.run(flow, shell) == run_mod.EXIT_NEEDS_HERMES
+    assert not shell.called("bash", "-c")
+
+
+def test_at_a_terminal_it_asks_before_running_the_hermes_installer(flow, capsys, monkeypatch):
+    flow.use_hermes, flow.service, flow.yes = True, "user", False
+    answers = iter(["n"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    shell = FakeShell(tty=True)
+    assert run_mod.run(flow, shell) == run_mod.EXIT_NEEDS_HERMES
+    assert not shell.called("bash", "-c")  # said no
+    answers = iter(["y"])
+    shell = FakeShell(tty=True)
+    shell.hermes_after_install = "v0.21.5"
+    run_mod.run(flow, shell)
+    assert shell.called("bash", "-c")  # said yes
+
+
+def test_no_hermes_skips_the_checks_but_says_what_that_costs(flow, capsys):
+    flow.use_hermes, flow.service = False, "user"
+    assert run_mod.run(flow, FakeShell()) == 0
+    out = capsys.readouterr().out
+    assert "skipping the Hermes checks" in out and "no agent to talk to" in out

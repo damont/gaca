@@ -579,7 +579,7 @@ installed:** authenticates against `goodandcheapagent.com`
 with `suggested_actions`, delegate it, watch Hermes post a confirming
 follow-up alert — has been proven twice.
 
-Canonical copy lives in the repo at `gaca-planning/alerts/hermes-skill/SKILL.md`;
+Canonical copy lives in the repo at `skills/gaca-alerts/SKILL.md`;
 installed to `~/.hermes/skills/gaca/gaca-alerts/SKILL.md`.
 
 **Format — copy the live install, not the bundled skills.** David's Hermes is

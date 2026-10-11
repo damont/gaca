@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small, dependency-free GACA API client for the david-alerts skill."""
+"""Small, dependency-free GACA API client for the gaca-alerts skill."""
 
 from __future__ import annotations
 

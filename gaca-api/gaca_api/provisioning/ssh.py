@@ -392,3 +392,9 @@ class SshProvisioner:
 
     async def write_gaca_env(self, name: str, values: dict[str, str]) -> None:
         raise ProvisioningError("wiring GACA tokens is only supported in local mode")
+
+    async def named_profiles(self) -> list[str]:
+        return []
+
+    async def install_skills(self, name: str) -> None:
+        raise ProvisioningError("installing GACA skills is only supported in local mode")

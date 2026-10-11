@@ -3,7 +3,7 @@
 A briefing is one day's digest, assembled from independent **sections**. Each
 source (calendar, weather, news, sports…) PUTs its own section; the app reads
 the assembled day. All routes need the normal bearer token and are scoped to
-that user. Base: `https://goodandcheapagent.com/api`.
+that user. Base: `https://<your-server>/api`.
 
 | Method | Path | Purpose |
 |---|---|---|
