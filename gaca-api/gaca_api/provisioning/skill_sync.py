@@ -169,14 +169,18 @@ def _write_atomic(path: Path, data: bytes, mode: int) -> None:
         raise
 
 
-def sync(source: Path, skills_dir: Path, *, create_skills_dir: bool = False) -> SyncResult:
+def sync(source: Path, skills_dir: Path, *, create_skills_dir: bool = False, dry_run: bool = False) -> SyncResult:
     """Install the skills under `source` into `<skills_dir>/gaca/`. `skills_dir` is a Hermes
     profile's own skills folder: it must already exist unless `create_skills_dir` (a profile that
-    was only just made may not have one yet)."""
+    was only just made may not have one yet). `dry_run` reports what would change and writes nothing."""
     wanted = read_source(source)
-    _real_dir(skills_dir, create=create_skills_dir)
+    if dry_run and not skills_dir.exists():
+        return SyncResult(written=list(wanted))
+    _real_dir(skills_dir, create=create_skills_dir and not dry_run)
     root = skills_dir / CATEGORY
-    _real_dir(root, create=True)
+    if dry_run and not root.exists():
+        return SyncResult(written=list(wanted))
+    _real_dir(root, create=not dry_run)
     manifest = _read_manifest(root)
     result = SyncResult()
     recorded: dict[str, str] = {}
@@ -186,18 +190,22 @@ def sync(source: Path, skills_dir: Path, *, create_skills_dir: bool = False) -> 
         folder = root
         for part in Path(relative).parent.parts:
             folder = folder / part
-            _real_dir(folder, create=True)
+            if dry_run and not folder.exists():
+                break
+            _real_dir(folder, create=not dry_run)
         desired = _sha(data)
-        current = _current_hash(target)
+        current = _current_hash(target) if (not dry_run or folder.exists()) and (not dry_run or target.exists()) else None
         if current is None:
-            _write_atomic(target, data, mode)
+            if not dry_run:
+                _write_atomic(target, data, mode)
             result.written.append(relative)
             recorded[relative] = desired
         elif current == desired:
             result.unchanged += 1
             recorded[relative] = desired
         elif manifest.get(relative) == current:  # untouched since we put it there: safe to update
-            _write_atomic(target, data, mode)
+            if not dry_run:
+                _write_atomic(target, data, mode)
             result.updated.append(relative)
             recorded[relative] = desired
         else:  # edited since (or never ours): leave it, and keep remembering what we last wrote
@@ -216,11 +224,13 @@ def sync(source: Path, skills_dir: Path, *, create_skills_dir: bool = False) -> 
         if current is None:
             continue
         if current == old_hash:
-            os.unlink(target)
+            if not dry_run:
+                os.unlink(target)
             result.removed.append(relative)
         else:
             result.left_alone.append(relative)
             recorded[relative] = old_hash
 
-    _write_atomic(root / MANIFEST, json.dumps({"files": recorded}, indent=2, sort_keys=True).encode(), 0o644)
+    if not dry_run:
+        _write_atomic(root / MANIFEST, json.dumps({"files": recorded}, indent=2, sort_keys=True).encode(), 0o644)
     return result

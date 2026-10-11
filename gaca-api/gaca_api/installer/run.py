@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 
 from ..config import settings
 from . import hermes as hermes_mod
+from . import push as push_mod
 from . import tunnel as tunnel_mod
 from .envconfig import ensure_env
 from ..provisioning import hermes_connect
@@ -39,6 +40,14 @@ class Options:
     hermes_home: Path | None = None
     use_hermes: bool = True
     install_hermes: bool = False
+    # Push notifications (all optional; see installer/push.py). With none of these and no terminal
+    # to ask on, push is simply left off.
+    no_push: bool = False
+    fcm_credentials: Path | None = None
+    apns_key: Path | None = None
+    apns_key_id: str | None = None
+    apns_team_id: str | None = None
+    apns_topic: str | None = None
     config_dir: Path | None = None
     wait_for_claim: bool = True
     claim_wait_seconds: int = 3600
@@ -117,6 +126,145 @@ def install_hermes_skills(opts: Options, say: Say) -> None:
             say.ok(f"installed the GACA skills into Hermes profile {profile!r}")
         elif not outcome.left_alone:
             say.ok(f"GACA skills already up to date in Hermes profile {profile!r}")
+
+
+def _ask(prompt: str) -> str:
+    return input(prompt).strip()
+
+
+def _ask_valid(prompt: str, check, say: Say, *, attempts: int = 3):
+    """Ask until `check(answer)` accepts it (it returns the cleaned value or raises PushSetupError).
+    A blank answer, or too many wrong ones, gives up: None."""
+    for _ in range(attempts):
+        answer = _ask(prompt)
+        if not answer:
+            return None
+        try:
+            return check(answer)
+        except push_mod.PushSetupError as error:
+            say.warn(str(error))
+    return None
+
+
+def setup_push(opts: Options, shell: Shell, say: Say) -> None:
+    """Optional Android (Firebase) and iPhone (APNs) push, from flags or by asking at a terminal."""
+    if opts.no_push:
+        say.note("push notifications skipped (--no-push)")
+        return
+    env_file = opts.repo_root / ".env"
+    directory = push_mod.secrets_dir(opts.config_dir)
+    env = push_mod.read_env(env_file)
+    interactive = shell.is_tty() and not opts.yes
+    explained = False
+
+    def explain() -> None:
+        nonlocal explained
+        if not explained:
+            for line in push_mod.EXPLAIN:
+                say.note(line)
+            explained = True
+
+    try:
+        # ── Android ──
+        if opts.fcm_credentials:
+            project = push_mod.setup_android(env_file, directory, opts.fcm_credentials)
+            say.ok(f"Android push is set up (Firebase project {project})")
+        elif push_mod.android_ready(env):
+            say.ok("Android push is already set up")
+        elif interactive:
+            explain()
+            if _ask("Set up push notifications for Android? [y/N] ").lower().startswith("y"):
+                say.note("In the Firebase console: Project settings > Service accounts > Generate new private key.")
+                say.note("It must be the same Firebase project your app was built with (its google-services.json).")
+                project = _ask_valid("Path to the downloaded key file (blank to skip): ",
+                                     lambda a: (push_mod.check_fcm(Path(a)), a)[1], say)
+                if project:
+                    say.ok(f"Android push is set up (Firebase project {push_mod.setup_android(env_file, directory, Path(project))})")
+                else:
+                    say.note("Android push skipped")
+
+        # ── iPhone ──
+        flags = (opts.apns_key, opts.apns_key_id, opts.apns_team_id, opts.apns_topic)
+        if any(flags):
+            if not all(flags):
+                raise RuntimeError("iPhone push needs --apns-key, --apns-key-id, --apns-team-id and --apns-topic together")
+            push_mod.setup_ios(env_file, directory, opts.apns_key, opts.apns_key_id, opts.apns_team_id, opts.apns_topic)
+            say.ok("iPhone push is set up")
+        elif push_mod.ios_ready(env):
+            say.ok("iPhone push is already set up")
+        elif interactive:
+            explain()
+            if _ask("Set up push notifications for iPhone? [y/N] ").lower().startswith("y"):
+                say.note("From the Apple Developer portal: a Key with the Apple Push Notifications service enabled (a .p8 file),")
+                say.note("its Key ID, your Team ID, and the bundle id of the app you built.")
+                key = _ask_valid("Path to the .p8 key file (blank to skip): ",
+                                 lambda a: (push_mod.check_apns_key(Path(a)), a)[1], say)
+                key_id = key and _ask_valid("Key ID (10 characters): ", lambda a: push_mod.check_apple_id(a, "key id"), say)
+                team_id = key_id and _ask_valid("Team ID (10 characters): ", lambda a: push_mod.check_apple_id(a, "team id"), say)
+                bundle = team_id and _ask_valid("The app's bundle id (like com.example.gaca): ", push_mod.check_bundle_id, say)
+                if bundle:
+                    push_mod.setup_ios(env_file, directory, Path(key), key_id, team_id, bundle)
+                    say.ok("iPhone push is set up")
+                else:
+                    say.note("iPhone push skipped")
+    except push_mod.PushSetupError as error:
+        raise RuntimeError(f"push notification setup failed: {error}") from None
+
+    env = push_mod.read_env(env_file)
+    if not (push_mod.android_ready(env) or push_mod.ios_ready(env)):
+        say.note("push notifications are off: alerts show in the app when it is open. To add push later, run ./install.sh again")
+
+
+_PATH_MARK = "# gaca installer: put ~/.local/bin on the PATH (where the `gaca-api` command lives)"
+
+
+def ensure_on_path(say: Say) -> None:
+    """Make sure new shells find ~/.local/bin: append one guarded line to the login shell's startup file.
+
+    Only appends (nothing existing is rewritten), only once, and never through a symlink (a dotfile
+    manager's file is the user's to edit: the line is printed instead). If the file already mentions
+    ~/.local/bin (the uv installer, Ubuntu's defaults and many people's own setup do), it is left alone.
+    """
+    home = Path.home()
+    shell_name = Path(os.environ.get("SHELL", "")).name
+    if shell_name == "fish":
+        rc, line = home / ".config" / "fish" / "config.fish", "fish_add_path -g $HOME/.local/bin"
+    else:
+        name = ".zshrc" if shell_name == "zsh" else ".bashrc" if shell_name == "bash" else ".profile"
+        rc = home / name
+        line = 'case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac'
+    existing = rc.read_text(errors="replace") if rc.exists() else ""
+    if _PATH_MARK in existing or ".local/bin" in existing:
+        say.ok(f"~/.local/bin is already set up on your PATH ({rc})")
+        return
+    if rc.is_symlink():
+        say.warn(f"{rc} is a symlink, so it was not edited. Add this line to it yourself:")
+        say.note(f"    {line}")
+        return
+    rc.parent.mkdir(parents=True, exist_ok=True)
+    with open(rc, "a") as handle:
+        handle.write(f"\n{_PATH_MARK}\n{line}\n")
+    say.ok(f"added ~/.local/bin to your PATH in {rc}")
+    say.note(f"open a new shell (or run `source {rc}`) and `gaca-api` will be found")
+
+
+def link_cli(opts: Options, say: Say) -> None:
+    """Put `gaca-api` on the PATH (~/.local/bin) so every command works from any directory."""
+    target = opts.repo_root / "gaca-api" / ".venv" / "bin" / "gaca-api"
+    if not target.exists():
+        return
+    bin_dir = Path.home() / ".local" / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    link = bin_dir / "gaca-api"
+    if link.is_symlink() and Path(os.readlink(link)) == target:
+        pass
+    elif link.exists() or link.is_symlink():
+        say.warn(f"{link} already exists and is not this install's, so it was left alone; use {target} instead")
+        return
+    else:
+        link.symlink_to(target)
+    say.ok(f"`gaca-api` is available as {link}")
+    ensure_on_path(say)
 
 
 def choose_service(opts: Options, shell: Shell) -> str:
@@ -322,6 +470,9 @@ def run(opts: Options, shell: Shell | None = None, out=print) -> int:
         opts.data_dir.mkdir(parents=True, exist_ok=True)
         os.chmod(opts.data_dir, 0o700)
 
+        say.step("Push notifications")
+        setup_push(opts, shell, say)
+
         say.step("Service")
         mode = choose_service(opts, shell)
         install_service(opts, shell, say, mode)
@@ -364,7 +515,11 @@ def run(opts: Options, shell: Shell | None = None, out=print) -> int:
         else:
             say.note("after your phone is paired, run `gaca-api hermes connect` if you use Hermes on this machine")
         say.step("Done")
-        say.note(f"logs:    journalctl -u {opts.name}" + ("  (--user)" if mode == "user" else ""))
+        link_cli(opts, say)
+        say.note("check:   gaca-api doctor       (is everything working, and how to fix what is not)")
+        say.note("phones:  gaca-api pair         (add another phone)    gaca-api device list|revoke")
+        say.note("push:    gaca-api push android|ios   (set up or change push notifications)")
+        say.note("service: gaca-api service status|restart|logs      backup: gaca-api backup")
         say.note("update:  git pull && ./install.sh   (keeps your secrets and data)")
         return 0
     except NeedsRoot as needed:
@@ -423,6 +578,11 @@ echo "{opts.name} removed"
         else:
             say.note("Docker is not available here; if a tunnel container is running, remove it yourself")
 
+        link = Path.home() / ".local" / "bin" / "gaca-api"
+        if link.is_symlink() and Path(os.readlink(link)) == opts.repo_root / "gaca-api" / ".venv" / "bin" / "gaca-api":
+            link.unlink()
+            say.ok("removed the `gaca-api` command from ~/.local/bin")
+
         if purge:
             say.step("Data")
             import shutil
@@ -430,6 +590,10 @@ echo "{opts.name} removed"
             if opts.data_dir.exists():
                 shutil.rmtree(opts.data_dir)
                 say.ok(f"deleted {opts.data_dir} (the database, with your chats and paired phones)")
+            secrets = push_mod.secrets_dir(opts.config_dir)
+            if secrets.exists():
+                shutil.rmtree(secrets)
+                say.ok(f"deleted {secrets} (push notification keys)")
             env_file = opts.repo_root / ".env"
             if env_file.exists():
                 env_file.unlink()

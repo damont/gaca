@@ -66,3 +66,40 @@ def upsert_env(path: Path, values: dict[str, str]) -> None:
         except OSError:
             pass
         raise
+
+
+def read_value(path: Path, key: str) -> str | None:
+    """The value of `key` in the file (surrounding quotes dropped), or None if absent."""
+    for line in read_text(path).splitlines():
+        name, sep, value = line.partition("=")
+        if sep and name.strip() == key:
+            return value.strip().strip("'\"")
+    return None
+
+
+def remove_env(path: Path, keys: list[str]) -> list[str]:
+    """Delete these keys' lines (every other line is left exactly as it was), atomically and 0600.
+    Returns the keys that were actually present."""
+    present = []
+    lines = []
+    for line in read_text(path).splitlines():
+        name = line.split("=", 1)[0].strip() if "=" in line else None
+        if name in keys:
+            if name not in present:
+                present.append(name)
+            continue
+        lines.append(line)
+    if present:
+        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".env.")
+        try:
+            with os.fdopen(fd, "w") as handle:
+                handle.write("\n".join(lines) + ("\n" if lines else ""))
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+    return present

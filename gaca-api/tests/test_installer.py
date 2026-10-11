@@ -578,3 +578,314 @@ def test_no_hermes_skips_the_checks_but_says_what_that_costs(flow, capsys):
     assert run_mod.run(flow, FakeShell()) == 0
     out = capsys.readouterr().out
     assert "skipping the Hermes checks" in out and "no agent to talk to" in out
+
+
+# ── push notifications (optional, asked about at setup) ──────────────
+
+import json as _json
+
+from gaca_api.installer import push as push_mod
+
+PEM = "-----BEGIN PRIVATE KEY-----\nMIGTAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBHkwdwIBAQQg\n-----END PRIVATE KEY-----\n"
+
+
+def fcm_key(tmp_path, **over):
+    data = {"type": "service_account", "project_id": "my-gaca", "client_email": "svc@my-gaca.iam.gserviceaccount.com",
+            "private_key": PEM, **over}
+    path = tmp_path / "firebase.json"
+    path.write_text(_json.dumps({k: v for k, v in data.items() if v is not None}))
+    return path
+
+
+def p8_key(tmp_path, text=PEM):
+    path = tmp_path / "AuthKey_ABC123DEFG.p8"
+    path.write_text(text)
+    return path
+
+
+def push_env(flow):
+    return read_env(flow.repo_root / ".env")
+
+
+def ask_with(monkeypatch, *answers):
+    """Feed `input()` these answers; any question beyond them fails the test."""
+    supply = iter(answers)
+    asked = []
+
+    def fake(prompt=""):
+        asked.append(prompt)
+        return next(supply)
+    monkeypatch.setattr("builtins.input", fake)
+    return asked
+
+
+def test_android_push_from_a_flag_installs_the_key_privately_and_points_env_at_it(flow, tmp_path, capsys):
+    flow.service, flow.fcm_credentials = "user", fcm_key(tmp_path)
+    assert run_mod.run(flow, FakeShell()) == 0
+    secret = flow.config_dir / "secrets" / "fcm-service-account.json"
+    assert push_env(flow)["GACA_FCM_CREDENTIALS_PATH"] == str(secret)
+    assert stat.S_IMODE(secret.stat().st_mode) == 0o600 and stat.S_IMODE(secret.parent.stat().st_mode) == 0o700
+    out = capsys.readouterr().out
+    assert "Android push is set up (Firebase project my-gaca)" in out
+    assert "MIGTAgEAMBMG" not in out  # the key is never printed
+
+
+def test_iphone_push_from_flags_writes_all_four_settings(flow, tmp_path, capsys):
+    flow.service = "user"
+    flow.apns_key, flow.apns_key_id, flow.apns_team_id, flow.apns_topic = p8_key(tmp_path), "abc123defg", "TEAM123456", "com.example.gaca"
+    assert run_mod.run(flow, FakeShell()) == 0
+    env = push_env(flow)
+    secret = flow.config_dir / "secrets" / "apns-key.p8"
+    assert env["GACA_APNS_KEY_PATH"] == str(secret) and env["GACA_APNS_KEY_ID"] == "ABC123DEFG"
+    assert env["GACA_APNS_TEAM_ID"] == "TEAM123456" and env["GACA_APNS_TOPIC"] == "com.example.gaca"
+    assert stat.S_IMODE(secret.stat().st_mode) == 0o600
+    out = capsys.readouterr().out
+    assert "iPhone push is set up" in out and "MIGTAgEAMBMG" not in out
+
+
+def test_both_platforms_can_be_set_up_together(flow, tmp_path):
+    flow.service, flow.fcm_credentials = "user", fcm_key(tmp_path)
+    flow.apns_key, flow.apns_key_id, flow.apns_team_id, flow.apns_topic = p8_key(tmp_path), "ABC123DEFG", "TEAM123456", "com.example.gaca"
+    assert run_mod.run(flow, FakeShell()) == 0
+    env = push_env(flow)
+    assert "GACA_FCM_CREDENTIALS_PATH" in env and "GACA_APNS_KEY_PATH" in env
+
+
+def test_a_bad_android_key_fails_the_install_with_a_reason_and_installs_nothing(flow, tmp_path, capsys):
+    flow.service, flow.fcm_credentials = "user", fcm_key(tmp_path, type="authorized_user")
+    assert run_mod.run(flow, FakeShell()) == run_mod.EXIT_FAILED
+    out = capsys.readouterr().out
+    assert "push notification setup failed" in out and "service_account" in out
+    assert not (flow.config_dir / "secrets").exists() and "GACA_FCM_CREDENTIALS_PATH" not in push_env(flow)
+
+
+def test_partial_iphone_flags_are_refused(flow, tmp_path, capsys):
+    flow.service, flow.apns_key, flow.apns_key_id = "user", p8_key(tmp_path), "ABC123DEFG"
+    assert run_mod.run(flow, FakeShell()) == run_mod.EXIT_FAILED
+    assert "together" in capsys.readouterr().out and not (flow.config_dir / "secrets").exists()
+
+
+def test_at_a_terminal_it_asks_per_platform_and_says_whose_account_it_must_be(flow, tmp_path, monkeypatch, capsys):
+    flow.service, flow.yes = "user", False
+    asked = ask_with(monkeypatch, "y", str(fcm_key(tmp_path)), "y", str(p8_key(tmp_path)), "abc123defg", "TEAM123456", "com.example.gaca")
+    assert run_mod.run(flow, FakeShell(tty=True)) == 0
+    env, out = push_env(flow), capsys.readouterr().out
+    assert env["GACA_FCM_CREDENTIALS_PATH"].endswith("fcm-service-account.json") and env["GACA_APNS_TOPIC"] == "com.example.gaca"
+    assert "SAME developer account" in out and "same Firebase project" in out
+    assert asked[0].startswith("Set up push notifications for Android?") and asked[2].startswith("Set up push notifications for iPhone?")
+
+
+def test_the_default_answer_is_no_and_nothing_is_set_up(flow, monkeypatch, capsys):
+    flow.service, flow.yes = "user", False
+    ask_with(monkeypatch, "", "n")
+    assert run_mod.run(flow, FakeShell(tty=True)) == 0
+    env = push_env(flow)
+    assert not any(k.startswith(("GACA_FCM", "GACA_APNS")) for k in env)
+    assert "push notifications are off" in capsys.readouterr().out
+
+
+def test_a_wrong_path_is_reasked_and_a_blank_gives_up(flow, tmp_path, monkeypatch, capsys):
+    flow.service, flow.yes = "user", False
+    ask_with(monkeypatch, "y", str(tmp_path / "nope.json"), str(fcm_key(tmp_path)), "n")
+    assert run_mod.run(flow, FakeShell(tty=True)) == 0
+    out = capsys.readouterr().out
+    assert "cannot read" in out and "Android push is set up" in out
+    flow.config_dir.joinpath("secrets", "fcm-service-account.json").unlink()
+    (flow.repo_root / ".env").write_text((flow.repo_root / ".env").read_text().replace("GACA_FCM_CREDENTIALS_PATH=", "X_OLD="))
+    ask_with(monkeypatch, "y", "", "n")
+    assert run_mod.run(flow, FakeShell(tty=True)) == 0
+    assert "Android push skipped" in capsys.readouterr().out
+
+
+def test_three_wrong_iphone_answers_skip_it_without_failing_the_install(flow, tmp_path, monkeypatch, capsys):
+    flow.service, flow.yes = "user", False
+    ask_with(monkeypatch, "n", "y", str(p8_key(tmp_path)), "bad", "worse", "nope")
+    assert run_mod.run(flow, FakeShell(tty=True)) == 0
+    out = capsys.readouterr().out
+    assert "10 letters and digits" in out and "iPhone push skipped" in out and "GACA_APNS_KEY_PATH" not in push_env(flow)
+
+
+def test_running_again_does_not_re_ask_what_is_already_set_up(flow, tmp_path, monkeypatch, capsys):
+    flow.service, flow.fcm_credentials = "user", fcm_key(tmp_path)
+    run_mod.run(flow, FakeShell())
+    capsys.readouterr()
+    flow.fcm_credentials, flow.yes = None, False
+    asked = ask_with(monkeypatch, "n")  # only the iPhone question may come up
+    assert run_mod.run(flow, FakeShell(tty=True)) == 0
+    assert len(asked) == 1 and asked[0].startswith("Set up push notifications for iPhone?")
+    assert "Android push is already set up" in capsys.readouterr().out
+
+
+def test_no_push_flag_and_no_terminal_never_ask(flow, monkeypatch, capsys):
+    flow.service = "user"
+    monkeypatch.setattr("builtins.input", lambda prompt="": pytest.fail("must not ask"))
+    flow.no_push, flow.yes = True, False
+    assert run_mod.run(flow, FakeShell(tty=True)) == 0 and "skipped (--no-push)" in capsys.readouterr().out
+    flow.no_push = False
+    assert run_mod.run(flow, FakeShell(tty=False)) == 0 and "push notifications are off" in capsys.readouterr().out
+
+
+def test_purge_removes_the_push_keys_too(flow, tmp_path, capsys):
+    flow.service, flow.fcm_credentials = "user", fcm_key(tmp_path)
+    run_mod.run(flow, FakeShell())
+    assert (flow.config_dir / "secrets" / "fcm-service-account.json").exists()
+    assert run_mod.uninstall(flow, FakeShell(), purge=True) == 0
+    assert not (flow.config_dir / "secrets").exists()
+
+
+def test_the_key_checks(tmp_path):
+    assert push_mod.check_fcm(fcm_key(tmp_path)) == "my-gaca"
+    for bad in (dict(type="authorized_user"), dict(project_id=None), dict(private_key="not a key"), dict(client_email="")):
+        with pytest.raises(push_mod.PushSetupError):
+            push_mod.check_fcm(fcm_key(tmp_path, **bad))
+    junk = tmp_path / "junk.json"
+    junk.write_text("{nope")
+    for path in (junk, tmp_path / "missing.json", tmp_path):
+        with pytest.raises(push_mod.PushSetupError):
+            push_mod.check_fcm(path)
+    big = tmp_path / "big.json"
+    big.write_text(" " * 20_000)
+    with pytest.raises(push_mod.PushSetupError):
+        push_mod.check_fcm(big)
+    push_mod.check_apns_key(p8_key(tmp_path))
+    with pytest.raises(push_mod.PushSetupError):
+        push_mod.check_apns_key(p8_key(tmp_path, "just some text"))
+    assert push_mod.check_apple_id(" abc123defg ", "key id") == "ABC123DEFG"
+    for bad in ("short", "ABC123DEFGH", "ABC-23DEFG", ""):
+        with pytest.raises(push_mod.PushSetupError):
+            push_mod.check_apple_id(bad, "key id")
+    assert push_mod.check_bundle_id("com.example.gaca") == "com.example.gaca"
+    for bad in ("gaca", "com..x", "com.example gaca", "com.exa/mple", ""):
+        with pytest.raises(push_mod.PushSetupError):
+            push_mod.check_bundle_id(bad)
+
+
+def test_installing_a_secret_replaces_the_old_one_privately(tmp_path):
+    first, second = fcm_key(tmp_path), tmp_path / "second.json"
+    second.write_text(first.read_text().replace("my-gaca", "other"))
+    target = push_mod.install_secret(first, tmp_path / "s", "k.json")
+    push_mod.install_secret(second, tmp_path / "s", "k.json")
+    assert "other" in target.read_text() and stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert [p.name for p in (tmp_path / "s").iterdir()] == ["k.json"]  # no temp files left behind
+
+
+def test_a_setting_that_points_at_a_deleted_key_is_asked_about_again(flow, tmp_path, monkeypatch, capsys):
+    flow.service, flow.fcm_credentials = "user", fcm_key(tmp_path)
+    run_mod.run(flow, FakeShell())
+    (flow.config_dir / "secrets" / "fcm-service-account.json").unlink()  # .env still names it
+    capsys.readouterr()
+    flow.fcm_credentials, flow.yes = None, False
+    asked = ask_with(monkeypatch, "n", "n")
+    assert run_mod.run(flow, FakeShell(tty=True)) == 0
+    assert asked[0].startswith("Set up push notifications for Android?")
+    assert "already set up" not in capsys.readouterr().out
+
+
+# ── `gaca-api` on the PATH ───────────────────────────────────────────
+
+def fake_venv(flow):
+    exe = flow.repo_root / "gaca-api" / ".venv" / "bin" / "gaca-api"
+    exe.parent.mkdir(parents=True, exist_ok=True)
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+    return exe
+
+
+def test_the_install_puts_gaca_api_on_the_path_and_lists_the_everyday_commands(flow, capsys, monkeypatch):
+    flow.service = "user"
+    exe = fake_venv(flow)
+    monkeypatch.setenv("SHELL", "/bin/bash")
+    assert run_mod.run(flow, FakeShell()) == 0
+    link = Path.home() / ".local" / "bin" / "gaca-api"
+    assert link.is_symlink() and link.resolve() == exe.resolve()
+    out = capsys.readouterr().out
+    assert "added ~/.local/bin to your PATH" in out and "open a new shell" in out
+    for command in ("gaca-api doctor", "gaca-api pair", "gaca-api push", "gaca-api service", "gaca-api backup"):
+        assert command in out
+    assert run_mod.run(flow, FakeShell()) == 0  # again: already linked, no complaint
+    assert "left alone" not in capsys.readouterr().out
+
+
+def test_a_gaca_api_command_that_is_not_ours_is_never_replaced(flow, capsys):
+    flow.service = "user"
+    fake_venv(flow)
+    mine = Path.home() / ".local" / "bin" / "gaca-api"
+    mine.parent.mkdir(parents=True)
+    mine.write_text("#!/bin/sh\necho mine\n")
+    assert run_mod.run(flow, FakeShell()) == 0
+    assert mine.read_text() == "#!/bin/sh\necho mine\n" and "left alone" in capsys.readouterr().out
+
+
+def test_uninstall_removes_only_its_own_link(flow, capsys):
+    flow.service = "user"
+    fake_venv(flow)
+    run_mod.run(flow, FakeShell())
+    link = Path.home() / ".local" / "bin" / "gaca-api"
+    assert link.is_symlink()
+    run_mod.uninstall(flow, FakeShell())
+    assert not link.exists()
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.write_text("not ours")
+    run_mod.uninstall(flow, FakeShell())
+    assert link.read_text() == "not ours"
+
+
+# ── ~/.local/bin is added to the PATH automatically ──────────────────
+
+def path_lines(rc):
+    return [l for l in rc.read_text().splitlines() if ".local/bin" in l and not l.startswith("#")]
+
+
+@pytest.mark.parametrize("shell, rc_name", [("/bin/bash", ".bashrc"), ("/usr/bin/zsh", ".zshrc"), ("/bin/dash", ".profile")])
+def test_the_path_line_goes_in_the_right_startup_file_once(flow, monkeypatch, capsys, shell, rc_name):
+    monkeypatch.setenv("SHELL", shell)
+    rc = Path.home() / rc_name
+    rc.write_text("alias ll='ls -l'\nexport EDITOR=vim")  # no trailing newline, to check it is not glued to ours
+    run_mod.ensure_on_path(Say(print))
+    text = rc.read_text()
+    assert text.startswith("alias ll='ls -l'\nexport EDITOR=vim\n") and len(path_lines(rc)) == 1
+    assert 'export PATH="$HOME/.local/bin:$PATH"' in text and run_mod._PATH_MARK in text
+    out = capsys.readouterr().out
+    assert f"added ~/.local/bin to your PATH in {rc}" in out and f"source {rc}" in out
+    run_mod.ensure_on_path(Say(print))  # again: nothing more is written
+    assert rc.read_text() == text and "already set up" in capsys.readouterr().out
+
+
+def test_a_missing_startup_file_is_created(flow, monkeypatch):
+    monkeypatch.setenv("SHELL", "/bin/bash")
+    run_mod.ensure_on_path(Say(lambda *_: None))
+    assert len(path_lines(Path.home() / ".bashrc")) == 1
+
+
+def test_fish_gets_fish_syntax(flow, monkeypatch):
+    monkeypatch.setenv("SHELL", "/usr/bin/fish")
+    run_mod.ensure_on_path(Say(lambda *_: None))
+    assert path_lines(Path.home() / ".config" / "fish" / "config.fish") == ["fish_add_path -g $HOME/.local/bin"]
+
+
+def test_a_startup_file_that_already_handles_local_bin_is_left_alone(flow, monkeypatch, capsys):
+    monkeypatch.setenv("SHELL", "/bin/bash")
+    rc = Path.home() / ".bashrc"
+    rc.write_text('. "$HOME/.local/bin/env"\n')  # what the uv installer writes
+    before = rc.read_text()
+    run_mod.ensure_on_path(Say(print))
+    assert rc.read_text() == before and "already set up" in capsys.readouterr().out
+
+
+def test_a_symlinked_startup_file_is_never_edited(flow, monkeypatch, capsys, tmp_path):
+    monkeypatch.setenv("SHELL", "/bin/bash")
+    dotfiles = tmp_path / "dotfiles-bashrc"
+    dotfiles.write_text("# managed elsewhere\n")
+    (Path.home() / ".bashrc").symlink_to(dotfiles)
+    run_mod.ensure_on_path(Say(print))
+    assert dotfiles.read_text() == "# managed elsewhere\n"
+    out = capsys.readouterr().out
+    assert "is a symlink" in out and 'export PATH="$HOME/.local/bin:$PATH"' in out
+
+
+def test_the_install_adds_the_path_automatically(flow, monkeypatch):
+    flow.service = "user"
+    fake_venv(flow)
+    monkeypatch.setenv("SHELL", "/bin/bash")
+    assert run_mod.run(flow, FakeShell()) == 0
+    assert len(path_lines(Path.home() / ".bashrc")) == 1
