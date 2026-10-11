@@ -889,3 +889,27 @@ def test_the_install_adds_the_path_automatically(flow, monkeypatch):
     monkeypatch.setenv("SHELL", "/bin/bash")
     assert run_mod.run(flow, FakeShell()) == 0
     assert len(path_lines(Path.home() / ".bashrc")) == 1
+
+
+# ── health checks look like a browser (Cloudflare 403s Python's default User-Agent) ──
+
+def test_http_get_sends_a_browser_like_user_agent(monkeypatch):
+    from gaca_api.installer import shell as shell_mod
+
+    seen = {}
+
+    class Response:
+        status = 200
+
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self, n): return b"ok"
+
+    def fake_urlopen(request, timeout=0):
+        seen["ua"], seen["url"] = request.get_header("User-agent"), request.full_url
+        return Response()
+
+    monkeypatch.setattr(shell_mod.urllib.request, "urlopen", fake_urlopen)
+    assert shell_mod.Shell().http_get("https://gaca.example.com/api/health") == (200, "ok")
+    assert seen["ua"].startswith("Mozilla/5.0") and "Python-urllib" not in seen["ua"]
+    assert seen["url"] == "https://gaca.example.com/api/health"
