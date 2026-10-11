@@ -223,6 +223,48 @@ def test_token_validation():
             tunnel_mod.valid_token(bad)
 
 
+GOOD_TOKEN = "eyJhIjoiMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAiLCJ0IjoiYWJj"
+
+
+@pytest.mark.parametrize("pasted", [
+    f"cloudflared tunnel run --token {GOOD_TOKEN}",
+    f"  cloudflared tunnel run --token {GOOD_TOKEN}\n",
+    f"sudo cloudflared service install {GOOD_TOKEN}",
+    f"sudo cloudflared service install {GOOD_TOKEN}\n\ncloudflared tunnel run --token {GOOD_TOKEN}\n",  # both boxes at once
+    f"cloudflared tunnel run --token={GOOD_TOKEN}",
+])
+def test_the_command_cloudflare_shows_works_as_well_as_the_bare_token(pasted):
+    assert tunnel_mod.valid_token(pasted) == GOOD_TOKEN
+
+
+@pytest.mark.parametrize("pasted", [
+    f"cloudflared tunnel run --token {GOOD_TOKEN}; rm -rf /",  # the token is used, the rest is never run or kept
+])
+def test_only_the_token_is_taken_from_a_pasted_command(pasted):
+    assert tunnel_mod.valid_token(pasted) == GOOD_TOKEN
+
+
+def test_the_masked_display_text_is_explained_not_accepted():
+    with pytest.raises(ValueError, match="copy button"):
+        tunnel_mod.valid_token("cloudflared tunnel run --token eyJhIjoi*********************bCJ9")
+
+
+def test_two_different_tokens_in_one_paste_are_refused():
+    other = GOOD_TOKEN[:-3] + "xyz"
+    with pytest.raises(ValueError):
+        tunnel_mod.valid_token(f"cloudflared tunnel run --token {GOOD_TOKEN}\ncloudflared tunnel run --token {other}")
+
+
+def test_the_token_file_may_hold_the_whole_command(tmp_path):
+    token_file = tmp_path / "tok"
+    token_file.write_text(f"cloudflared tunnel run --token {GOOD_TOKEN}\n")
+    opts = Options(repo_root=REPO, tunnel="token", hostname="gaca.example.com", tunnel_token_file=token_file, config_dir=tmp_path / "cfg", port=41700)
+    shell = FakeShell()
+    assert run_mod.setup_tunnel(opts, shell, Say(lambda *_: None)) == "https://gaca.example.com"
+    stored = (tmp_path / "cfg" / "tunnel" / "cloudflared.token").read_text().strip()
+    assert stored == GOOD_TOKEN  # only the token was stored, not the command around it
+
+
 def test_token_setup_keeps_the_secret_out_of_the_compose_file(tmp_path):
     token = "eyJhIjoiMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAiLCJ0IjoiYWJj"
     compose = tunnel_mod.write_token_setup(tmp_path / "tunnel", token)

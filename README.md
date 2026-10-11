@@ -62,7 +62,8 @@ you open no ports and need no static IP. You choose how permanent the address is
 For a permanent address, do this once in the Cloudflare dashboard **before** running the installer:
 
 1. Open **Networks → Tunnels & Mesh** and create a tunnel (a *Cloudflared* tunnel). Name it anything. Copy its **token**: the long
-   string after `--token` in the install command the page shows. Do not run that command; GACA's installer starts the tunnel itself.
+   string after `--token` in the install command the page shows (the copy button next to "Or, run tunnel (manual)" copies the whole command,
+   and the installer accepts that too). Do not run that command yourself; GACA's installer starts the tunnel.
 2. Open the tunnel, go to its **Published application routes** tab, and choose **Add a published application route**. Pick your domain
    (and a subdomain if you want one), set the service type to **HTTP** and the URL to **`localhost:41700`**. Cloudflare creates the
    DNS record for you.
