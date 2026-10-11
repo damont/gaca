@@ -84,6 +84,9 @@ status route (the app got an unauthenticated HTML page instead of JSON). Docs ar
    resumes. `--service user` needs no root and has no sandbox (said plainly). `./install.sh uninstall [--purge]`.
    Tested for real on an arm64 box (user mode, quick tunnel): claim, rate limit, body cap, headers, idempotent re-run, Hermes wiring, uninstall. **Then** remove
    nginx + React frontend from the repo and production (a coordinated cutover).
-4. **Android**: server-address screen, `gaca://setup` deep link, claim and sign-in screens driven by
-   `/api/setup`; no baked-in server URL.
+4. **Android + pairing** (replaces the claim/sign-in screens): no accounts. `gaca-api pair` on the box prints a
+   one-time code and a QR that also carries the server address (`GACA_PUBLIC_URL`); the app scans it (or opens the
+   `gaca://setup` link, or takes a typed address + code) and receives a revocable device credential. Many devices
+   per server, one server per phone; `gaca-api device list|revoke`. No baked-in server URL. The old
+   password/Google endpoints are removed in a follow-up once a device is paired.
 5. **Hardening**: login/claim rate limits, refuse the default JWT secret, SECURITY.md.
