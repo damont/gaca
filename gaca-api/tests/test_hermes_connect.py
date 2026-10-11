@@ -8,6 +8,7 @@ import stat
 
 import pytest
 
+from conftest import make_owner
 from gaca_api import cli
 from gaca_api.config import settings
 from gaca_api.db import client
@@ -34,7 +35,7 @@ def server(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "api_port", 41700)
 
     async def init():
-        await auth_service.create_user(name="O", email="o@example.com", password="correct horse")
+        await make_owner(name="O", email="o@example.com")
     run(init)
     return tmp_path
 

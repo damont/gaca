@@ -20,7 +20,7 @@ def bind_unix_socket(path: str, mode: int = 0o666) -> socket.socket:
 
     World-connectable on purpose: the nginx worker in the container is a different uid. The
     directory it lives in is what restricts who can reach it, and every request still needs a
-    valid JWT. Refuses to replace anything that is not a socket."""
+    paired-device or API credential. Refuses to replace anything that is not a socket."""
     try:
         if not stat.S_ISSOCK(os.lstat(path).st_mode):
             raise FileExistsError(f"{path} exists and is not a socket")

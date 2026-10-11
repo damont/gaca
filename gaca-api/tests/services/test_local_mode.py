@@ -6,6 +6,7 @@ import textwrap
 
 import pytest
 
+from conftest import make_owner
 from gaca_api.config import settings
 from gaca_api.db import client
 from gaca_api.models.user import UserDoc
@@ -57,7 +58,7 @@ def local_box(tmp_path, monkeypatch):
 
 
 async def _user() -> UserDoc:
-    return await auth_service.create_user(name="D", email="d@example.com", password="pw-12345678")
+    return await make_owner(name="D", email="d@example.com")
 
 
 def test_a_user_with_no_ssh_login_can_create_and_discover_in_local_mode(local_box):

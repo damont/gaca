@@ -5,31 +5,9 @@ a client written against one app reads the same on this one.
 """
 from __future__ import annotations
 
-from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ..models.user import normalize_crew_path
-
-
-class RegisterRequest(BaseModel):
-    name: str = Field(..., description="Display name")
-    email: EmailStr
-    password: str
-
-
-class UserLogin(BaseModel):
-    email: EmailStr
-    password: str
-
-
-class GoogleLoginRequest(BaseModel):
-    """The ID token the Google button hands back, verified server-side."""
-
-    id_token: str
-
-
-class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
 
 
 class UserResponse(BaseModel):

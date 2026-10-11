@@ -11,44 +11,17 @@ from typing import Literal
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-# The placeholder that ships in the code. Startup refuses it (security.check_startup_secrets).
-DEFAULT_JWT_SECRET = "change-me-this-default-is-not-secret-and-too-short"
-
-
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=("../.env", ".env"), env_prefix="GACA_", extra="ignore"
     )
-
-    # --- Auth ---------------------------------------------------------
-    # Signing key for every token we mint (browser sessions now, agent tokens
-    # next). MUST be overridden in production: anyone holding this value can
-    # forge a token for any user. Rotating it is also the only revocation we
-    # have — it invalidates every outstanding token at once.
-    # Keep any real value at 32+ bytes: PyJWT raises InsecureKeyLengthWarning
-    # below that for HS256 (RFC 7518 §3.2). See .env.example for a generator.
-    jwt_secret: str = DEFAULT_JWT_SECRET
-    jwt_algorithm: str = "HS256"
-
-    # Browser session lifetime. Agent tokens pass their own, much longer expiry
-    # per request rather than reading this.
-    jwt_expire_minutes: int = 10080  # 7 days
-
-    # Google OAuth. One Client ID serves both sides: the API verifies the `aud`
-    # claim on incoming ID tokens with it, and the frontend renders its button
-    # with the same value (as VITE_GOOGLE_CLIENT_ID). Not a secret — it's public
-    # by design — but leaving it unset disables Google sign-in entirely.
-    google_client_id: str | None = None
-
-    # Local development only: skips the refusal to start with the placeholder JWT secret.
-    dev: bool = False
 
     # Requests over this many bytes are refused with 413 (the 2 MiB photo cap plus multipart
     # framing). Used to be nginx's client_max_body_size.
     max_body_bytes: int = 3 * 1024 * 1024
 
     # Attempts per minute, per client, on the endpoints a stranger can reach without
-    # credentials: sign-in and the first-run claim.
+    # credentials: pairing a device with a code.
     auth_attempts_per_minute: int = 10
 
     # Browser origins allowed to call the API cross-origin, comma-separated. Empty (the default)
@@ -106,7 +79,7 @@ class Settings(BaseSettings):
     # --- Push notifications --------------------------------------------
     # Path to a Firebase service-account JSON key (Firebase console → Project
     # settings → Service accounts → Generate new private key). Unlike
-    # google_client_id, this IS a secret — a real credential the server signs
+    # an inline setting, this IS a secret — a real credential the server signs
     # requests with — so it's a file path, not an inline value, matching how
     # the Cloudflare Tunnel token is handled: never committed, mounted in at
     # deploy time. Push is best-effort everywhere it's used: leaving this

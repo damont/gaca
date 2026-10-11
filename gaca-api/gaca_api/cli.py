@@ -1,14 +1,12 @@
 """The `gaca-api` command. With no arguments it starts the server (what the systemd unit runs).
 
 Owner-only operations live here rather than behind HTTP because having a shell on the
-server *is* the proof of ownership: issuing the first-run setup code, and recovering a
-lost password.
+server *is* the proof of ownership: pairing a phone, unpairing one, minting Hermes tokens.
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
-import getpass
 import sys
 from pathlib import Path
 from urllib.parse import urlencode
@@ -18,9 +16,7 @@ from .db import client
 from .db import users as users_db
 from .models.base import utcnow
 from .provisioning import hermes_connect
-from .services import auth as auth_service
 from .services import pairing as pairing_service
-from .services import setup as setup_service
 from .services import tokens as token_service
 from .services.exceptions import InvalidRequest, NotFound
 from .utils import tokens as token_utils
@@ -30,10 +26,6 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="gaca-api", description="GACA API server and owner tools")
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("serve", help="start the server (the default)")
-    code = sub.add_parser("setup-code", help="print a one-time code to claim a new server from the app")
-    code.add_argument("--ttl", type=int, default=setup_service.DEFAULT_TTL_MINUTES, metavar="MINUTES")
-    code.add_argument("--url", help="the server's public https URL, to also print an app link")
-    code.add_argument("--qr", action="store_true", help="also print a QR code of the app link (needs --url)")
     pair = sub.add_parser("pair", help="print a one-time code and QR code to pair a phone with this server")
     pair.add_argument("--ttl", type=int, default=pairing_service.DEFAULT_TTL_MINUTES, metavar="MINUTES")
     pair.add_argument("--url", help="the server's public https URL (default: GACA_PUBLIC_URL)")
@@ -42,7 +34,7 @@ def _parser() -> argparse.ArgumentParser:
     device.add_parser("list", help="list paired devices")
     unpair = device.add_parser("revoke", help="unpair a device by id")
     unpair.add_argument("device_id")
-    sub.add_parser("status", help="is this server claimed yet?")
+    sub.add_parser("status", help="does this server have an owner yet, and how many phones are paired?")
 
     uninstall = sub.add_parser("uninstall", help="stop and remove the service and tunnel (keeps your data unless --purge)")
     uninstall.add_argument("--repo-root", required=True)
@@ -62,9 +54,8 @@ def _parser() -> argparse.ArgumentParser:
     install.add_argument("--tunnel-token-file", default=None, help="file holding the Cloudflare tunnel token (or set GACA_TUNNEL_TOKEN)")
     install.add_argument("--hermes-home", default=None, help="default: ~/.hermes")
     install.add_argument("--no-hermes", action="store_true", help="do not look for Hermes on this machine")
-    install.add_argument("--no-wait", action="store_true", help="do not wait for you to claim the server in the app")
+    install.add_argument("--no-wait", action="store_true", help="do not wait for you to pair your phone")
     install.add_argument("--yes", action="store_true", help="never ask questions")
-    sub.add_parser("reset-password", help="set a new password for the owner")
 
     token = sub.add_parser("token", help="manage API tokens (what Hermes skills use)").add_subparsers(dest="token_command", required=True)
     create = token.add_parser("create", help="mint a token; the secret is printed once")
@@ -81,36 +72,6 @@ def _parser() -> argparse.ArgumentParser:
     connect.add_argument("--base-url", default=None, help="default: http://127.0.0.1:<api port>")
     connect.add_argument("--rotate", action="store_true", help="replace tokens already in place (default: only wire profiles that have none)")
     return parser
-
-
-def _read_new_password() -> str:
-    first = getpass.getpass("New password (min 8 characters): ")
-    if len(first) < 8:
-        raise SystemExit("Password must be at least 8 characters.")
-    if first != getpass.getpass("Again: "):
-        raise SystemExit("Passwords did not match.")
-    return first
-
-
-async def _setup_code(ttl: int, url: str | None, qr: bool = False) -> int:
-    try:
-        code, _ = await setup_service.issue_code(ttl)
-    except setup_service.SetupRefused as error:
-        print(error.detail, file=sys.stderr)
-        return 1
-    print(f"Setup code:  {code}   (single use, valid {ttl} minutes)")
-    print('Open the app, enter this server\'s address, and choose "Set up this server".')
-    if url:
-        query = urlencode({"url": url.rstrip("/"), "code": code.replace("-", "")})
-        link = f"gaca://setup?{query}"
-        print(f"Or open this link on your phone:  {link}")
-        if qr:
-            import segno
-
-            segno.make(link, error="m").terminal(compact=True)
-    elif qr:
-        print("(--qr needs --url, the server's public https address)", file=sys.stderr)
-    return 0
 
 
 async def _pair(ttl: int, url: str | None, show_qr: bool) -> int:
@@ -136,7 +97,7 @@ async def _pair(ttl: int, url: str | None, show_qr: bool) -> int:
 
 
 async def _device_list() -> int:
-    owner = await _owner_or_none("pair")
+    owner = await _owner_or_none()
     if owner is None:
         return 1
     devices = await token_service.list_devices(owner)
@@ -149,7 +110,7 @@ async def _device_list() -> int:
 
 
 async def _device_revoke(device_id: str) -> int:
-    owner = await _owner_or_none("pair")
+    owner = await _owner_or_none()
     if owner is None:
         return 1
     if device_id not in {d.id for d in await token_service.list_devices(owner)}:
@@ -161,22 +122,16 @@ async def _device_revoke(device_id: str) -> int:
 
 
 async def _status() -> int:
-    claimed = await setup_service.is_claimed()
-    print("claimed: yes — sign in with the owner account" if claimed else "claimed: no — run `gaca-api setup-code`")
-    return 0
-
-
-async def _reset_password() -> int:
-    if await users_db.count() == 0:
-        print("This server has no owner yet; use `gaca-api setup-code`.", file=sys.stderr)
-        return 1
     owner = await users_db.first()
-    await auth_service.set_password(owner, _read_new_password())
-    print(f"Password updated for {owner.email}.")
+    if owner is None:
+        print("no owner yet — run `gaca-api pair` and open the app")
+        return 0
+    n = len(await token_service.list_devices(owner))
+    print(f"paired devices: {n}" + ("" if n else " — run `gaca-api pair`"))
     return 0
 
 
-async def _owner_or_none(next_step: str = "setup-code"):
+async def _owner_or_none(next_step: str = "pair"):
     owner = await users_db.first()
     if owner is None:
         print(f"This server has no owner yet; use `gaca-api {next_step}`.", file=sys.stderr)
@@ -298,8 +253,6 @@ def main(argv: list[str] | None = None) -> int:
         return _install(args)
     if args.command == "uninstall":
         return _uninstall(args)
-    if args.command == "setup-code":
-        return asyncio.run(_with_database(lambda: _setup_code(args.ttl, args.url, args.qr)))
     if args.command == "pair":
         return asyncio.run(_with_database(lambda: _pair(args.ttl, args.url, not args.no_qr)))
     if args.command == "device":
@@ -316,7 +269,7 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_with_database(handlers[args.token_command]))
     if args.command == "hermes":
         return asyncio.run(_with_database(lambda: _hermes_connect(args.hermes_home, args.base_url, args.rotate)))
-    return asyncio.run(_with_database(_reset_password))
+    return 2
 
 
 if __name__ == "__main__":

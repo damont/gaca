@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from gaca_api.config import settings
 from gaca_api.main import app
 from gaca_api.models.base import utcnow
-from gaca_api.services import setup as setup_service
+from gaca_api.services import pairing
 from gaca_api.utils import tokens as token_utils
 
 CODE = "ABCD2345EFGH6789"
@@ -26,11 +26,11 @@ def http(tmp_path, monkeypatch):
     with TestClient(app) as client:
         client.db = str(tmp_path / "t.db")
         con = sqlite3.connect(client.db)
-        state = {"hash": setup_service._digest(CODE), "expires_at": (utcnow() + timedelta(hours=1)).isoformat(), "wrong": 0}
-        con.execute("INSERT INTO server_meta (key, value) VALUES ('setup_code', ?)", (json.dumps(state),))
+        state = {"hash": pairing._digest(CODE), "expires_at": (utcnow() + timedelta(hours=1)).isoformat(), "wrong": 0}
+        con.execute("INSERT INTO server_meta (key, value) VALUES ('pair_code', ?)", (json.dumps(state),))
         con.commit()
         con.close()
-        made = client.post("/api/setup/claim", json={"code": CODE, "name": "O", "email": "o@example.com", "password": "correct horse"})
+        made = client.post("/api/devices/pair", json={"code": CODE, "name": "Test phone"})
         client.session = {"Authorization": "Bearer " + made.json()["access_token"]}
         yield client
 
@@ -61,7 +61,7 @@ def test_minting_returns_the_secret_once_and_stores_only_a_hash(http):
     listed = http.get("/api/tokens", headers=http.session).json()
     assert [t["id"] for t in listed] == [made["id"]]
     assert "token" not in listed[0] and "token_hash" not in listed[0]
-    stored = db_rows(http, "SELECT token_hash FROM api_tokens")[0][0]
+    stored = db_rows(http, "SELECT token_hash FROM api_tokens WHERE scopes != '[\"device\"]'")[0][0]
     assert stored == token_utils.digest(made["token"]) and made["token"] not in stored
     assert made["token"].encode() not in open(http.db, "rb").read()
 
@@ -86,7 +86,7 @@ def test_the_old_full_power_agent_token_endpoint_is_gone(http):
 
 def test_a_token_can_do_what_hermes_skills_need(http):
     h = bearer(mint(http)["token"])
-    assert http.get("/api/auth/me", headers=h).json()["email"] == "o@example.com"
+    assert http.get("/api/auth/me", headers=h).json()["email"] == "owner@gaca.invalid"
     made = http.post("/api/alerts", headers=h, json={"kind": "test", "title": "from hermes"})
     assert made.status_code in (200, 201), made.text
     alert_id = made.json()["id"]

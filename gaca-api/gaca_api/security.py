@@ -2,8 +2,7 @@
 
 These used to come from an nginx in front (security headers, a body-size cap). With the
 API reached directly through the Cloudflare Tunnel there is no nginx, so they live here,
-along with the checks nginx never did: refusing to start with a placeholder secret, and
-rate-limiting the endpoints a stranger can reach without credentials.
+along with rate-limiting the one endpoint a stranger can reach without credentials (pairing).
 """
 from __future__ import annotations
 
@@ -14,26 +13,7 @@ from collections.abc import Callable
 
 from fastapi import HTTPException, Request, status
 
-from .config import DEFAULT_JWT_SECRET, settings
-
-MIN_SECRET_LENGTH = 32
-
-
-# ── startup: no placeholder secrets ──────────────────────────────────
-
-def check_startup_secrets() -> None:
-    """Refuse to start with the placeholder or a short JWT secret (anyone who knows the default
-    can forge a login). GACA_DEV=1 bypasses this for local development only."""
-    if settings.dev:
-        return
-    secret = settings.jwt_secret
-    if secret == DEFAULT_JWT_SECRET or len(secret) < MIN_SECRET_LENGTH:
-        raise RuntimeError(
-            "GACA_JWT_SECRET is unset, the placeholder, or shorter than "
-            f"{MIN_SECRET_LENGTH} characters, so anyone could forge a login. Generate one with "
-            "`python3 -c \"import secrets; print(secrets.token_urlsafe(48))\"` and set it in the "
-            "server's .env. (GACA_DEV=1 skips this check for local development only.)"
-        )
+from .config import settings
 
 
 # ── headers ──────────────────────────────────────────────────────────
@@ -133,7 +113,7 @@ class BodyLimitMiddleware:
 
 class RateLimiter:
     """Sliding-window limiter: at most `limit` hits per `window` seconds per key. In memory, so it
-    resets on restart — enough to make guessing a password or setup code impractical."""
+    resets on restart — enough to make guessing a pairing code impractical."""
 
     def __init__(self, clock: Callable[[], float] = time.monotonic):
         self._clock = clock

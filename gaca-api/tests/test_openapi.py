@@ -16,15 +16,15 @@ def test_every_route_is_mounted_under_api():
         assert path.startswith("/api/"), f"{path} is unreachable through nginx"
 
 
-def test_schema_lists_the_auth_and_session_paths():
+def test_schema_lists_the_pairing_and_session_paths():
     paths = app.openapi()["paths"]
     for expected in (
         "/api/setup",
-        "/api/setup/claim",
-        "/api/setup/claim/google",
-        "/api/auth/login",
+        "/api/devices",
+        "/api/devices/pair",
+        "/api/devices/me",
+        "/api/devices/{device_id}",
         "/api/auth/me",
-        "/api/auth/google",
         "/api/tokens",
         "/api/tokens/{token_id}",
         "/api/agent",
@@ -72,3 +72,10 @@ def test_the_docs_page_does_not_shadow_the_agent_status_route():
     there, so the app got an HTML page, without credentials, instead of its JSON."""
     assert app.docs_url != "/api/agent"
     assert "get" in app.openapi()["paths"]["/api/agent"]
+
+
+def test_there_is_no_sign_in_left():
+    """Phones pair; there are no passwords, Google logins or registrations to attack."""
+    paths = app.openapi()["paths"]
+    for gone in ("/api/auth/login", "/api/auth/google", "/api/auth/register", "/api/setup/claim", "/api/setup/claim/google"):
+        assert gone not in paths
