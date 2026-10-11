@@ -40,10 +40,10 @@ CHAT_CHANNEL = "chat_replies"
 
 
 async def register_token(
-    user_id: str, token: str, platform: str, environment: str | None = None
+    user_id: str, token: str, platform: str, environment: str | None = None, device_id: str | None = None
 ) -> None:
     await push_tokens_db.upsert(
-        PushTokenDoc(user_id=user_id, token=token, platform=platform, environment=environment)
+        PushTokenDoc(user_id=user_id, token=token, platform=platform, environment=environment, device_id=device_id)
     )
 
 

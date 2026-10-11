@@ -16,13 +16,14 @@ async def upsert(push_token: PushTokenDoc) -> None:
     conn = connection()
     await conn.execute(
         """
-        INSERT INTO push_tokens (id, user_id, token, created_at, doc)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO push_tokens (id, user_id, token, created_at, doc, device_id)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(token) DO UPDATE SET
             id = excluded.id,
             user_id = excluded.user_id,
             created_at = excluded.created_at,
-            doc = excluded.doc
+            doc = excluded.doc,
+            device_id = excluded.device_id
         """,
         (
             push_token.id,
@@ -30,6 +31,7 @@ async def upsert(push_token: PushTokenDoc) -> None:
             push_token.token,
             push_token.created_at.isoformat(),
             push_token.model_dump_json(),
+            push_token.device_id,
         ),
     )
     await conn.commit()
@@ -48,3 +50,11 @@ async def delete_by_token(token: str) -> None:
     conn = connection()
     await conn.execute("DELETE FROM push_tokens WHERE token = ?", (token,))
     await conn.commit()
+
+
+async def delete_by_device(device_id: str) -> int:
+    """Drop every token a paired device registered — when that device is unpaired or revoked."""
+    conn = connection()
+    cursor = await conn.execute("DELETE FROM push_tokens WHERE device_id = ?", (device_id,))
+    await conn.commit()
+    return cursor.rowcount

@@ -19,4 +19,8 @@ class PushTokenDoc(BaseModel):
     # APNs environment ("sandbox" | "production") for an ios token; None means
     # production (services/apns.py). Always None for FCM tokens.
     environment: str | None = None
+    # The paired device (credential) that registered this token. Revoking that device deletes its
+    # token, so an unpaired phone stops getting alerts. None for tokens registered before this existed;
+    # the app re-registers on launch, which links them.
+    device_id: str | None = None
     created_at: datetime = Field(default_factory=utcnow)
