@@ -211,3 +211,75 @@ def test_has_gaca_token_ignores_old_jwts_and_comments(tmp_path):
     assert envfile.has_gaca_token(p) is False
     p.write_text("OTHER=1\nGACA_API_TOKEN=gaca_pat_real\n")
     assert envfile.has_gaca_token(p) is True
+
+
+# ── GACA's skills ────────────────────────────────────────────────────
+
+def skill_file(box, profile, skill="gaca-alerts", name="SKILL.md"):
+    return box.home / "profiles" / profile / "skills" / "gaca" / skill / name
+
+
+def test_a_crew_member_created_in_the_app_gets_the_gaca_skills(box):
+    box.served.add("fresh")
+
+    async def go():
+        owner = await make_owner()
+        user = await auth_service.discover_crew(owner)
+        await auth_service.provision_crew_member(user, "fresh", None)
+    run(go)
+    for skill in ("gaca", "gaca-alerts", "gaca-briefing", "gaca-lists", "gaca-artifacts"):
+        assert skill_file(box, "fresh", skill).is_file(), skill
+    assert skill_file(box, "fresh", "gaca-alerts", "scripts/gaca.py").is_file()
+
+
+def test_discovery_gives_every_named_profile_the_skills_but_never_touches_default(box):
+    (box.home / "profiles" / "handmade").mkdir()
+
+    async def go():
+        owner = await make_owner()
+        await auth_service.discover_crew(owner)
+    run(go)
+    assert skill_file(box, "toolshed").is_file() and skill_file(box, "handmade").is_file()
+    assert not (box.home / "skills").exists()  # the default profile is the installer's job, not the service's
+
+
+def test_discovery_does_not_overwrite_a_skill_the_agent_edited(box):
+    async def go():
+        owner = await make_owner()
+        await auth_service.discover_crew(owner)
+        mine = skill_file(box, "toolshed")
+        mine.write_text("my tweak")
+        await auth_service.discover_crew(owner)
+        return mine.read_text()
+    assert run(go) == "my tweak"
+
+
+def test_a_skills_failure_never_fails_discovery_or_creation(box, monkeypatch):
+    box.served.add("fresh")
+    (box.home / "profiles" / "toolshed" / "skills").symlink_to(box.home)  # an unsafe target
+
+    async def go():
+        owner = await make_owner()
+        user = await auth_service.discover_crew(owner)  # toolshed's skills dir is a symlink: refused, quietly
+        return await auth_service.provision_crew_member(user, "fresh", None)
+    user = run(go)
+    assert any(c.name == "fresh" for c in user.crew)
+    assert not any((box.home / "skills").iterdir()) if (box.home / "skills").exists() else True  # nothing escaped via the link
+
+
+def test_install_skills_refuses_default_odd_names_and_missing_profiles(box):
+    hermes = LocalHermes(box.home, settings.hermes_bin)
+    for bad in ("default", "../x", "a/b", "", "x" * 80):
+        with pytest.raises(LocalError):
+            run_sync(hermes.install_skills(bad))
+    with pytest.raises(LocalError):
+        run_sync(hermes.install_skills("nosuch"))
+
+
+def test_install_skills_refuses_a_symlinked_profile_dir(box, tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (box.home / "profiles" / "linked").symlink_to(outside)
+    with pytest.raises(LocalError):
+        run_sync(LocalHermes(box.home, settings.hermes_bin).install_skills("linked"))
+    assert list(outside.iterdir()) == []

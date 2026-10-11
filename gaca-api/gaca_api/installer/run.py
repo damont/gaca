@@ -11,8 +11,10 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 from ..config import settings
+from . import hermes as hermes_mod
 from . import tunnel as tunnel_mod
 from .envconfig import ensure_env
+from ..provisioning import hermes_connect
 from ..provisioning.envfile import upsert_env
 from .privilege import NeedsRoot, run_as_root
 from .shell import Shell, user_systemd_env
@@ -20,6 +22,7 @@ from .units import render, system_install_script
 
 SYSTEM_UNIT_DIR = Path("/etc/systemd/system")
 EXIT_NEEDS_ROOT = 3
+EXIT_NEEDS_HERMES = 4
 EXIT_FAILED = 1
 
 
@@ -35,6 +38,7 @@ class Options:
     tunnel_token_file: Path | None = None
     hermes_home: Path | None = None
     use_hermes: bool = True
+    install_hermes: bool = False
     config_dir: Path | None = None
     wait_for_claim: bool = True
     claim_wait_seconds: int = 3600
@@ -65,6 +69,54 @@ def _hermes_bin(shell: Shell) -> str | None:
         return found
     fallback = Path.home() / ".local" / "bin" / "hermes"
     return str(fallback) if fallback.exists() else None
+
+
+def check_hermes(opts: Options, shell: Shell, say: Say) -> bool:
+    """True when Hermes is installed and set up the way GACA needs. Otherwise prints exactly what is
+    missing and how to fix it, and returns False. GACA never installs Hermes on its own: with
+    --install-hermes (or a yes at the prompt) it runs Hermes's own installer, nothing more."""
+    binary = _hermes_bin(shell)
+    status = hermes_mod.inspect(shell, opts.hermes_home, binary)
+    found = hermes_mod.problems(status, opts.hermes_home)
+    if found and binary is None:
+        wanted = opts.install_hermes
+        if not wanted and shell.is_tty() and not opts.yes:
+            say.warn(found[0].what)
+            wanted = input(f"Run Hermes's own installer now ({hermes_mod.OFFICIAL_INSTALL})? [y/N] ").strip().lower().startswith("y")
+        if wanted:
+            say.note("running Hermes's installer (this can take a few minutes)...")
+            done = shell.run(["bash", "-c", hermes_mod.OFFICIAL_INSTALL], timeout=1800, inherit=True)
+            if done.returncode != 0:
+                say.warn("Hermes's installer did not finish; see its output above.")
+            binary = _hermes_bin(shell)
+            status = hermes_mod.inspect(shell, opts.hermes_home, binary)
+            found = hermes_mod.problems(status, opts.hermes_home)
+            if not found or binary is not None:
+                say.note("Hermes is installed. It still needs `hermes setup` (your model provider) if you have not run it.")
+    if not found:
+        version = ".".join(map(str, status.version))
+        say.ok(f"Hermes {version} is installed and its gateway answers on 127.0.0.1:{status.port}")
+        return True
+    for problem in found:
+        say.warn(problem.what)
+        for line in problem.fix:
+            say.note(line)
+    return False
+
+
+def install_hermes_skills(opts: Options, say: Say) -> None:
+    results = hermes_connect.install_skills(opts.hermes_home)
+    for profile, outcome in results.items():
+        if isinstance(outcome, str):
+            say.warn(f"could not install the GACA skills into Hermes profile {profile!r}: {outcome}")
+            continue
+        changes = len(outcome.written) + len(outcome.updated)
+        if outcome.left_alone:
+            say.warn(f"{profile}: {len(outcome.left_alone)} GACA skill file(s) you or an agent edited were left alone")
+        if changes:
+            say.ok(f"installed the GACA skills into Hermes profile {profile!r}")
+        elif not outcome.left_alone:
+            say.ok(f"GACA skills already up to date in Hermes profile {profile!r}")
 
 
 def choose_service(opts: Options, shell: Shell) -> str:
@@ -254,6 +306,15 @@ def run(opts: Options, shell: Shell | None = None, out=print) -> int:
     shell, say = shell or Shell(), Say(out)
     opts = _paths(opts)
     try:
+        say.step("Hermes")
+        if opts.use_hermes:
+            if not check_hermes(opts, shell, say):
+                say.note("GACA needs Hermes working first. (To set up only the server for now, add --no-hermes.)")
+                return EXIT_NEEDS_HERMES
+            install_hermes_skills(opts, say)
+        else:
+            say.warn("skipping the Hermes checks (--no-hermes). Without Hermes the app has no agent to talk to.")
+
         say.step("Settings")
         for note in ensure_env(opts.repo_root / ".env", data_dir=opts.data_dir, port=opts.port,
                                hermes_home=opts.hermes_home, hermes_bin=_hermes_bin(shell)):

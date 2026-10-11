@@ -14,6 +14,7 @@ from ..models.api_token import ApiTokenDoc
 from ..models.user import UserDoc
 from ..services import tokens as token_service
 from ..utils import tokens as token_utils
+from . import skill_sync
 from .envfile import has_gaca_token, upsert_env
 from .local import PROFILE_NAME
 
@@ -79,4 +80,18 @@ async def connect_profiles(
             raise
         await token_service.revoke_older_with_name(owner, name, keep_id=doc.id)
         results.append(Connected(profile, env_path, name, doc.id))
+    return results
+
+
+def install_skills(home: Path, source: Path | None = None) -> dict[str, skill_sync.SyncResult | str]:
+    """Put GACA's Hermes skills into every profile (the default one included) under `skills/gaca/`.
+    `{profile: SyncResult}`, or `{profile: reason}` for one that could not take them. Safe to re-run:
+    a file an agent has edited since the last install is left alone (see skill_sync)."""
+    source = source or skill_sync.default_source()
+    results: dict[str, skill_sync.SyncResult | str] = {}
+    for profile, env_path in profile_env_paths(home).items():
+        try:
+            results[profile] = skill_sync.sync(source, env_path.parent / "skills", create_skills_dir=True)
+        except skill_sync.SkillSyncError as error:
+            results[profile] = str(error)
     return results

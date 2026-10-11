@@ -70,6 +70,9 @@ class Settings(BaseSettings):
     # The hermes executable for local mode: a name looked up on PATH (and ~/.local/bin) or an
     # absolute path.
     hermes_bin: str = "hermes"
+    # Where GACA's Hermes skills live (the repo's `skills/`). Empty = next to this code. Only used to
+    # give a newly created or discovered crew member its skills.
+    skills_dir: str = ""
 
     # --- Push notifications --------------------------------------------
     # Path to a Firebase service-account JSON key (Firebase console → Project

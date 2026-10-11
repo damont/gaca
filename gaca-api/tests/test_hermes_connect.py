@@ -201,3 +201,36 @@ def test_an_old_agent_jwt_is_not_mistaken_for_an_api_token(server, hermes_home):
     assert "old-jwt-value" in (hermes_home / ".env").read_text()
     cli.main(["hermes", "connect", "--hermes-home", str(hermes_home)])
     assert env(hermes_home / ".env")["GACA_API_TOKEN"].startswith("gaca_pat_")
+
+
+# ── the GACA skills go in with the tokens ────────────────────────────
+
+def test_connect_installs_the_gaca_skills_into_every_profile_and_reports_it(server, hermes_home, capsys):
+    assert cli.main(["hermes", "connect", "--hermes-home", str(hermes_home)]) == 0
+    out = capsys.readouterr().out
+    for place in (hermes_home / "skills" / "gaca", *(hermes_home / "profiles" / p / "skills" / "gaca" for p in ("toolshed", "trading"))):
+        assert (place / "gaca-alerts" / "SKILL.md").is_file() and (place / "gaca" / "SKILL.md").is_file()
+    assert "GACA skills:" in out and "default" in out and "file(s) installed or updated" in out
+    assert PROVIDER_LINE in (hermes_home / ".env").read_text()  # still nothing but GACA's own folder touched
+
+
+def test_connect_again_says_the_skills_are_up_to_date_and_respects_agent_edits(server, hermes_home, capsys):
+    cli.main(["hermes", "connect", "--hermes-home", str(hermes_home)])
+    capsys.readouterr()
+    mine = hermes_home / "profiles" / "toolshed" / "skills" / "gaca" / "gaca-lists" / "SKILL.md"
+    mine.write_text("my lists skill")
+    cli.main(["hermes", "connect", "--hermes-home", str(hermes_home)])
+    out = capsys.readouterr().out
+    assert mine.read_text() == "my lists skill"
+    assert "up to date" in out and "were left alone" in out and "gaca-lists/SKILL.md" in out
+
+
+def test_connect_reports_a_profile_that_cannot_take_the_skills(server, hermes_home, tmp_path, capsys):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (hermes_home / "profiles" / "toolshed" / "skills").symlink_to(outside)
+    assert cli.main(["hermes", "connect", "--hermes-home", str(hermes_home)]) == 0
+    out = capsys.readouterr().out
+    assert "toolshed" in out and "NOT installed" in out
+    assert list(outside.iterdir()) == []
+    assert (hermes_home / "profiles" / "trading" / "skills" / "gaca" / "gaca-alerts" / "SKILL.md").is_file()  # the others still got theirs

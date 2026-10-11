@@ -7,6 +7,7 @@ do no DB access — so the same two steps live here and the route reads the same
 """
 from __future__ import annotations
 
+import logging
 import secrets
 
 from ..agent import runtime as agent_runtime
@@ -19,6 +20,8 @@ from ..provisioning.base import ProvisioningError
 from ..provisioning.select import provisioner_for
 from . import tokens as token_service
 from .exceptions import CrewNotConfigured, InvalidRequest, NotFound
+
+logger = logging.getLogger(__name__)
 
 
 async def find_by_id(user_id: str) -> UserDoc | None:
@@ -162,6 +165,8 @@ async def provision_crew_member(
         if minted is not None:  # nobody holds that secret now: don't leave it valid
             await token_service.revoke(user, minted.id)
         raise
+    if provisioner.can_wire_gaca:
+        await _install_skills(provisioner, [name])
     return await add_crew_member(user, name, port, api_key, color, path=path)
 
 
@@ -328,6 +333,19 @@ async def set_ssh_connection(
     return updated
 
 
+async def _install_skills(provisioner, names) -> None:
+    """Give each named profile GACA's Hermes skills (so the agent knows how to post alerts,
+    briefings, lists and pages). Best-effort and quiet: a profile that cannot take them yet must
+    never make crew creation or discovery fail, and re-running is cheap and safe."""
+    for name in names:
+        if name == "default":
+            continue  # outside what the service may write; the installer / `hermes connect` does it
+        try:
+            await provisioner.install_skills(name)
+        except (ProvisioningError, OSError) as error:
+            logger.warning("could not install GACA skills into profile %r: %s", name, error)
+
+
 async def _wire_unwired_profiles(user: UserDoc, provisioner) -> None:
     """Give profiles that have no GACA token yet (e.g. made by hand with `hermes profile create`)
     one, as the app discovers them. Best-effort: wiring must never make discovery fail."""
@@ -402,6 +420,7 @@ async def discover_crew(
 
     if provisioner.can_wire_gaca:
         await _wire_unwired_profiles(user, provisioner)
+        await _install_skills(provisioner, await provisioner.named_profiles())
 
     update_fields: dict = {}
     if updated.agent_host is None:
