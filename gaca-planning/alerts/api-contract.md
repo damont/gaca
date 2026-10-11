@@ -111,7 +111,7 @@ day: it's just one more optional field on the calls that actually need it.
 `access` field:
 
 ```jsonc
-"access": { "host": "david-claw.lan", "port": 22, "username": "david", "private_key": "…" }
+"access": { "host": "hermes-box.lan", "port": 22, "username": "me", "private_key": "…" }
 ```
 
 Give it once, on whichever of those two calls you make first — gaca-api
@@ -158,7 +158,7 @@ about the palette itself is part of this contract, just the field.
 
 ```jsonc
 {
-  "host": "http://david-claw",
+  "host": "http://hermes-box",
   "crew": [ { /* CrewMember */ }, … ],
   "can_create": true   // does gaca-api already have what it needs to
                         // create a new one for you (§ above) — lets an
