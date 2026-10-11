@@ -137,9 +137,8 @@ async def handle_provisioning_error(request: Request, exc: ProvisioningError) ->
 def health() -> dict:
     """Liveness probe. Does no I/O so it can't fail for downstream reasons.
 
-    Lives under /api like every other route: in production nginx proxies
-    `location /api/` to this service without stripping the prefix, so a route
-    outside /api would be unreachable through the front door.
+    Lives under /api like every other route: the app builds every URL from a
+    base ending in /api/, so a route outside it would be unreachable.
     """
     return {"status": "ok", "service": app.title, "version": app.version}
 
@@ -181,4 +180,4 @@ def run() -> None:
     from .config import settings
     from .serve import run_app
 
-    run_app(app, settings.api_host, settings.api_port, settings.api_socket)
+    run_app(app, settings.api_host, settings.api_port)

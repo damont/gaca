@@ -13,7 +13,7 @@ from gaca_api.main import app
 
 def test_every_route_is_mounted_under_api():
     for path in app.openapi()["paths"]:
-        assert path.startswith("/api/"), f"{path} is unreachable through nginx"
+        assert path.startswith("/api/"), f"{path} is unreachable: the app builds every URL under /api/"
 
 
 def test_schema_lists_the_pairing_and_session_paths():

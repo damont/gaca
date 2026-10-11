@@ -40,11 +40,6 @@ class Settings(BaseSettings):
     # Port this service binds to (intentionally uncommon, not 8080/8000).
     api_port: int = 41700
 
-    # Also listen on this Unix socket (in addition to api_host:api_port). Used when the API
-    # runs as a host process and the frontend's nginx container proxies to it through a
-    # mounted directory — see serve.py. Unset = TCP only.
-    api_socket: str | None = None
-
     # Embedded SQLite is the system of record (sessions, messages; later audit,
     # events). One file, no server. Override per deployment with GACA_DB_PATH —
     # e.g. /var/lib/gaca/gaca.db on the Pi.

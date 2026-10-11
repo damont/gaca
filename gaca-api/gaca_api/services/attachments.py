@@ -14,7 +14,7 @@ from ..models.base import utcnow
 from .exceptions import InvalidRequest, NotFound, PayloadTooLarge
 from . import sessions as sessions_service
 
-# Matches the nginx layers in front of the API (2m) — a bigger body never arrives.
+# Photos are capped here; the request-size limit in security.py leaves room for this plus multipart framing.
 MAX_BYTES = 2 * 1024 * 1024
 ORPHAN_TTL = timedelta(days=1)
 

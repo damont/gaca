@@ -77,7 +77,7 @@ status route (the app got an unauthenticated HTML page instead of JSON). Docs ar
 3. **API hardening for life without nginx** (PR 3a): security headers, 3 MiB request cap, per-client
    rate limits on sign-in/claim (real IP from `CF-Connecting-IP`, trusted only from a loopback peer),
    CORS off by default (`GACA_CORS_ORIGINS`), refusing to start with the placeholder/short JWT secret
-   (`GACA_DEV=1` bypasses, for local dev only). **Installer** (3b, done): `./install.sh` (uv, deps, a strong `.env` that never clobbers an
+   (since removed with the sign-in). **Installer** (3b, done): `./install.sh` (uv, deps, a strong `.env` that never clobbers an
    existing secret, the service, cloudflared with a pasted tunnel token or a temporary quick tunnel, the setup
    code as a QR/`gaca://setup` link, then waits for the claim and wires Hermes). `--service system` is the sandboxed
    default and needs root; without a way to get root it leaves ONE script for the operator and a re-run
@@ -90,3 +90,12 @@ status route (the app got an unauthenticated HTML page instead of JSON). Docs ar
    per server, one server per phone; `gaca-api device list|revoke`. No baked-in server URL. The old
    password/Google endpoints are removed in a follow-up once a device is paired.
 5. **Hardening**: login/claim rate limits, refuse the default JWT secret, SECURITY.md.
+
+
+## Status, 2026-10-11
+Built and deployed: hardening (#27), installer (#28), device pairing (#29), sign-in removal (#30; stored password
+hashes and Google ids scrubbed from existing databases at startup). nginx, the React frontend, the Dockerfile and the
+compose files are removed from the repo; the API listens on loopback TCP only (the Unix socket that fed the frontend's
+nginx is gone). Production cutover on david-claw: cloudflared on the host network pointing at `http://localhost:41700`
+(Cloudflare dashboard: the public hostname's service changes from `http://nginx:80`). Still to do: SECURITY.md, generic
+(de-personalised) skills, APK release, licence, and the split of private planning material into its own repository.
