@@ -159,3 +159,31 @@ def test_profile_route_joins_gaca_identity_with_the_engine_picture(http):
     assert "api_key" not in r.text and "port" not in body  # internals never leak
     assert http.get("/api/crew/default/profile").json()["is_default"] is True
     assert http.get("/api/crew/nobody/profile").status_code == 404
+
+
+# ── GET /crew/{name}/skills: Hermes's trouble is a 502 with a reason, never a 500 ──
+
+def _skills_route(http, monkeypatch, routes):
+    adapter = _adapter(routes)
+    monkeypatch.setattr(auth_service, "backend_for_crew", lambda user, member: adapter)
+    return http.get("/api/crew/default/skills")
+
+
+def test_skills_route_lists_hermes_skills(http):
+    r = http.get("/api/crew/default/skills")
+    assert r.status_code == 200 and [s["name"] for s in r.json()] == ["a", "b", "c", "d"]
+
+
+def test_a_skill_without_a_description_still_lists(http, monkeypatch):
+    r = _skills_route(http, monkeypatch, {"/v1/skills": {"data": [{"name": "x", "description": None}]}})
+    assert r.status_code == 200 and r.json() == [{"name": "x", "description": "", "category": None}]
+
+
+def test_hermes_error_on_skills_is_a_502_with_a_reason(http, monkeypatch):
+    r = _skills_route(http, monkeypatch, {"/v1/skills": 500})
+    assert r.status_code == 502 and "500" in r.json()["detail"]
+
+
+def test_hermes_down_on_skills_is_a_502_with_a_reason(http, monkeypatch):
+    r = _skills_route(http, monkeypatch, {})
+    assert r.status_code == 502 and "Couldn't reach Hermes" in r.json()["detail"]

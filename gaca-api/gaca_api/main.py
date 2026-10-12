@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .agent import runtime as agent_runtime
+from .agent.base import EngineUnavailable
 from .bus import event_bus
 from .db import client
 from .provisioning.base import ProvisioningError
@@ -148,6 +149,13 @@ async def handle_provisioning_error(request: Request, exc: ProvisioningError) ->
     """Map a failed provisioning call to HTTP 502 — gaca-api reached out to
     the user's own box on their behalf and that failed; not a client error,
     and not gaca-api's own fault either, hence 502 rather than 500."""
+    return JSONResponse(status_code=502, content={"detail": str(exc)})
+
+
+@app.exception_handler(EngineUnavailable)
+async def handle_engine_unavailable(request: Request, exc: EngineUnavailable) -> JSONResponse:
+    """A crew member's engine couldn't be reached or refused a read: 502 with a message
+    the app can show, never a bare 500."""
     return JSONResponse(status_code=502, content={"detail": str(exc)})
 
 
