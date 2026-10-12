@@ -22,6 +22,18 @@ class Shell:
             return subprocess.run(argv, timeout=timeout, env=env, text=True)
         return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, env=env)
 
+    def service_started_at(self, name: str) -> float | None:
+        """When (unix time) the system service last started, or None if it is not running."""
+        out = self.run(["systemctl", "show", "-p", "ActiveEnterTimestampMonotonic", "--value", f"{name}.service"], timeout=15)
+        state = self.run(["systemctl", "is-active", f"{name}.service"], timeout=15)
+        try:
+            entered = int((out.stdout or "").strip() or 0)
+        except ValueError:
+            return None
+        if state.returncode != 0 or (state.stdout or "").strip() != "active" or entered <= 0:
+            return None
+        return time.time() - (time.monotonic() - entered / 1_000_000)
+
     def which(self, name: str) -> str | None:
         return shutil.which(name)
 
