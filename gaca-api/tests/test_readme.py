@@ -60,3 +60,8 @@ def test_every_cli_command_in_the_day_to_day_table_exists():
     table = README.split("## Day to day", 1)[1].split("\n## ", 1)[0]
     for name in re.findall(r"^\| `gaca-api (\w[\w-]*)", table, re.M):
         assert name in commands, f"the README documents `gaca-api {name}`, which does not exist"
+
+
+def test_the_readme_says_the_cloudflare_page_waiting_for_the_tunnel_is_normal():
+    cloudflare = README.split("## Get an address (Cloudflare)", 1)[1].split("\n## ", 1)[0]
+    assert "Waiting for your Tunnel to connect" in cloudflare and "normal" in cloudflare and "Continue" in cloudflare
