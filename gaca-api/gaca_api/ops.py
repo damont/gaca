@@ -350,6 +350,8 @@ def doctor(shell: Shell, say: Say, name: str, paths: Paths) -> int:
     found = hermes_mod.problems(status, home)
     if not found:
         report.ok(f"Hermes {'.'.join(map(str, status.version))} is installed and its gateway answers on 127.0.0.1:{status.port}")
+        if note := hermes_mod.version_note(status):
+            report.note(note)
     for problem in found:
         report.problem(problem.what, problem.fix)
 
