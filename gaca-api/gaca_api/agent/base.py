@@ -110,6 +110,12 @@ class AgentBackend(Protocol):
         """
         ...
 
+    async def read_installed_skills(self, *, name: str, provisioner: Provisioner) -> list[SkillInfo]:
+        """The same list, read from the engine's host instead of its API, for when the API
+        can't answer (list_skills raised EngineUnavailable). Raises ProfileReadError when the
+        host can't be read either."""
+        ...
+
     # ── Profile (read-only picture of how this crew member is set up) ──
     async def describe_profile(self) -> ProfileInfo:
         """What the engine can tell us about this profile, in GACA's neutral terms

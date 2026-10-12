@@ -13,7 +13,7 @@ import secrets
 import weakref
 
 from ..agent import runtime as agent_runtime
-from ..agent.base import AgentBackend
+from ..agent.base import AgentBackend, EngineUnavailable, ProfileReadError
 from ..db import users as users_db
 from ..models.user import CREW_COLOR_PALETTE, CrewMember, SSHConnection, UserDoc
 from ..config import settings
@@ -307,7 +307,20 @@ async def list_skills(user: UserDoc, name: str):
     if member is None:
         raise NotFound("crew member", name)
     backend = backend_for_crew(user, member)
-    return await backend.list_skills()
+    try:
+        return await backend.list_skills()
+    except EngineUnavailable as unavailable:
+        # The engine's API couldn't list them (current Hermes releases 500 here): read them from
+        # the box instead, when gaca-api can reach it. If that fails too, the API's error stands.
+        provisioner = provisioner_for(user)
+        if provisioner is None:
+            raise
+        try:
+            return await asyncio.wait_for(
+                backend.read_installed_skills(name=member.name, provisioner=provisioner), timeout=12.0
+            )
+        except (ProfileReadError, asyncio.TimeoutError):
+            raise unavailable from None
 
 
 # ── Reaching the box directly (creation, discovery) ──────────────────

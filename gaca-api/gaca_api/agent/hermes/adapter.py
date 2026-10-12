@@ -29,6 +29,7 @@ from ...provisioning.base import Provisioner, ProvisioningError
 from ...schemas.crew_profile import ProfileInfo, PurposeInfo
 from . import translate_profile as tp
 from . import translate_purpose as tpu
+from . import translate_skills as tsk
 from ..base import EngineUnavailable, ProfileReadError
 from .translate import translate
 
@@ -229,6 +230,17 @@ class HermesAdapter:
         except ValueError as exc:
             logger.warning("engine skills unreadable: %s", exc)
             raise EngineUnavailable("Hermes sent a skills list gaca-api couldn't read.") from exc
+
+    async def read_installed_skills(self, *, name: str, provisioner: Provisioner) -> list[SkillInfo]:
+        """The profile's skills read from its skills/ folder on the box (see translate_skills:
+        Hermes' own /v1/skills is broken in current releases)."""
+        try:
+            files = await provisioner.read_skill_files(name)
+        except (ProvisioningError, ValueError) as error:
+            raise ProfileReadError(str(error)) from error
+        if files is None:
+            raise ProfileReadError(f"no profile called {name!r} on the engine's host")
+        return tsk.to_skills(files)
 
     # ── Profile ────────────────────────────────────────────────────────
     async def describe_profile(self) -> ProfileInfo:
