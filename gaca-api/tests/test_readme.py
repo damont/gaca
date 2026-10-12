@@ -43,7 +43,7 @@ def test_the_sudo_command_the_readme_gives_is_the_one_the_installer_prints(tmp_p
 
 def test_the_cloudflare_steps_name_the_right_port_and_screens():
     assert "localhost:41700" in README and str(cli._parser().parse_args(["install", "--repo-root", "."]).port) == "41700"
-    for phrase in ("Tunnels & Mesh", "Published application routes", "--tunnel quick", "--tunnel none"):
+    for phrase in ("Tunnels & Mesh", "published application route", "--tunnel quick", "--tunnel none"):
         assert phrase in README
 
 
@@ -65,3 +65,10 @@ def test_every_cli_command_in_the_day_to_day_table_exists():
 def test_the_readme_says_the_cloudflare_page_waiting_for_the_tunnel_is_normal():
     cloudflare = README.split("## Get an address (Cloudflare)", 1)[1].split("\n## ", 1)[0]
     assert "Waiting for your Tunnel to connect" in cloudflare and "normal" in cloudflare and "Continue" in cloudflare
+
+
+def test_the_readme_links_out_for_hermes_and_both_apps():
+    assert "gaca-planning/hermes-setup.html" in README and (Path(__file__).resolve().parents[2] / "gaca-planning" / "hermes-setup.html").exists()
+    for repo in ("gaca-android", "gaca-ios"):
+        assert f"https://github.com/damont/{repo}#readme" in README
+    assert "eyJ" in README and "Routes" in README and "Service URL" in README

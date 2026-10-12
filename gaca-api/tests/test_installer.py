@@ -967,7 +967,7 @@ def test_the_interactive_token_prompt_uses_the_current_cloudflare_wording(tmp_pa
     opts = Options(repo_root=REPO, tunnel="token", config_dir=tmp_path / "cfg", port=41700)
     assert run_mod.setup_tunnel(opts, FakeShell(), Say(print)) == "https://gaca.example.com"
     out = capsys.readouterr().out
-    assert "Tunnels & Mesh" in out and "Published application routes" in out and "HTTP  localhost:41700" in out
+    assert "Tunnels & Mesh" in out and "Routes" in out and "http://localhost:41700" in out and "eyJ" in out
     assert "Public hostnames" not in out and "Zero Trust" not in out
     assert "Waiting for your Tunnel to connect" in out and "that is normal" in out
 
