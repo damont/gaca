@@ -35,11 +35,25 @@ def normalize_hostname(raw: str) -> str:
     return value
 
 
+# What the Cloudflare page's copy buttons put on the clipboard: the whole command, token inside it.
+_IN_COMMAND = re.compile(r"(?:--token|service\s+install)[ \t=]+([A-Za-z0-9_=+/-]{40,4096})(?![A-Za-z0-9_=+/-])")
+
+
 def valid_token(raw: str) -> str:
+    """The tunnel token from what was pasted: the bare token, or the command Cloudflare shows
+    (`cloudflared tunnel run --token ...` / `sudo cloudflared service install ...`) with the token picked
+    out of it. Only the token is ever used; nothing else in the pasted text is run or kept."""
     value = raw.strip()
-    if not _TOKEN.fullmatch(value):
-        raise ValueError("that does not look like a Cloudflare tunnel token (a long string from the tunnel's install command)")
-    return value
+    if _TOKEN.fullmatch(value):
+        return value
+    found = set(_IN_COMMAND.findall(value))
+    if len(found) == 1:
+        return found.pop()
+    hint = " It contains ***: that is the masked display; use the copy button next to the command." if "***" in value else ""
+    raise ValueError(
+        "that does not look like a Cloudflare tunnel token. Paste the long string after `--token`, or the whole "
+        "`cloudflared tunnel run --token ...` command from the tunnel's page." + hint
+    )
 
 
 def docker_ready(shell: Shell) -> bool:

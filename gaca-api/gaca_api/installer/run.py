@@ -279,6 +279,34 @@ def choose_service(opts: Options, shell: Shell) -> str:
     )
 
 
+def _newest_mtime(paths: list[Path]) -> float:
+    newest = 0.0
+    for path in paths:
+        try:
+            newest = max(newest, path.stat().st_mtime)
+        except OSError:
+            pass
+    return newest
+
+
+def system_service_is_current(opts: Options, shell: Shell, unit: str) -> bool:
+    """Is the system service already installed with exactly this unit, running, and started after the
+    last change to its settings (.env, push keys)? Then there is nothing for root to do, and a re-run
+    must be able to carry on without asking for it again."""
+    try:
+        installed = (SYSTEM_UNIT_DIR / f"{opts.name}.service").read_text()
+    except OSError:
+        return False
+    if installed.strip() != unit.strip():
+        return False
+    started = shell.service_started_at(opts.name)
+    if started is None:
+        return False
+    secrets = push_mod.secrets_dir(opts.config_dir)
+    watched = [opts.repo_root / ".env", *(secrets.iterdir() if secrets.is_dir() else [])]
+    return started >= _newest_mtime(watched)
+
+
 def install_service(opts: Options, shell: Shell, say: Say, mode: str) -> None:
     deploy = opts.repo_root / "deploy"
     values = dict(
@@ -287,6 +315,9 @@ def install_service(opts: Options, shell: Shell, say: Say, mode: str) -> None:
     )
     if mode == "system":
         unit = render((deploy / "gaca-api.service").read_text(), **values)
+        if system_service_is_current(opts, shell, unit):
+            say.ok(f"system service {opts.name} is already installed, running and up to date")
+            return
         script = opts.config_dir / "install-service.sh"
         run_as_root(shell, system_install_script(unit, opts.name), script)
         say.ok(f"system service {opts.name} installed and started (sandboxed)")
@@ -367,7 +398,8 @@ def setup_tunnel(opts: Options, shell: Shell, say: Say) -> str | None:
         say.out(f"""
 In the Cloudflare dashboard: Networks > Tunnels & Mesh > create a tunnel (Cloudflared).
   1. Copy the token from the install command it shows (the long string after `--token`); do not run that command.
-  2. On the tunnel's "Published application routes" tab, add your hostname with service  HTTP  localhost:{opts.port}""")
+  2. On the tunnel's "Published application routes" tab, add your hostname with service  HTTP  localhost:{opts.port}
+Cloudflare's page says "Waiting for your Tunnel to connect" until this installer has started the tunnel: that is normal.""")
         token = getpass.getpass("Paste the tunnel token (input is hidden): ")
     if not token:
         raise RuntimeError("tunnel mode 'token' needs --tunnel-token-file, GACA_TUNNEL_TOKEN, or a terminal to paste into")

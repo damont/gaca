@@ -28,11 +28,12 @@ REPO = Path(__file__).resolve().parents[2]
 
 class FakeShell(Shell):
     def __init__(self, *, euid=1000, tty=False, sudo_n=False, docker=True, health=True, claimed=lambda: False,
-                 logs="", public_status=200, fail=(), hermes=None, gateway=True):
+                 logs="", public_status=200, fail=(), hermes=None, gateway=True, started_at=None):
         # `hermes`: the version string `hermes --version` prints, or None for "not installed".
         # `hermes_after_install`: what appears once the official installer has run.
         self._euid, self._tty, self._sudo_n, self._docker = euid, tty, sudo_n, docker
         self.hermes, self.gateway, self.hermes_after_install = hermes, gateway, None
+        self.started_at = started_at  # when the system service last started (None: not running)
         self.health, self.claimed, self.logs, self.public_status, self.fail = health, claimed, logs, public_status, fail
         self.calls, self.sleeps = [], 0
         self.on_sleep = lambda: None
@@ -62,6 +63,7 @@ class FakeShell(Shell):
 
     def is_tty(self): return self._tty
     def euid(self): return self._euid
+    def service_started_at(self, name): return self.started_at
 
     def sleep(self, seconds):
         self.sleeps += 1
@@ -221,6 +223,48 @@ def test_token_validation():
     for bad in ("", "short", "has space " * 10, "x;rm -rf /" * 8):
         with pytest.raises(ValueError):
             tunnel_mod.valid_token(bad)
+
+
+GOOD_TOKEN = "eyJhIjoiMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAiLCJ0IjoiYWJj"
+
+
+@pytest.mark.parametrize("pasted", [
+    f"cloudflared tunnel run --token {GOOD_TOKEN}",
+    f"  cloudflared tunnel run --token {GOOD_TOKEN}\n",
+    f"sudo cloudflared service install {GOOD_TOKEN}",
+    f"sudo cloudflared service install {GOOD_TOKEN}\n\ncloudflared tunnel run --token {GOOD_TOKEN}\n",  # both boxes at once
+    f"cloudflared tunnel run --token={GOOD_TOKEN}",
+])
+def test_the_command_cloudflare_shows_works_as_well_as_the_bare_token(pasted):
+    assert tunnel_mod.valid_token(pasted) == GOOD_TOKEN
+
+
+@pytest.mark.parametrize("pasted", [
+    f"cloudflared tunnel run --token {GOOD_TOKEN}; rm -rf /",  # the token is used, the rest is never run or kept
+])
+def test_only_the_token_is_taken_from_a_pasted_command(pasted):
+    assert tunnel_mod.valid_token(pasted) == GOOD_TOKEN
+
+
+def test_the_masked_display_text_is_explained_not_accepted():
+    with pytest.raises(ValueError, match="copy button"):
+        tunnel_mod.valid_token("cloudflared tunnel run --token eyJhIjoi*********************bCJ9")
+
+
+def test_two_different_tokens_in_one_paste_are_refused():
+    other = GOOD_TOKEN[:-3] + "xyz"
+    with pytest.raises(ValueError):
+        tunnel_mod.valid_token(f"cloudflared tunnel run --token {GOOD_TOKEN}\ncloudflared tunnel run --token {other}")
+
+
+def test_the_token_file_may_hold_the_whole_command(tmp_path):
+    token_file = tmp_path / "tok"
+    token_file.write_text(f"cloudflared tunnel run --token {GOOD_TOKEN}\n")
+    opts = Options(repo_root=REPO, tunnel="token", hostname="gaca.example.com", tunnel_token_file=token_file, config_dir=tmp_path / "cfg", port=41700)
+    shell = FakeShell()
+    assert run_mod.setup_tunnel(opts, shell, Say(lambda *_: None)) == "https://gaca.example.com"
+    stored = (tmp_path / "cfg" / "tunnel" / "cloudflared.token").read_text().strip()
+    assert stored == GOOD_TOKEN  # only the token was stored, not the command around it
 
 
 def test_token_setup_keeps_the_secret_out_of_the_compose_file(tmp_path):
@@ -925,6 +969,7 @@ def test_the_interactive_token_prompt_uses_the_current_cloudflare_wording(tmp_pa
     out = capsys.readouterr().out
     assert "Tunnels & Mesh" in out and "Published application routes" in out and "HTTP  localhost:41700" in out
     assert "Public hostnames" not in out and "Zero Trust" not in out
+    assert "Waiting for your Tunnel to connect" in out and "that is normal" in out
 
 
 def test_with_no_api_server_the_installer_says_the_app_has_no_crew_yet(flow, capsys):
@@ -949,3 +994,89 @@ def test_before_anyone_has_paired_the_installer_does_not_claim_there_is_no_crew(
     flow.use_hermes = True
     run_mod.wire_hermes(flow, FakeShell(hermes="v0.21.5"), Say(print))
     assert "no crew" not in capsys.readouterr().out
+
+
+
+
+# ── a re-run after the sudo step really does carry on ────────────────
+
+import time as _time
+
+
+@pytest.fixture
+def etc(tmp_path, monkeypatch):
+    directory = tmp_path / "etc-systemd"
+    directory.mkdir()
+    monkeypatch.setattr(run_mod, "SYSTEM_UNIT_DIR", directory)
+    return directory
+
+
+def first_pass_then_the_person_runs_the_sudo_command(flow, etc):
+    """Pass one stops for root and leaves the script; the person runs it, which puts that unit in place."""
+    flow.service = "system"
+    assert run_mod.run(flow, FakeShell(tty=False)) == run_mod.EXIT_NEEDS_ROOT
+    script = (flow.config_dir / "install-service.sh").read_text()
+    (etc / "gaca-api.service").write_text(script.split("<<'GACA_UNIT'\n", 1)[1].split("GACA_UNIT\n", 1)[0])
+
+
+def test_after_the_sudo_command_the_rerun_carries_on_without_asking_for_root_again(flow, etc, capsys):
+    first_pass_then_the_person_runs_the_sudo_command(flow, etc)
+    capsys.readouterr()
+    shell = FakeShell(tty=False, started_at=_time.time() + 60)
+    assert run_mod.run(flow, shell) == 0
+    out = capsys.readouterr().out
+    assert "already installed, running and up to date" in out and "Pairing code:" in out  # it got all the way to pairing
+    assert not shell.called("sudo") and "One step needs root" not in out
+
+
+def test_a_service_that_is_not_running_still_needs_root(flow, etc):
+    first_pass_then_the_person_runs_the_sudo_command(flow, etc)
+    assert run_mod.run(flow, FakeShell(tty=False, started_at=None)) == run_mod.EXIT_NEEDS_ROOT
+
+
+def test_a_changed_unit_still_needs_root(flow, etc):
+    first_pass_then_the_person_runs_the_sudo_command(flow, etc)
+    (etc / "gaca-api.service").write_text((etc / "gaca-api.service").read_text() + "# edited\nRestart=never\n")
+    assert run_mod.run(flow, FakeShell(tty=False, started_at=_time.time() + 60)) == run_mod.EXIT_NEEDS_ROOT
+
+
+def test_settings_changed_after_the_service_started_need_a_restart(flow, etc):
+    first_pass_then_the_person_runs_the_sudo_command(flow, etc)
+    started = (flow.repo_root / ".env").stat().st_mtime - 30  # the service started before .env was last written
+    assert run_mod.run(flow, FakeShell(tty=False, started_at=started)) == run_mod.EXIT_NEEDS_ROOT
+
+
+def test_a_push_key_added_after_the_service_started_needs_a_restart(flow, etc, tmp_path):
+    first_pass_then_the_person_runs_the_sudo_command(flow, etc)
+    started = _time.time() + 60
+    key = flow.config_dir / "secrets" / "fcm-service-account.json"
+    key.parent.mkdir(parents=True)
+    key.write_text("{}")
+    os.utime(key, (started + 30, started + 30))
+    assert run_mod.run(flow, FakeShell(tty=False, started_at=started)) == run_mod.EXIT_NEEDS_ROOT
+
+
+def test_with_passwordless_sudo_an_unchanged_service_is_not_touched(flow, etc):
+    first_pass_then_the_person_runs_the_sudo_command(flow, etc)
+    shell = FakeShell(sudo_n=True, started_at=_time.time() + 60)
+    assert run_mod.run(flow, shell) == 0 and not shell.called("sudo")
+
+
+def test_service_started_at_reads_systemd_and_refuses_what_is_not_running(monkeypatch):
+    from gaca_api.installer.shell import Shell
+
+    class Fake(Shell):
+        def __init__(self, shown, state, rc=0):
+            self.shown, self.state, self.rc = shown, state, rc
+
+        def run(self, argv, **kwargs):
+            if "show" in argv:
+                return subprocess.CompletedProcess(argv, 0, self.shown, "")
+            return subprocess.CompletedProcess(argv, self.rc, self.state, "")
+
+    monkeypatch.setattr("time.monotonic", lambda: 1000.0)
+    monkeypatch.setattr("time.time", lambda: 5000.0)
+    assert Fake("940000000\n", "active\n").service_started_at("gaca-api") == pytest.approx(5000.0 - (1000.0 - 940.0))
+    assert Fake("940000000\n", "inactive\n", rc=3).service_started_at("gaca-api") is None
+    assert Fake("0\n", "active\n").service_started_at("gaca-api") is None
+    assert Fake("garbage\n", "active\n").service_started_at("gaca-api") is None

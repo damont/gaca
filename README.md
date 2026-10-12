@@ -62,11 +62,16 @@ you open no ports and need no static IP. You choose how permanent the address is
 For a permanent address, do this once in the Cloudflare dashboard **before** running the installer:
 
 1. Open **Networks → Tunnels & Mesh** and create a tunnel (a *Cloudflared* tunnel). Name it anything. Copy its **token**: the long
-   string after `--token` in the install command the page shows. Do not run that command; GACA's installer starts the tunnel itself.
-2. Open the tunnel, go to its **Published application routes** tab, and choose **Add a published application route**. Pick your domain
+   string after `--token` in the install command the page shows (the copy button next to "Or, run tunnel (manual)" copies the whole command,
+   and the installer accepts that too). Do not run that command yourself; GACA's installer starts the tunnel.
+2. Open the tunnel (if the page is stuck waiting, see step 3), go to its **Published application routes** tab, and choose **Add a published application route**. Pick your domain
    (and a subdomain if you want one), set the service type to **HTTP** and the URL to **`localhost:41700`**. Cloudflare creates the
    DNS record for you.
-3. Give the installer the token and the hostname (it asks, or see the flags below).
+3. **Pause here.** The Cloudflare page will say *"Waiting for your Tunnel to connect"* and **Continue** will stay greyed out. That
+   is normal, nothing is wrong: the tunnel only connects when GACA's installer starts it (the Install step below). Leave the tab open.
+   Once the installer has started the tunnel, Continue lights up. Then add the published application route (step 2) if you have
+   not been able to yet; the route can also be added later from the tunnel's own page.
+4. Give the installer the token and the hostname (it asks, or see the flags below).
 
 Cloudflare rearranges these screens from time to time; the names to look for are *Tunnels*, *token*, and *published application
 route* (older screens call it a *public hostname*). When the installer finishes it checks `https://<your hostname>/api/health`
