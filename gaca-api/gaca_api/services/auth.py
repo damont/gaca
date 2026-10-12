@@ -7,8 +7,10 @@ do no DB access — so the same two steps live here and the route reads the same
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import secrets
+import weakref
 
 from ..agent import runtime as agent_runtime
 from ..agent.base import AgentBackend
@@ -358,6 +360,39 @@ async def _wire_unwired_profiles(user: UserDoc, provisioner) -> None:
         except (ProvisioningError, OSError, ValueError):
             if minted is not None:
                 await token_service.revoke(user, minted.id)
+
+
+_discovery_locks: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = weakref.WeakKeyDictionary()
+
+
+def _discovery_lock() -> asyncio.Lock:
+    """One lock per event loop: two app screens asking at once must not both wire the same profiles."""
+    loop = asyncio.get_running_loop()
+    if loop not in _discovery_locks:
+        _discovery_locks[loop] = asyncio.Lock()
+    return _discovery_locks[loop]
+
+
+async def ensure_crew_discovered(user: UserDoc) -> UserDoc:
+    """When GACA runs on the Hermes machine, the Hermes profiles there simply ARE the crew: register any
+    that are not yet (the `default` profile first, which becomes the default crew member) so nobody has to
+    run a discovery step. Cheap when there is nothing new (it only reads Hermes's small .env files), and
+    quiet on failure: listing crew must never fail because discovery could not run."""
+    if settings.agent_access != "local":
+        return user
+    provisioner = provisioner_for(user)
+    if provisioner is None:
+        return user
+    async with _discovery_lock():
+        try:
+            fresh = await users_db.find(user.id) or user
+            found = await provisioner.discover_profiles()
+            if not set(found) - {c.name for c in fresh.crew}:
+                return fresh
+            return await discover_crew(fresh)
+        except (ProvisioningError, CrewNotConfigured, OSError) as error:
+            logger.warning("could not discover Hermes profiles: %s", error)
+            return user
 
 
 async def discover_crew(

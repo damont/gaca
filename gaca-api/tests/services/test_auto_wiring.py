@@ -10,6 +10,7 @@ import pytest
 from conftest import make_owner as _make_owner
 from gaca_api.config import settings
 from gaca_api.db import client
+from gaca_api.db import users as users_db
 from gaca_api.provisioning import envfile
 from gaca_api.provisioning.base import ProvisioningError
 from gaca_api.provisioning.local import GACA_ENV_KEYS, LocalError, LocalHermes
@@ -283,3 +284,107 @@ def test_install_skills_refuses_a_symlinked_profile_dir(box, tmp_path):
     with pytest.raises(LocalError):
         run_sync(LocalHermes(box.home, settings.hermes_bin).install_skills("linked"))
     assert list(outside.iterdir()) == []
+
+
+# ── the Hermes profiles on this machine are the crew, with nothing to run ──
+
+def test_a_fresh_install_gets_the_default_crew_member_from_just_enabled_and_key(box):
+    """Exactly what the README says to add: no port line. The default profile becomes the default crew member."""
+    (box.home / ".env").write_text("API_SERVER_ENABLED=true\nAPI_SERVER_KEY=" + "d" * 32 + "\n")
+    import shutil
+    shutil.rmtree(box.home / "profiles")
+
+    async def go():
+        owner = await make_owner()
+        assert owner.crew == []
+        return await auth_service.ensure_crew_discovered(owner), await users_db.find(owner.id)
+
+    updated, stored = run(go)
+    assert [c.name for c in updated.crew] == ["default"] and updated.default_crew == "default"
+    assert updated.crew[0].port == 8642 and updated.agent_host == "http://127.0.0.1"
+    assert stored.default_crew == "default" and [c.name for c in stored.crew] == ["default"]  # persisted, not just returned
+
+
+def test_discovered_profiles_are_wired_and_get_their_skills_in_the_same_step(box):
+    async def go():
+        owner = await make_owner()
+        await auth_service.ensure_crew_discovered(owner)
+        return await token_service.list_tokens(owner)
+    tokens = run(go)
+    assert {t.name for t in tokens} == {"hermes-toolshed"}  # (the default profile's token is minted by `hermes connect`)
+    assert skill_file(box, "toolshed").is_file()
+
+
+def test_nothing_is_redone_once_everything_is_registered(box, monkeypatch):
+    calls = []
+    real = auth_service.discover_crew
+
+    async def counting(user, access=None):
+        calls.append(1)
+        return await real(user, access)
+    monkeypatch.setattr(auth_service, "discover_crew", counting)
+
+    async def go():
+        owner = await make_owner()
+        first = await auth_service.ensure_crew_discovered(owner)
+        again = await auth_service.ensure_crew_discovered(first)
+        third = await auth_service.ensure_crew_discovered(again)
+        return first, third
+    first, third = run(go)
+    assert len(calls) == 1 and [c.name for c in third.crew] == [c.name for c in first.crew]
+
+
+def test_a_profile_added_later_is_picked_up(box):
+    async def go():
+        owner = await make_owner()
+        first = await auth_service.ensure_crew_discovered(owner)
+        (box.home / "profiles" / "later").mkdir()
+        (box.home / "profiles" / "later" / ".env").write_text("API_SERVER_ENABLED=true\nAPI_SERVER_PORT=8650\nAPI_SERVER_KEY=" + "l" * 32 + "\n")
+        return first, await auth_service.ensure_crew_discovered(first)
+    first, second = run(go)
+    assert "later" not in [c.name for c in first.crew] and "later" in [c.name for c in second.crew]
+
+
+def test_simultaneous_requests_register_each_profile_once(box):
+    async def go():
+        owner = await make_owner()
+        results = await asyncio.gather(*[auth_service.ensure_crew_discovered(owner) for _ in range(6)])
+        stored = await users_db.find(owner.id)
+        return results, stored, await token_service.list_tokens(owner)
+    results, stored, tokens = run(go)
+    assert sorted(c.name for c in stored.crew) == ["default", "toolshed"]
+    assert len([t for t in tokens if t.name == "hermes-toolshed"]) == 1
+
+
+def test_it_never_touches_the_box_over_ssh(box, monkeypatch):
+    """Over SSH the Hermes machine is somewhere else: automatic discovery must not reach out to it."""
+    reached = []
+
+    class FakeRemote:
+        can_wire_gaca = False
+        default_agent_host = "http://elsewhere"
+
+        async def discover_profiles(self):
+            reached.append("discover")
+            return {"default": {"port": 8642, "path": "", "api_key": "k" * 32}}
+
+        async def named_profiles(self):
+            return []
+
+    async def go():
+        owner = await make_owner()
+        monkeypatch.setattr(settings, "agent_access", "ssh")
+        monkeypatch.setattr(auth_service, "provisioner_for", lambda user: FakeRemote())
+        return await auth_service.ensure_crew_discovered(owner)
+    assert run(go).crew == [] and reached == []
+
+
+def test_it_never_fails_the_caller(box, monkeypatch):
+    async def go():
+        owner = await make_owner()
+
+        async def boom(self):
+            raise ProvisioningError("disk on fire")
+        monkeypatch.setattr(LocalHermes, "discover_profiles", boom)
+        return await auth_service.ensure_crew_discovered(owner)
+    assert run(go).crew == []

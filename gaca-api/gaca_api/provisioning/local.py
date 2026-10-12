@@ -197,7 +197,8 @@ def _api_server_settings(env_text: str | None) -> dict | None:
             values[match.group(1)] = match.group(2).strip()
     if values.get("API_SERVER_ENABLED", "").lower() != "true":
         return None
-    port, key = values.get("API_SERVER_PORT", ""), values.get("API_SERVER_KEY", "")
+    # Hermes serves on 8642 unless told otherwise, so an unset port is the default, not "disabled".
+    port, key = values.get("API_SERVER_PORT") or str(DEFAULT_GATEWAY_PORT), values.get("API_SERVER_KEY", "")
     if not (port.isascii() and port.isdigit() and 0 < int(port) < 65536):
         return None
     if not _KEY_VALUE.fullmatch(key):
