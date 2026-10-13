@@ -4,7 +4,8 @@ GACA is the phone app for a Hermes agent, so Hermes is a requirement, not an opt
 install or configure Hermes (it has its own installer, its own upgrades and your own model
 credentials). This module only checks what GACA depends on and says, concretely, what is missing:
 
-  * the `hermes` command, version 0.21 or newer (one gateway serves every profile);
+  * the `hermes` command, version 0.21 or newer (one gateway serves every profile); a version newer
+    than GACA has been tested with is a warning, not a stop;
   * a Hermes home (`hermes setup` creates it, and is where you choose a model provider);
   * the gateway's API server switched on: API_SERVER_ENABLED=true and an API_SERVER_KEY in
     ~/.hermes/.env (GACA chats through it);
@@ -20,6 +21,10 @@ from ..provisioning.envfile import read_text
 from .shell import Shell
 
 MIN_VERSION = (0, 21)
+# The newest Hermes GACA has been checked against (runs, events, skills, profile reads). Keep in
+# step with the README's "Set up Hermes". Hermes from v2026.9.11 (0.21.x) to at least 0.21.7 has a
+# broken GET /v1/skills; gaca-api reads the skill files instead (agent/hermes/translate_skills.py).
+TESTED_UP_TO = (0, 21, 7)
 OFFICIAL_INSTALL = "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash"
 DOCS_API_SERVER = "https://hermes-agent.nousresearch.com/docs/user-guide/features/api-server"
 DEFAULT_GATEWAY_PORT = 8642
@@ -71,6 +76,15 @@ def inspect(shell: Shell, home: Path, binary: str | None) -> Status:
     code, _ = shell.http_get(f"http://127.0.0.1:{status.port}/health")
     status.gateway_up = code == 200
     return status
+
+
+def version_note(status: Status) -> str | None:
+    """A warning when Hermes is newer than GACA has been tested with, else None."""
+    if status.version is None or status.version <= TESTED_UP_TO:
+        return None
+    found, tested = ".".join(map(str, status.version)), ".".join(map(str, TESTED_UP_TO))
+    return (f"Hermes {found} is newer than GACA has been tested with (up to {tested}). It should work, "
+            "but if chats, skills or crew details misbehave, this is the first thing to check.")
 
 
 def problems(status: Status, home: Path) -> list[Problem]:

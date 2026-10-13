@@ -176,6 +176,43 @@ else:
                       "profile_yaml": read(d / "profile.yaml", 4000), "stock": stock_texts()}))
 """
 
+# The skills fallback: every SKILL.md under one profile's skills/ (see agent/hermes/
+# translate_skills.py for why). Read-only, size-capped, never follows a symlink.
+_READ_SKILLS_SCRIPT = r"""
+import json, os, pathlib, re, sys
+
+name = sys.argv[1]
+home = pathlib.Path.home() / ".hermes"
+if name == "default":
+    d = home
+elif re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", name):
+    d = home / "profiles" / name
+else:
+    d = None
+if d is None or not d.is_dir():
+    print(json.dumps({"found": False}))
+    sys.exit(0)
+root = d / "skills"
+found = []
+if root.is_dir() and not root.is_symlink():
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        parts = list(pathlib.Path(dirpath).relative_to(root).parts)
+        if parts and "SKILL.md" in filenames:
+            path = pathlib.Path(dirpath) / "SKILL.md"
+            if path.is_file() and not path.is_symlink():
+                try:
+                    found.append({"path": parts, "text": path.read_text(encoding="utf-8", errors="replace")[:4000]})
+                except OSError:
+                    pass
+            dirnames[:] = []
+            if len(found) >= 500:
+                break
+            continue
+        dirnames[:] = sorted(x for x in dirnames if not x.startswith(".") and len(parts) < 3
+                             and not (pathlib.Path(dirpath) / x).is_symlink())
+print(json.dumps({"found": True, "skills": found}))
+"""
+
 _PROFILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 
 
@@ -190,6 +227,18 @@ async def read_profile_files(conn: SSHConnection, name: str) -> dict | None:
     )
     data = json.loads(stdout)
     return data if data.get("found") else None
+
+
+async def read_skill_files(conn: SSHConnection, name: str) -> list[dict] | None:
+    """Every SKILL.md under one profile's skills/ (`{"path", "text"}`), or None if no such
+    profile. Read-only; the command is fixed and `name` is validated."""
+    if name != "default" and not _PROFILE_NAME.fullmatch(name):
+        raise SSHError(f"not a valid profile name: {name!r}")
+    stdout = await run(
+        conn, f"python3 -c {shlex.quote(_READ_SKILLS_SCRIPT)} {shlex.quote(name)}", timeout=10.0
+    )
+    data = json.loads(stdout)
+    return data["skills"] if data.get("found") else None
 
 
 async def next_free_port(conn: SSHConnection, *, base: int = 8642) -> int:
@@ -378,6 +427,9 @@ class SshProvisioner:
 
     async def read_profile_files(self, name: str) -> dict | None:
         return await read_profile_files(self.conn, name)
+
+    async def read_skill_files(self, name: str) -> list[dict] | None:
+        return await read_skill_files(self.conn, name)
 
     async def next_free_port(self) -> int:
         return await next_free_port(self.conn)

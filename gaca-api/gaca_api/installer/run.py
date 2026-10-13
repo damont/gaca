@@ -105,6 +105,8 @@ def check_hermes(opts: Options, shell: Shell, say: Say) -> bool:
     if not found:
         version = ".".join(map(str, status.version))
         say.ok(f"Hermes {version} is installed and its gateway answers on 127.0.0.1:{status.port}")
+        if note := hermes_mod.version_note(status):
+            say.warn(note)
         return True
     for problem in found:
         say.warn(problem.what)

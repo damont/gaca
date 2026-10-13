@@ -30,7 +30,10 @@ phone app ──https──▶ Cloudflare Tunnel ──▶ gaca-api (127.0.0.1:4
    curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
    hermes setup
    ```
-   You need Hermes **0.21 or newer**.
+   You need Hermes **0.21 or newer**. GACA is tested with **0.21.5 through 0.21.7**. The installer and
+   `gaca-api doctor` warn (but carry on) if your Hermes is newer than that. Hermes 0.21.x's own skills
+   list (`GET /v1/skills`) is broken; GACA reads the skill files directly instead, so the app's Skills tab
+   still works.
 2. Turn on Hermes's API server, which is how GACA talks to your agent. Add to `~/.hermes/.env`:
    ```
    API_SERVER_ENABLED=true

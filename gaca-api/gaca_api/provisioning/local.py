@@ -5,8 +5,9 @@ local mode, and it is deliberately small:
 
   READ    a fixed set of files under HERMES_HOME, never anything else:
           .env (only the API_SERVER_* lines are parsed, nothing else leaves
-          this module), SOUL.md, profile.yaml, config.yaml (one flag), and
-          hermes-agent/hermes_cli/default_soul.py (parsed, never executed).
+          this module), SOUL.md, profile.yaml, config.yaml (one flag),
+          hermes-agent/hermes_cli/default_soul.py (parsed, never executed), and
+          the SKILL.md files under a profile's skills/ (the skills fallback).
   WRITE   only inside profiles/<name>/ (never `default`, never through a symlink):
             * .env, atomically:
                 - on create: the profile's API_SERVER_* lines, plus GACA_BASE_URL / GACA_API_TOKEN
@@ -73,6 +74,9 @@ _SOUL_LIMIT = 40_000
 _YAML_LIMIT = 4_000
 _SOURCE_LIMIT = 200_000
 _OUTPUT_LIMIT = 2_000
+_SKILL_LIMIT = 4_000      # Hermes itself reads only the first 4000 characters of a SKILL.md
+_SKILL_DEPTH = 3          # skills/<category>/<skill>/SKILL.md, with room for one more level
+_MAX_SKILLS = 500
 DEFAULT_GATEWAY_PORT = 8642
 
 
@@ -313,6 +317,36 @@ class LocalHermes:
         if name != "default" and not (isinstance(name, str) and PROFILE_NAME.fullmatch(name)):
             raise LocalError(f"not a valid profile name: {name!r}")
         return await asyncio.to_thread(self._read_profile_files, name)
+
+    # -- skills (fallback for a Hermes whose /v1/skills fails) ----------
+
+    def _read_skill_files(self, name: str) -> list[dict] | None:
+        directory = self._profile_dir(name)
+        if directory is None:
+            return None
+        root = directory / "skills"
+        if root.is_symlink() or not root.is_dir():
+            return []
+        found: list[dict] = []
+        for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+            parts = list(Path(dirpath).relative_to(root).parts)
+            if parts and "SKILL.md" in filenames:
+                text = _read_regular_file(Path(dirpath) / "SKILL.md", _SKILL_LIMIT)
+                if text is not None:
+                    found.append({"path": parts, "text": text})
+                dirnames[:] = []  # a skill's own folders (references/, scripts/) aren't skills
+                if len(found) >= _MAX_SKILLS:
+                    break
+                continue
+            dirnames[:] = sorted(d for d in dirnames
+                                 if not d.startswith(".") and len(parts) < _SKILL_DEPTH
+                                 and not (Path(dirpath) / d).is_symlink())
+        return found
+
+    async def read_skill_files(self, name: str) -> list[dict] | None:
+        if name != "default" and not (isinstance(name, str) and PROFILE_NAME.fullmatch(name)):
+            raise LocalError(f"not a valid profile name: {name!r}")
+        return await asyncio.to_thread(self._read_skill_files, name)
 
     # -- running hermes ------------------------------------------------
 

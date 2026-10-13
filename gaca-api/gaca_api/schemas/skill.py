@@ -7,10 +7,16 @@ only an engine's adapter knows how it actually gets the data (Hermes: a live
 """
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class SkillInfo(BaseModel):
     name: str
     description: str = ""
     category: str | None = None
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def _no_description_is_empty(cls, value):
+        # A SKILL.md without a description comes over as null; that's still a skill.
+        return "" if value is None else value

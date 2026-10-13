@@ -29,7 +29,8 @@ from ...provisioning.base import Provisioner, ProvisioningError
 from ...schemas.crew_profile import ProfileInfo, PurposeInfo
 from . import translate_profile as tp
 from . import translate_purpose as tpu
-from ..base import ProfileReadError
+from . import translate_skills as tsk
+from ..base import EngineUnavailable, ProfileReadError
 from .translate import translate
 
 
@@ -213,11 +214,33 @@ class HermesAdapter:
         `{"object": "list", "data": [{"name", "description", "category"}, …]}`,
         already sorted by category then name.
         """
-        resp = await self._client.get(
-            f"{self._base_url}/v1/skills", headers=self._headers
-        )
-        resp.raise_for_status()
-        return [SkillInfo.model_validate(s) for s in resp.json().get("data", [])]
+        try:
+            resp = await self._client.get(
+                f"{self._base_url}/v1/skills", headers=self._headers,
+                timeout=httpx.Timeout(15.0),
+            )
+        except httpx.HTTPError as exc:
+            logger.warning("engine skills unreachable: %s", exc)
+            raise EngineUnavailable(f"Couldn't reach Hermes for its skills ({type(exc).__name__}).") from exc
+        if resp.status_code != 200:
+            logger.warning("engine skills returned %s: %s", resp.status_code, resp.text[:300])
+            raise EngineUnavailable(f"Hermes answered {resp.status_code} when asked for its skills.")
+        try:
+            return [SkillInfo.model_validate(s) for s in resp.json().get("data", [])]
+        except ValueError as exc:
+            logger.warning("engine skills unreadable: %s", exc)
+            raise EngineUnavailable("Hermes sent a skills list gaca-api couldn't read.") from exc
+
+    async def read_installed_skills(self, *, name: str, provisioner: Provisioner) -> list[SkillInfo]:
+        """The profile's skills read from its skills/ folder on the box (see translate_skills:
+        Hermes' own /v1/skills is broken in current releases)."""
+        try:
+            files = await provisioner.read_skill_files(name)
+        except (ProvisioningError, ValueError) as error:
+            raise ProfileReadError(str(error)) from error
+        if files is None:
+            raise ProfileReadError(f"no profile called {name!r} on the engine's host")
+        return tsk.to_skills(files)
 
     # ── Profile ────────────────────────────────────────────────────────
     async def describe_profile(self) -> ProfileInfo:

@@ -32,6 +32,11 @@ class Provisioner(Protocol):
         """`{"found", "soul", "profile_yaml", "stock"}` for one profile, or None if absent."""
         ...
 
+    async def read_skill_files(self, name: str) -> list[dict] | None:
+        """Every `SKILL.md` under one profile's skills/ folder, as `{"path": [folders], "text"}`
+        (path relative to skills/, text size-capped), or None if no such profile. Read-only."""
+        ...
+
     async def next_free_port(self) -> int: ...
 
     async def create_profile(

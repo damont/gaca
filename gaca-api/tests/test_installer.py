@@ -14,6 +14,7 @@ import pytest
 from conftest import make_owner
 from gaca_api.config import settings
 from gaca_api.db import client
+from gaca_api.installer import hermes as hermes_mod
 from gaca_api.installer import run as run_mod
 from gaca_api.installer import tunnel as tunnel_mod
 from gaca_api.installer.envconfig import ensure_env
@@ -515,6 +516,14 @@ def test_an_old_hermes_is_refused_with_the_version_it_found(flow, capsys):
     assert run_mod.run(flow, FakeShell(hermes="v0.20.3")) == run_mod.EXIT_NEEDS_HERMES
     out = capsys.readouterr().out
     assert "0.21 or newer (found 0.20.3)" in out and installed_nothing(flow)
+
+
+@pytest.mark.parametrize("version,warned", [("v0.21.5", False), ("v0.21.7", False), ("v0.22.0", True)])
+def test_a_hermes_newer_than_tested_is_a_warning_not_a_stop(version, warned):
+    note = hermes_mod.version_note(hermes_mod.Status(version=tuple(int(p) for p in version[1:].split("."))))
+    assert (note is not None) == warned
+    if warned:
+        assert "newer than GACA has been tested with (up to 0.21.7)" in note
 
 
 def test_a_hermes_that_was_never_set_up_is_told_to_run_hermes_setup(flow, capsys):

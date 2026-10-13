@@ -22,6 +22,12 @@ from ..schemas.model import ModelConfig, ModelInfo, ProviderCredential
 from ..schemas.skill import SkillInfo
 
 
+class EngineUnavailable(Exception):
+    """A crew member's engine couldn't be reached, or answered a read with an error.
+    Not the client's fault and not gaca-api's either: the API answers 502 with this
+    message, so the app can say what went wrong instead of a bare 500."""
+
+
 class ProfileReadError(Exception):
     """The engine's host couldn't be asked what a profile is for (unreachable, no such
     profile, unreadable). Callers show the rest of the profile without it."""
@@ -102,6 +108,12 @@ class AgentBackend(Protocol):
         loads them; the app just shows what's there. Never cached by
         gaca-api: each call reflects whatever the engine currently has.
         """
+        ...
+
+    async def read_installed_skills(self, *, name: str, provisioner: Provisioner) -> list[SkillInfo]:
+        """The same list, read from the engine's host instead of its API, for when the API
+        can't answer (list_skills raised EngineUnavailable). Raises ProfileReadError when the
+        host can't be read either."""
         ...
 
     # ── Profile (read-only picture of how this crew member is set up) ──
