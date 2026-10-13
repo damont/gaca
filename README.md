@@ -1,6 +1,6 @@
 # GACA
 
-A phone app for the AI agent you run yourself. GACA is a small server plus an Android app: your
+A phone app for the AI agent you run yourself. GACA is a small server plus an Android and an iPhone app: your
 [Hermes](https://github.com/NousResearch/hermes-agent) agent posts alerts, briefings, lists and
 pages to the app, and you chat with it from anywhere.
 
@@ -10,6 +10,13 @@ your phone with it, and that is the whole account system: no sign-up, no passwor
 ```
 phone app ──https──▶ Cloudflare Tunnel ──▶ gaca-api (127.0.0.1:41700) ◀── Hermes (same machine)
 ```
+
+## Best done with an agent
+
+Setting all of this up goes much more smoothly alongside an AI agent that has **SSH access to the machine GACA will run on**.
+It can read this README, run the installer, check Hermes, read `gaca-api doctor`, and fix what that reports, while you do the few
+things only you can (Cloudflare sign-in, the model sign-in in `hermes setup`, scanning the QR code). See
+[Handing the install to an agent](#handing-the-install-to-an-agent). You can do every step by hand too.
 
 ## What you need
 
@@ -21,9 +28,13 @@ phone app ──https──▶ Cloudflare Tunnel ──▶ gaca-api (127.0.0.1:4
 - Docker, only to run `cloudflared` (the tunnel). Not needed if you skip the tunnel.
 - For a permanent address: a free Cloudflare account and a domain on it. To just try it, a temporary
   `trycloudflare.com` address needs no account.
-- An Android phone (an iPhone app is in progress).
+- An Android phone or an iPhone: see [Install the app](#install-the-app).
 
 ## Set up Hermes (once)
+
+New to Hermes? [Standing Hermes up by hand](gaca-planning/hermes-setup.html) is the log of a real setup (model sign-in,
+web search, memory, running it as a service, approvals for unattended runs) and has tips for each step; GACA only needs the
+three things below.
 
 1. Install it with Hermes's own installer, then choose your model provider:
    ```bash
@@ -64,17 +75,23 @@ you open no ports and need no static IP. You choose how permanent the address is
 
 For a permanent address, do this once in the Cloudflare dashboard **before** running the installer:
 
-1. Open **Networks → Tunnels & Mesh** and create a tunnel (a *Cloudflared* tunnel). Name it anything. Copy its **token**: the long
-   string after `--token` in the install command the page shows (the copy button next to "Or, run tunnel (manual)" copies the whole command,
-   and the installer accepts that too). Do not run that command yourself; GACA's installer starts the tunnel.
-2. Open the tunnel (if the page is stuck waiting, see step 3), go to its **Published application routes** tab, and choose **Add a published application route**. Pick your domain
-   (and a subdomain if you want one), set the service type to **HTTP** and the URL to **`localhost:41700`**. Cloudflare creates the
-   DNS record for you.
-3. **Pause here.** The Cloudflare page will say *"Waiting for your Tunnel to connect"* and **Continue** will stay greyed out. That
-   is normal, nothing is wrong: the tunnel only connects when GACA's installer starts it (the Install step below). Leave the tab open.
-   Once the installer has started the tunnel, Continue lights up. Then add the published application route (step 2) if you have
-   not been able to yet; the route can also be added later from the tunnel's own page.
-4. Give the installer the token and the hostname (it asks, or see the flags below).
+1. Open **Networks → Tunnels & Mesh** and create a tunnel (a *Cloudflared* tunnel). Name it anything.
+2. **Find the token.** The page shows install commands for several systems. You do not need to run any of them. The token is
+   the long string right after `--token` in any of those commands; the **copy**
+   button next to **"Or, run tunnel (manual)"** copies the whole command, and you can paste that into the installer as it is.
+   Do not confuse it with the tunnel's ID (a short `1234abcd-...` identifier), which does not work.
+3. **Pause here.** The page will say *"Waiting for your Tunnel to connect"* and **Continue** stays greyed out. That is normal,
+   nothing is wrong: the tunnel only connects once GACA's installer starts it (the Install step below). Leave the tab open
+   and carry on to the installer. After it has started the tunnel, **Continue** lights up.
+4. **Add the route**, on that same page or later from the tunnel's own page (open the tunnel, go to its **Routes** tab; the
+   screen calls it a *published application route*): choose your domain (and a subdomain if you want one), and set the
+   **Service URL** to **`http://localhost:41700`** (match the port exactly; `localhost:4700` is a common typo). Cloudflare creates the DNS
+   record for you.
+5. Give the installer the token and the hostname (it asks, or see the flags below).
+
+Phones and iPhones need `https`, which you get automatically: Cloudflare serves your hostname over https with its own
+certificate, and only the short hop from Cloudflare to `localhost` is plain http (inside your machine's tunnel, never over
+the internet).
 
 Cloudflare rearranges these screens from time to time; the names to look for are *Tunnels*, *token*, and *published application
 route* (older screens call it a *public hostname*). When the installer finishes it checks `https://<your hostname>/api/health`
@@ -128,9 +145,18 @@ It is always safe to run again. What the exit code means:
 
 `gaca-api doctor` is the check: exit status 0 means everything works, and each problem it reports comes with the fix.
 
+## Install the app
+
+| | get it | setup help |
+|---|---|---|
+| **Android** | build it from [gaca-android](https://github.com/damont/gaca-android) (`./gradlew installDebug`) | [gaca-android README](https://github.com/damont/gaca-android#readme) |
+| **iPhone** | build it from [gaca-ios](https://github.com/damont/gaca-ios) (Xcode) | [gaca-ios README](https://github.com/damont/gaca-ios#readme) |
+
+Those READMEs cover building, signing and push for each app. Using the app itself is the same on both.
+
 ## Pair your phone
 
-Install the app, open it, tap **Scan QR code**, and scan the code `gaca-api pair` shows. Run it on the
+Open the app, tap **Scan QR code**, and scan the code `gaca-api pair` shows. Run it on the
 server any time you want to add a phone:
 
 ```bash
