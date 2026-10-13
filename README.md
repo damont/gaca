@@ -11,6 +11,13 @@ your phone with it, and that is the whole account system: no sign-up, no passwor
 phone app ──https──▶ Cloudflare Tunnel ──▶ gaca-api (127.0.0.1:41700) ◀── Hermes (same machine)
 ```
 
+## Best done with an agent
+
+Setting all of this up goes much more smoothly alongside an AI agent that has **SSH access to the machine GACA will run on**.
+It can read this README, run the installer, check Hermes, read `gaca-api doctor`, and fix what that reports, while you do the few
+things only you can (Cloudflare sign-in, the model sign-in in `hermes setup`, scanning the QR code). See
+[Handing the install to an agent](#handing-the-install-to-an-agent). You can do every step by hand too.
+
 ## What you need
 
 - **Hermes, installed and set up on the same machine.** This is required: GACA is the phone app for a
@@ -67,7 +74,7 @@ For a permanent address, do this once in the Cloudflare dashboard **before** run
 
 1. Open **Networks → Tunnels & Mesh** and create a tunnel (a *Cloudflared* tunnel). Name it anything.
 2. **Find the token.** The page shows install commands for several systems. You do not need to run any of them. The token is
-   the long string (it starts with `eyJ`, about 180 characters) right after `--token` in any of those commands; the **copy**
+   the long string right after `--token` in any of those commands; the **copy**
    button next to **"Or, run tunnel (manual)"** copies the whole command, and you can paste that into the installer as it is.
    Do not confuse it with the tunnel's ID (a short `1234abcd-...` identifier), which does not work.
 3. **Pause here.** The page will say *"Waiting for your Tunnel to connect"* and **Continue** stays greyed out. That is normal,

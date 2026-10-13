@@ -397,7 +397,7 @@ def setup_tunnel(opts: Options, shell: Shell, say: Say) -> str | None:
     elif sys.stdin.isatty():
         say.out(f"""
 In the Cloudflare dashboard: Networks > Tunnels & Mesh > create a tunnel (Cloudflared).
-  1. The token is the long string (starts with eyJ) after `--token` in the install command it shows; the copy button next to
+  1. The token is the long string after `--token` in the install command it shows; the copy button next to
      "Or, run tunnel (manual)" copies that whole command and you can paste it here. Do not run that command yourself.
   2. On the tunnel's "Routes" tab, add your hostname with Service URL  http://localhost:{opts.port}
 Cloudflare's page says "Waiting for your Tunnel to connect" until this installer has started the tunnel: that is normal.""")
