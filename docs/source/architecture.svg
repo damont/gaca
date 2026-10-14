@@ -18,7 +18,7 @@
   <rect width="1920" height="1080" fill="url(#bg)"/>
 
   <text x="60" y="78" class="t h" style="font-size:44px">How GACA fits together</text>
-  <text x="60" y="118" class="d s" style="font-size:24px">Everything inside the dashed box runs on one machine that you control. The phone is the only thing outside it that you carry around.</text>
+  <text x="60" y="118" class="d s" style="font-size:24px">Everything inside the dashed box runs on one machine that you control.</text>
 
   <!-- ===== HOST MACHINE ===== -->
   <rect x="640" y="170" width="970" height="620" rx="34" fill="#F0F4F9" stroke="#2D3C4C" stroke-width="3" stroke-dasharray="14 10" filter="url(#sh)"/>
@@ -128,7 +128,6 @@
   <path d="M1095 748 L1095 876" stroke="#4E7093" stroke-width="5" stroke-dasharray="3 11" stroke-linecap="round" fill="none" marker-end="url(#a)"/>
   <text x="1115" y="842" class="l" style="fill:#4E7093;font-size:18px">push key</text>
   <path d="M847 940 C420 940 135 905 135 745" stroke="#4E7093" stroke-width="5" stroke-dasharray="3 11" stroke-linecap="round" fill="none" marker-end="url(#a)"/>
-  <text x="60" y="1000" class="l" style="fill:#4E7093;font-size:19px">a buzz on your phone when an alert arrives</text>
 
   <!-- ===== numbered setup order ===== -->
   <g font-weight="700" font-size="22" text-anchor="middle">
