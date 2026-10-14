@@ -7,9 +7,25 @@ pages to the app, and you chat with it from anywhere.
 **One server belongs to one person.** You run it on a machine you control (next to Hermes), pair
 your phone with it, and that is the whole account system: no sign-up, no passwords, no other users.
 
-```
-phone app ──https──▶ Cloudflare Tunnel ──▶ gaca-api (127.0.0.1:41700) ◀── Hermes (same machine)
-```
+![How GACA fits together: the phone app talks over https through Cloudflare and a tunnel to gaca-api, which talks to Hermes on the same machine; Hermes uses your model provider; alerts can push to the phone through Google or Apple](docs/images/architecture.png)
+
+## Before you install gaca-api
+
+**Work through these first.** `./install.sh` checks them and stops with the exact fix for anything missing, but it
+will not do them for you. The picture above shows where each one lives.
+
+1. **A Linux machine with systemd** that stays on, and that you can `sudo` on. This is the host in the picture;
+   everything but the phone runs here.
+2. **Hermes, installed, with a model provider signed in, and its API server running.** Required: GACA is the phone app for
+   a Hermes agent, and without one the app has nothing to talk to. GACA does not install or configure Hermes (it has its own
+   installer, upgrades and your model credentials). → [Set up Hermes](#set-up-hermes-once)
+3. **Docker**, only to run the tunnel (`cloudflared`). Not needed if you skip the tunnel.
+4. **An address your phone can reach.** For a permanent one: a free Cloudflare account, a domain on it, and a tunnel
+   token. To just try it, a temporary `trycloudflare.com` address needs no account. → [Get an address (Cloudflare)](#get-an-address-cloudflare)
+5. **A phone with the app on it**, Android or iPhone. → [Install the app](#install-the-app). Optional, and later:
+   push notifications need a key from Google or Apple. → [Push notifications](#push-notifications-optional)
+
+When those are done: [Install](#install), then [Pair your phone](#pair-your-phone).
 
 ## Best done with an agent
 
@@ -17,18 +33,6 @@ Setting all of this up goes much more smoothly alongside an AI agent that has **
 It can read this README, run the installer, check Hermes, read `gaca-api doctor`, and fix what that reports, while you do the few
 things only you can (Cloudflare sign-in, the model sign-in in `hermes setup`, scanning the QR code). See
 [Handing the install to an agent](#handing-the-install-to-an-agent). You can do every step by hand too.
-
-## What you need
-
-- **Hermes, installed and set up on the same machine.** This is required: GACA is the phone app for a
-  Hermes agent, and without one the app has nothing to talk to. GACA does not install or configure Hermes
-  for you (it has its own installer, upgrades and your model credentials). It checks that Hermes is ready
-  and tells you exactly what is missing. See [Set up Hermes](#set-up-hermes-once) below.
-- A Linux machine with systemd.
-- Docker, only to run `cloudflared` (the tunnel). Not needed if you skip the tunnel.
-- For a permanent address: a free Cloudflare account and a domain on it. To just try it, a temporary
-  `trycloudflare.com` address needs no account.
-- An Android phone or an iPhone: see [Install the app](#install-the-app).
 
 ## Set up Hermes (once)
 

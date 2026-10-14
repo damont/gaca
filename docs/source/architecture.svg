@@ -1,0 +1,146 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080" font-family="'Ubuntu Sans','Ubuntu','Liberation Sans',sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#F7F9FC"/><stop offset="1" stop-color="#E6ECF4"/></linearGradient>
+    <filter id="sh" x="-10%" y="-10%" width="120%" height="125%"><feDropShadow dx="0" dy="6" stdDeviation="9" flood-color="#2D3C4C" flood-opacity="0.13"/></filter>
+    <marker id="a" viewBox="0 0 12 12" refX="9" refY="6" markerWidth="18" markerHeight="18" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M1 1 L11 6 L1 11 Z" fill="#2D3C4C"/></marker>
+    <marker id="at" viewBox="0 0 12 12" refX="9" refY="6" markerWidth="18" markerHeight="18" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M1 1 L11 6 L1 11 Z" fill="#3F8E93"/></marker>
+    <marker id="ag" viewBox="0 0 12 12" refX="9" refY="6" markerWidth="18" markerHeight="18" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M1 1 L11 6 L1 11 Z" fill="#B0923F"/></marker>
+    <marker id="ap" viewBox="0 0 12 12" refX="9" refY="6" markerWidth="18" markerHeight="18" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M1 1 L11 6 L1 11 Z" fill="#8A6A9E"/></marker>
+    <style>
+      .t{fill:#2D3C4C} .d{fill:#5B6B7B} .w{fill:#fff}
+      .h{font-size:34px;font-weight:700} .n{font-size:25px;font-weight:700} .s{font-size:21px} .m{font-size:19px;font-family:'Ubuntu Mono','Liberation Mono',monospace}
+      .l{font-size:20px;font-weight:600}
+      .card{fill:#fff;stroke:#D3DCE6;stroke-width:2}
+      .pill{fill:#EEF3F8}
+    </style>
+  </defs>
+
+  <rect width="1920" height="1080" fill="url(#bg)"/>
+
+  <text x="60" y="78" class="t h" style="font-size:44px">How GACA fits together</text>
+  <text x="60" y="118" class="d s" style="font-size:24px">Everything inside the dashed box runs on one machine that you control.</text>
+
+  <!-- ===== HOST MACHINE ===== -->
+  <rect x="640" y="170" width="970" height="620" rx="34" fill="#F0F4F9" stroke="#2D3C4C" stroke-width="3" stroke-dasharray="14 10" filter="url(#sh)"/>
+  <rect x="680" y="148" width="372" height="44" rx="22" fill="#2D3C4C"/>
+  <text x="866" y="179" text-anchor="middle" class="w n" style="font-size:23px;letter-spacing:.6px">YOUR HOST MACHINE (LINUX)</text>
+
+  <!-- CLI strip -->
+  <g filter="url(#sh)"><rect x="670" y="214" width="910" height="76" rx="20" fill="#2D3C4C"/></g>
+  <text x="696" y="246" class="w n" style="font-size:24px">gaca-api command</text>
+  <text x="696" y="274" class="s" style="fill:#B8C6D4;font-size:19px">install · pair · doctor · push · backup</text>
+  <g class="m" style="font-size:19px;fill:#F0F4F9">
+    <text x="1130" y="244">$ gaca-api pair    shows a QR code</text>
+    <text x="1130" y="272">$ gaca-api doctor  checks it all</text>
+  </g>
+
+  <!-- cloudflared -->
+  <g filter="url(#sh)"><rect x="670" y="400" width="180" height="270" rx="22" class="card"/><rect x="670" y="400" width="180" height="12" rx="6" fill="#3F8E93"/></g>
+  <text x="760" y="456" text-anchor="middle" class="t n">cloudflared</text>
+  <text x="760" y="488" text-anchor="middle" class="d s">the tunnel</text>
+  <text x="760" y="538" text-anchor="middle" class="d" style="font-size:18px">runs in Docker and</text>
+  <text x="760" y="563" text-anchor="middle" class="d" style="font-size:18px">connects <tspan font-weight="700">out</tspan> to</text>
+  <text x="760" y="588" text-anchor="middle" class="d" style="font-size:18px">Cloudflare: no open</text>
+  <text x="760" y="613" text-anchor="middle" class="d" style="font-size:18px">ports, no static IP</text>
+
+  <!-- gaca-api -->
+  <g filter="url(#sh)"><rect x="960" y="330" width="270" height="410" rx="22" class="card"/><rect x="960" y="330" width="270" height="12" rx="6" fill="#2D3C4C"/></g>
+  <text x="1095" y="390" text-anchor="middle" class="t h">gaca-api</text>
+  <text x="1095" y="422" text-anchor="middle" class="m d">127.0.0.1:41700</text>
+  <rect x="980" y="452" width="230" height="52" rx="14" class="pill"/><text x="1095" y="486" text-anchor="middle" class="t s">chat · alerts · briefings</text>
+  <rect x="980" y="516" width="230" height="52" rx="14" class="pill"/><text x="1095" y="550" text-anchor="middle" class="t s">lists · pages</text>
+  <rect x="980" y="580" width="230" height="52" rx="14" class="pill"/><text x="1095" y="614" text-anchor="middle" class="t s">paired phones · tokens</text>
+  <rect x="980" y="644" width="230" height="52" rx="14" class="pill"/><text x="1095" y="678" text-anchor="middle" class="t s">SQLite database</text>
+  <text x="1095" y="722" text-anchor="middle" class="d" style="font-size:17px">a sandboxed systemd service</text>
+
+  <!-- Hermes -->
+  <g filter="url(#sh)"><rect x="1340" y="330" width="240" height="410" rx="22" class="card"/><rect x="1340" y="330" width="240" height="12" rx="6" fill="#8A6A9E"/></g>
+  <text x="1460" y="390" text-anchor="middle" class="t h">Hermes</text>
+  <text x="1460" y="422" text-anchor="middle" class="m d" style="font-size:18px">gateway 127.0.0.1:8642</text>
+  <rect x="1360" y="452" width="200" height="52" rx="14" class="pill"/><text x="1460" y="486" text-anchor="middle" class="t s">your crew</text>
+  <rect x="1360" y="516" width="200" height="52" rx="14" class="pill"/><text x="1460" y="550" text-anchor="middle" class="t s">GACA skills</text>
+  <rect x="1360" y="580" width="200" height="52" rx="14" class="pill"/><text x="1460" y="614" text-anchor="middle" class="t s">memory · tools</text>
+  <rect x="1360" y="644" width="200" height="52" rx="14" class="pill"/><text x="1460" y="678" text-anchor="middle" class="t s">scheduled jobs</text>
+  <text x="1460" y="722" text-anchor="middle" class="d" style="font-size:17px">you install and set it up first</text>
+
+  <!-- ===== PHONE ===== -->
+  <g filter="url(#sh)">
+    <rect x="40" y="335" width="190" height="400" rx="40" fill="#2D3C4C"/>
+    <rect x="54" y="375" width="162" height="320" rx="22" fill="#F0F4F9"/>
+    <rect x="102" y="352" width="66" height="9" rx="4.5" fill="#4a5b6c"/>
+  </g>
+  <image href="../../branding/svg/gaca-wings-level-on-light.svg" x="70" y="430" width="130" height="77.5"/>
+  <text x="135" y="568" text-anchor="middle" class="t n">GACA app</text>
+  <text x="135" y="598" text-anchor="middle" class="d" style="font-size:19px">Android or iPhone</text>
+  <rect x="82" y="624" width="106" height="32" rx="16" fill="#fff" stroke="#D3DCE6" stroke-width="2"/>
+  <text x="135" y="646" text-anchor="middle" class="t" style="font-size:17px;font-weight:600">paired once</text>
+
+  <!-- ===== CLOUDFLARE CLOUD ===== -->
+  <g id="cl">
+    <rect x="335" y="545" width="205" height="72" rx="36"/>
+    <circle cx="398" cy="535" r="46"/>
+    <circle cx="468" cy="508" r="62"/>
+    <circle cx="520" cy="560" r="42"/>
+  </g>
+  <g fill="#D3DCE6" stroke="#D3DCE6" stroke-width="6" filter="url(#sh)"><use href="#cl"/></g>
+  <g fill="#fff" stroke="none"><use href="#cl"/></g>
+  <text x="440" y="548" text-anchor="middle" class="t n">Cloudflare</text>
+  <text x="440" y="577" text-anchor="middle" class="d" style="font-size:18px">your address,</text>
+  <text x="440" y="599" text-anchor="middle" class="d" style="font-size:18px">https included</text>
+  <text x="438" y="662" text-anchor="middle" class="m" style="font-size:19px;fill:#3F8E93;font-weight:700">gaca.yourdomain.com</text>
+
+  <!-- ===== MODEL PROVIDER ===== -->
+  <g filter="url(#sh)"><rect x="1710" y="400" width="170" height="270" rx="22" class="card"/><rect x="1710" y="400" width="170" height="12" rx="6" fill="#B0923F"/></g>
+  <text x="1795" y="456" text-anchor="middle" class="t n">Your model</text>
+  <text x="1795" y="488" text-anchor="middle" class="d s">provider</text>
+  <text x="1795" y="538" text-anchor="middle" class="d" style="font-size:18px">ChatGPT, Claude,</text>
+  <text x="1795" y="563" text-anchor="middle" class="d" style="font-size:18px">OpenRouter…</text>
+  <text x="1795" y="608" text-anchor="middle" class="d" style="font-size:17px">chosen with</text>
+  <text x="1795" y="634" text-anchor="middle" class="m" style="font-size:17px">hermes setup</text>
+
+  <!-- ===== PUSH SERVICE ===== -->
+  <g filter="url(#sh)"><rect x="855" y="885" width="480" height="110" rx="22" class="card"/><rect x="855" y="885" width="480" height="12" rx="6" fill="#4E7093"/></g>
+  <text x="1095" y="937" text-anchor="middle" class="t n">Google (FCM) · Apple (APNs)</text>
+  <text x="1095" y="971" text-anchor="middle" class="d s">optional: makes alerts buzz your phone</text>
+
+  <!-- ===== ARROWS ===== -->
+  <path d="M238 535 L326 535" stroke="#2D3C4C" stroke-width="5" fill="none" marker-end="url(#a)" marker-start="url(#a)"/>
+  <text x="282" y="512" text-anchor="middle" class="t l">https</text>
+
+  <path d="M556 600 L660 535 " stroke="none" fill="none"/>
+  <path d="M550 590 C600 590 610 535 662 535" stroke="#3F8E93" stroke-width="5" fill="none" marker-end="url(#at)"/>
+  <text x="598" y="630" text-anchor="middle" class="l" style="fill:#3F8E93;font-size:17px">tunnel</text>
+
+  <path d="M858 535 L952 535" stroke="#3F8E93" stroke-width="5" fill="none" marker-end="url(#at)"/>
+  <text x="905" y="512" text-anchor="middle" class="l" style="fill:#3F8E93;font-size:18px">http</text>
+  <text x="905" y="568" text-anchor="middle" class="d" style="font-size:16px">localhost</text>
+
+  <path d="M1238 470 L1332 470" stroke="#B0923F" stroke-width="5" fill="none" marker-end="url(#ag)"/>
+  <text x="1285" y="447" text-anchor="middle" class="l" style="fill:#8f7529;font-size:19px">chat</text>
+  <path d="M1332 600 L1238 600" stroke="#8A6A9E" stroke-width="5" fill="none" marker-end="url(#ap)"/>
+  <text x="1285" y="577" text-anchor="middle" class="l" style="fill:#8A6A9E;font-size:19px">alerts</text>
+  <text x="1285" y="635" text-anchor="middle" class="d" style="font-size:16px">scoped</text>
+  <text x="1285" y="654" text-anchor="middle" class="d" style="font-size:16px">token</text>
+
+  <path d="M1588 535 L1702 535" stroke="#2D3C4C" stroke-width="5" fill="none" marker-end="url(#a)"/>
+  <text x="1645" y="512" text-anchor="middle" class="t l" style="font-size:18px">asks</text>
+
+  <path d="M1095 748 L1095 876" stroke="#4E7093" stroke-width="5" stroke-dasharray="3 11" stroke-linecap="round" fill="none" marker-end="url(#a)"/>
+  <text x="1115" y="842" class="l" style="fill:#4E7093;font-size:18px">push key</text>
+  <path d="M847 940 C420 940 135 905 135 745" stroke="#4E7093" stroke-width="5" stroke-dasharray="3 11" stroke-linecap="round" fill="none" marker-end="url(#a)"/>
+
+  <!-- ===== numbered setup order ===== -->
+  <g font-weight="700" font-size="22" text-anchor="middle">
+    <circle cx="1460" cy="310" r="19" fill="#8A6A9E"/><text x="1460" y="318" class="w">1</text>
+    <circle cx="760" cy="382" r="19" fill="#3F8E93"/><text x="760" y="390" class="w">2</text>
+    <circle cx="1095" cy="310" r="19" fill="#2D3C4C"/><text x="1095" y="318" class="w">3</text>
+    <circle cx="135" cy="320" r="19" fill="#2D3C4C"/><text x="135" y="328" class="w">4</text>
+  </g>
+  <g transform="translate(1400 870)">
+    <text x="0" y="0" class="t l" style="font-size:22px">Set up in this order</text>
+    <circle cx="14" cy="34" r="12" fill="#8A6A9E"/><text x="38" y="41" class="t s" style="font-size:20px">Hermes, working on this machine</text>
+    <circle cx="14" cy="70" r="12" fill="#3F8E93"/><text x="38" y="77" class="t s" style="font-size:20px">A Cloudflare address and tunnel token</text>
+    <circle cx="14" cy="106" r="12" fill="#2D3C4C"/><text x="38" y="113" class="t s" style="font-size:20px">gaca-api, with <tspan class="m" style="font-size:18px">./install.sh</tspan></text>
+    <circle cx="14" cy="142" r="12" fill="#2D3C4C"/><text x="38" y="149" class="t s" style="font-size:20px">The app, paired with <tspan class="m" style="font-size:18px">gaca-api pair</tspan></text>
+  </g>
+</svg>

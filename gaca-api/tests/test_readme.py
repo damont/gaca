@@ -72,3 +72,15 @@ def test_the_readme_links_out_for_hermes_and_both_apps():
     for repo in ("gaca-android", "gaca-ios"):
         assert f"https://github.com/damont/{repo}#readme" in README
     assert "SSH access" in README and "Routes" in README and "Service URL" in README
+
+
+def test_the_diagram_exists_and_the_checklist_links_land_on_real_headings():
+    import re
+    root = Path(__file__).resolve().parents[2]
+    assert (root / "docs" / "images" / "architecture.png").stat().st_size > 10_000
+    assert "](docs/images/architecture.png)" in README
+    top = README[: README.index("## Set up Hermes (once)")]
+    assert "## Before you install gaca-api" in top
+    slugs = {re.sub(r"[^a-z0-9 -]", "", h.lower()).replace(" ", "-") for h in re.findall(r"^#{2,3} (.+)$", README, re.M)}
+    anchors = re.findall(r"\]\(#([a-z0-9-]+)\)", top)
+    assert len(anchors) >= 5 and set(anchors) <= slugs
