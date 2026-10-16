@@ -22,6 +22,7 @@
 
 <script>
   // Collection "options", one document per thing being compared:
+  // Schema (publish with --schema-file): {"options":{"fields":{"name":{"type":"string","required":true},"sub":{"type":"string"},"specs":{"type":"object","required":true},"best":{"type":"array"},"order":{"type":"number"}}}}
   //   {name, sub?, specs: {"Weight": "2.7 lb", "Battery": "15 h", ...}, best?: ["Weight", ...], order?: number}
   // `best` lists the spec names where this option wins (shown in the accent colour).
   // State: {chosen?: <option id>}. Rows are the spec names in first-seen order.

@@ -19,6 +19,7 @@
 
 <script>
   // The page is only a view. Items live in the API (collection "items"), so they survive
+  // Schema (publish with --schema-file): {"items":{"fields":{"text":{"type":"string","required":true,"max_length":200},"done":{"type":"boolean"},"category":{"type":"string"},"quantity":{"type":"string","max_length":30}}}}
   // closing the page, and the agent can add to the same list while the page is closed.
   var items = app.collection('items');
 

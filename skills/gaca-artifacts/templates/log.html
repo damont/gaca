@@ -36,6 +36,7 @@
 
 <script>
   // Collection "entries": {date: 'YYYY-MM-DD', amount: number, note?: string}. Newest first on screen.
+  // Schema (publish with --schema-file): {"entries":{"fields":{"date":{"type":"date","required":true},"amount":{"type":"number","required":true},"note":{"type":"string","max_length":300}}}}
   var entries = app.collection('entries');
   var $ = function (id) { return document.getElementById(id); };
   function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; }); }

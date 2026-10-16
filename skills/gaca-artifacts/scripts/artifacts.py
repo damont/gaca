@@ -5,8 +5,8 @@ writes the data they keep. Standard library only.
   list [--q TEXT] [--all]                      the user's artifacts
   show REF                                     details, data notes, and a summary of stored data
   publish --title T --html-file F [--description D] [--data-notes N] [--crew C]
-          [--alert ID] [--session ID] [--state-file F] [--collection NAME=FILE]...
-  update REF [--html-file F] [--title T] [--description D] [--data-notes N] [--note N]
+          [--alert ID] [--session ID] [--state-file F] [--collection NAME=FILE]... [--schema-file F]
+  update REF [--html-file F] [--title T] [--description D] [--data-notes N] [--note N] [--schema-file F]
   html REF --out FILE [--version N]            download the current page (to edit and republish)
   data REF                                     everything the page stores, as JSON
   state REF                                    just the state document
@@ -19,6 +19,10 @@ writes the data they keep. Standard library only.
   events REF [--unhandled] [--after N]         what the page told the agent (button presses...)
   handled REF UPTO                             mark events up to seq UPTO as handled
   versions REF  /  restore REF VERSION  /  archive REF  /  delete REF --yes
+
+--schema-file F holds {"collection": {"fields": {"name": {"type": "string", "required": true}}}}: the shape each
+collection's documents must have, checked on every write (types: string number integer boolean date datetime array
+object any; per field also enum, min, max, max_length; per collection strict). On `update` it REPLACES all schemas.
 
 REF is an artifact id (32 hex characters) or part of its title ("costco"). The token comes from
 GACA_API_TOKEN and is never printed. Exit codes: 0 done, 3 needs a decision (no match, or several
@@ -175,6 +179,10 @@ def cmd_show(args):
     print(f"link: {a['link']}   (put this in a chat reply and the app shows a tappable chip)")
     if a.get("data_notes"):
         print(f"data notes: {a['data_notes']}")
+    for name, schema in (a.get("schemas") or {}).items():
+        fields = ", ".join(
+            f"{f}: {spec['type']}{'!' if spec.get('required') else ''}" for f, spec in schema["fields"].items())
+        print(f"schema {name}: {fields}" + ("  [strict]" if schema.get("strict") else ""))
     snap = api("GET", f"/artifacts/{aid}/data")
     state = snap.get("state") or {}
     print(f"state: {len(state)} top-level key(s)" + (f" — {', '.join(list(state)[:12])}" if state else ""))
@@ -201,6 +209,8 @@ def cmd_publish(args):
         collections[name] = json.loads(read_file(path))
     if collections:
         body["collections"] = collections
+    if args.schema_file:
+        body["schemas"] = json.loads(read_file(args.schema_file))
     made = api("POST", "/artifacts", body)
     print(f"Published {made['title']!r} (v{made['version']}).")
     print(f"id: {made['id']}")
@@ -216,10 +226,16 @@ def cmd_update(args):
     for field in ("title", "description", "data_notes", "note"):
         if getattr(args, field) is not None:
             body[field] = getattr(args, field)
+    if args.schema_file:
+        body["schemas"] = json.loads(read_file(args.schema_file))
     if not body:
-        die("Nothing to change — give --html-file, --title, --description, --data-notes or --note")
+        die("Nothing to change — give --html-file, --title, --description, --data-notes, --note or --schema-file")
     made = api("PATCH", f"/artifacts/{aid}", body)
     print(f"Updated {made['title']!r} (now v{made['version']}). Stored data was not touched.")
+    if made.get("schema_issues"):
+        print("These stored documents do not match the new schema (fix them with patch, or loosen the schema):")
+        for issue in made["schema_issues"]:
+            print(f"  {issue}")
 
 
 def cmd_html(args):
@@ -339,12 +355,12 @@ def main():
     add("show", cmd_show, "ref")
     sp = add("publish", cmd_publish)
     sp.add_argument("--title", required=True); sp.add_argument("--html-file", required=True)
-    for flag in ("--description", "--data-notes", "--crew", "--alert", "--session", "--state-file"):
+    for flag in ("--description", "--data-notes", "--crew", "--alert", "--session", "--state-file", "--schema-file"):
         sp.add_argument(flag)
     sp.add_argument("--collection", action="append")
     sp = add("update", cmd_update, "ref")
     sp.add_argument("--html-file")
-    for flag in ("--title", "--description", "--data-notes", "--note"):
+    for flag in ("--title", "--description", "--data-notes", "--note", "--schema-file"):
         sp.add_argument(flag)
     sp = add("html", cmd_html, "ref"); sp.add_argument("--out", required=True); sp.add_argument("--version", type=int)
     add("data", cmd_data, "ref")

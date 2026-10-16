@@ -25,6 +25,7 @@
 
 <script>
   // Change SLOTS to fit the page (['Breakfast','Lunch','Dinner'], ['Chore'], ...). Collection "cells":
+  // Schema (publish with --schema-file): {"cells":{"fields":{"date":{"type":"date","required":true},"slot":{"type":"string","required":true},"text":{"type":"string","required":true,"max_length":200}}}}
   // doc id = '<YYYY-MM-DD>-<slot lowercased>', data {date, slot, text}. An empty cell has no document.
   var SLOTS = ['Lunch', 'Dinner'];
   var cells = app.collection('cells');

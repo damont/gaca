@@ -37,6 +37,46 @@ def check_doc_id(value: str) -> str:
     return value
 
 
+FIELD_NAME_PATTERN = r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$"
+_FIELD_NAME = re.compile(FIELD_NAME_PATTERN)
+FieldType = Literal["string", "number", "integer", "boolean", "date", "datetime", "array", "object", "any"]
+
+
+class FieldSpec(BaseModel):
+    """What one field of a collection's documents must look like. `date` is `YYYY-MM-DD`,
+    `datetime` is ISO 8601; `min`/`max` apply to numbers, `max_length` to strings."""
+    model_config = ConfigDict(extra="forbid")
+    type: FieldType
+    required: bool = False
+    enum: list[str | int | float | bool] | None = Field(default=None, max_length=100)
+    min: float | None = None
+    max: float | None = None
+    max_length: int | None = Field(default=None, ge=1, le=100_000)
+
+
+class CollectionSchema(BaseModel):
+    """The shape of every document in one collection. Fields you don't list are allowed unless
+    `strict` is true. Checked on every write (the page's and the agent's); documents already
+    stored are not rewritten when a schema is set or changed."""
+    model_config = ConfigDict(extra="forbid")
+    fields: dict[str, FieldSpec] = Field(max_length=100)
+    strict: bool = False
+
+    @field_validator("fields")
+    @classmethod
+    def _field_names(cls, v: dict[str, FieldSpec]) -> dict[str, FieldSpec]:
+        for name in v:
+            if not _FIELD_NAME.match(name):
+                raise ValueError(f"bad field name {name!r}: letters, digits, '_', '-' and '.' (max 64)")
+        return v
+
+
+def _check_schema_names(v: dict[str, CollectionSchema]) -> dict[str, CollectionSchema]:
+    for name in v:
+        check_name(name)
+    return v
+
+
 class ArtifactCreate(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     html: str = Field(min_length=1)
@@ -53,6 +93,10 @@ class ArtifactCreate(BaseModel):
         default_factory=dict,
         description="collection name -> {document id -> document}. Seeds keyed documents.",
     )
+    schemas: dict[str, CollectionSchema] = Field(
+        default_factory=dict, max_length=50,
+        description="collection name -> the shape its documents must have (checked on every write, seeds included).",
+    )
 
     @field_validator("title")
     @classmethod
@@ -68,6 +112,11 @@ class ArtifactCreate(BaseModel):
         if len(v.encode()) > MAX_HTML_BYTES:
             raise ValueError(f"html is over {MAX_HTML_BYTES // 1000} KB")
         return v
+
+    @field_validator("schemas")
+    @classmethod
+    def _schema_names(cls, v: dict[str, CollectionSchema]) -> dict[str, CollectionSchema]:
+        return _check_schema_names(v)
 
     @model_validator(mode="after")
     def _check_seed(self) -> "ArtifactCreate":
@@ -87,6 +136,16 @@ class ArtifactPatch(BaseModel):
     data_notes: str | None = Field(default=None, max_length=2000)
     note: str | None = Field(default=None, max_length=200, description="What changed, for the version list")
     archived: bool | None = None
+    schemas: dict[str, CollectionSchema] | None = Field(
+        default=None, max_length=50,
+        description="Replaces ALL of the artifact's schemas (send {} to remove them). Documents already stored are "
+        "not changed; the response lists up to 10 that don't match in `schema_issues`.",
+    )
+
+    @field_validator("schemas")
+    @classmethod
+    def _schema_names(cls, v: dict[str, CollectionSchema] | None) -> dict[str, CollectionSchema] | None:
+        return None if v is None else _check_schema_names(v)
 
     @field_validator("html")
     @classmethod
@@ -107,6 +166,10 @@ class ArtifactOut(BaseModel):
     title: str
     description: str | None = None
     data_notes: str | None = None
+    # collection name -> its shape (see CollectionSchema); {} when none were set.
+    schemas: dict[str, CollectionSchema] = Field(default_factory=dict)
+    # Only filled in the answer to a PATCH that set schemas: stored documents that don't match.
+    schema_issues: list[str] = Field(default_factory=list)
     crew: str | None = None
     session_id: str | None = None
     alert_id: str | None = None
