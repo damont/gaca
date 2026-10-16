@@ -259,3 +259,8 @@ GACA_AGENT_ENGINE=hermes GACA_DB_PATH=./dev.db uv run gaca-api     # serves on 1
 
 The chat screen design the apps follow is in [`docs/chat-design.md`](docs/chat-design.md); the live API schema is at
 `/api/docs` on a running server.
+
+## License
+
+Apache License 2.0 (see [`LICENSE`](LICENSE)). Copyright 2026 David Monts. Report security problems privately, as described in
+[`SECURITY.md`](SECURITY.md).
