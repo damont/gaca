@@ -68,7 +68,7 @@ def test_the_readme_says_the_cloudflare_page_waiting_for_the_tunnel_is_normal():
 
 
 def test_the_readme_links_out_for_hermes_and_both_apps():
-    assert "gaca-planning/hermes-setup.html" in README and (Path(__file__).resolve().parents[2] / "gaca-planning" / "hermes-setup.html").exists()
+    assert "docs/hermes-tips.md" in README and (Path(__file__).resolve().parents[2] / "docs" / "hermes-tips.md").exists()
     for repo in ("gaca-android", "gaca-ios"):
         assert f"https://github.com/damont/{repo}#readme" in README
     assert "SSH access" in README and "Routes" in README and "Service URL" in README

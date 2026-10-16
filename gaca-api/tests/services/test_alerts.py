@@ -315,10 +315,10 @@ def test_list_filters_by_crew(tmp_path):
     settings.db_path = str(tmp_path / "t.db")
 
     async def go():
-        await alert_service.create("u1", _payload(crew="david-alerts", title="mine"))
+        await alert_service.create("u1", _payload(crew="home-alerts", title="mine"))
         await alert_service.create("u1", _payload(crew="work-assistant", title="theirs"))
         await alert_service.create("u1", _payload(title="unset"))
-        return await alert_service.list_for_user("u1", crews=["david-alerts"])
+        return await alert_service.list_for_user("u1", crews=["home-alerts"])
 
     assert [a.title for a in _run(go)] == ["mine"]
 

@@ -1,15 +1,13 @@
 # Chat design (all clients)
 
-This is the chat interface every GACA client should build: iPhone (built), Android (to
-port), web. It replaces the earlier bubble-for-everything design on the Android canvas.
+This is the chat interface every GACA client should build: iPhone (built) and Android (to
+port). It replaces the earlier bubble-for-everything design on the Android canvas.
 
-- **Visual reference:** the iPhone design canvas, top row "Chat, redesigned":
-  https://claude.ai/artifact/1B3mzGiM2rj9tWAgvjRRtY (screens 1–4). Same palette and crew
-  colors as the rest of the app.
+- **Visual reference:** the iPhone app's Chat tab. Same palette and crew colors as the rest of the app.
 - **Working implementation:** `gaca-ios/Gaca/Features/Chat/` (`ChatHomeView.swift`,
   `ChatThreadView.swift`, `ChatThreadModel.swift`, `Composer.swift`).
-- **API it relies on:** `gaca-planning/alerts/api-contract.md` §6 (messages, sessions,
-  events). Clients stay thin. Everything below that sounds derived (activity labels,
+- **API it relies on:** the sessions, messages and events routes in the live schema
+  (`<your server>/api/openapi.json`). Clients stay thin. Everything below that sounds derived (activity labels,
   stripped text, resolved page cards, resume position) comes from the API. A client never
   computes it.
 

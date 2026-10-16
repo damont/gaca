@@ -9,9 +9,7 @@ call — only to provision or discover crew members, plus ONE read-only,
 fixed-command exception: reading a profile's SOUL.md and profile.yaml so the
 app can show what a crew member is for (read_profile_files; Hermes serves
 that only from its loopback-only, authenticated dashboard, which gaca-api can't
-and shouldn't reach). See gaca-planning/hermes/0002-storage-boundary.md for
-where this sits relative to everything else gaca-api stores, and for that
-exception.
+and shouldn't reach).
 
 Host key verification is deliberately off (`known_hosts=None`): there is no
 trust-on-first-use store yet to pin a box's host key against on first
@@ -61,7 +59,7 @@ async def run(conn: SSHConnection, command: str, *, timeout: float = 20.0) -> st
 
 # Runs ON the box, over the connection above — reads (never writes) each
 # profile's own .env for the four API_SERVER_* keys Hermes' gateway reads to
-# serve the HTTP surface gaca-api talks to (confirmed live on david-claw,
+# serve the HTTP surface gaca-api talks to (confirmed live on hermes-host,
 # 2026-09-20: API_SERVER_ENABLED/HOST/PORT/KEY, one block per profile's own
 # .env — the root ~/.hermes/.env for "default", ~/.hermes/profiles/<name>/.env
 # for each named one). A profile with the API server off, or missing a port
@@ -244,7 +242,7 @@ async def read_skill_files(conn: SSHConnection, name: str) -> list[dict] | None:
 async def next_free_port(conn: SSHConnection, *, base: int = 8642) -> int:
     """One past the highest API_SERVER_PORT already in use across every
     profile on the box (default, toolshed, trading = 8642/8643/8644 on
-    david-claw, 2026-09-20 — this generalizes that pattern), or `base` if
+    hermes-host, 2026-09-20 — this generalizes that pattern), or `base` if
     none are configured yet. Reads the box's real state via
     `discover_profiles` rather than gaca-api's own database, which can be
     stale or simply not know about a profile someone set up by hand.
@@ -255,7 +253,7 @@ async def next_free_port(conn: SSHConnection, *, base: int = 8642) -> int:
 
 
 # Runs ON the box, over the connection above. The confirmed-live command
-# sequence (david-claw, 2026-09-20, `hermes --help`/`profile --help`/
+# sequence (hermes-host, 2026-09-20, `hermes --help`/`profile --help`/
 # `gateway --help`/`config --help`, cross-checked against real behavior):
 #   1. `hermes profile create <name> --no-alias` — no --port flag exists;
 #      profile create never touches API_SERVER_*.

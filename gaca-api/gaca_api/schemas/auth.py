@@ -33,7 +33,7 @@ class AgentConnect(BaseModel):
 
 class AgentHostUpdate(BaseModel):
     """Body for PUT /agent — move the connected agent (and every crew member
-    under it) to a new host, e.g. "http://david-claw". No port: each crew
+    under it) to a new host, e.g. "http://hermes-host". No port: each crew
     member supplies its own."""
 
     host: str = Field(..., min_length=1, max_length=300)

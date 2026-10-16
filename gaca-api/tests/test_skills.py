@@ -61,11 +61,9 @@ def test_the_core_skill_points_at_every_other_skill():
         assert other in text
 
 
-PERSONAL = re.compile(
-    r"david|piservices|goodandcheapagent|rabidflamingos|david-claw|clemson|charlotte|libby|ronna|toolshed|"
-    r"gmail\.com|\.lan\b|america/new_york",
-    re.I,
-)
+# Nothing that ties a skill to one person's setup: an email address, a LAN hostname
+# or a home directory path.
+PERSONAL = re.compile(r"[\w.+-]+@[\w-]+\.[a-z]{2,}|\.lan\b|/home/\w+|/Users/\w+", re.I)
 
 
 def test_nothing_personal_is_baked_in():

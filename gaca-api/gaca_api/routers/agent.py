@@ -5,8 +5,7 @@ account then does with it (add more crew members, i.e. more Hermes profiles
 on the same box, or have gaca-api create one directly) is routers/crew.py's
 job; this router only covers "is there an agent, connect one, move it to a
 new host." Deliberately doesn't say "port" or "process" anywhere in a
-docstring or response a client would read — that's Hermes plumbing (see
-gaca-planning/hermes/0002-storage-boundary.md), not something this API's
+docstring or response a client would read — that's Hermes plumbing, not something this API's
 shape should make the caller think about up front.
 """
 from __future__ import annotations

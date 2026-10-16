@@ -21,7 +21,7 @@ from gaca_api.utils.purpose import build_purpose, derive_summary
 STOCK = tp.STOCK_SOUL
 TOOLSHED = """# Toolshed Agent
 
-You are the dedicated engineering, product, and growth agent for Toolshed, the household item-sharing application at https://yourtoolshed.com and in the private GitHub repository `damont/toolshed`.
+You are the dedicated engineering, product, and growth agent for Toolshed, the household item-sharing application at https://toolshed.example.com and in the private GitHub repository `damont/toolshed`.
 
 ## Required GitHub workflow — never work on `main`
 

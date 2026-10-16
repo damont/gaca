@@ -36,9 +36,8 @@ things only you can (Cloudflare sign-in, the model sign-in in `hermes setup`, sc
 
 ## Set up Hermes (once)
 
-New to Hermes? [Standing Hermes up by hand](gaca-planning/hermes-setup.html) is the log of a real setup (model sign-in,
-web search, memory, running it as a service, approvals for unattended runs) and has tips for each step; GACA only needs the
-three things below.
+New to Hermes? [Hermes setup tips](docs/hermes-tips.md) covers the machine, the model sign-in, web search, memory, running it
+as a service, approvals for unattended runs and more; GACA itself only needs the three things below.
 
 1. Install it with Hermes's own installer, then choose your model provider:
    ```bash
@@ -258,4 +257,10 @@ uv run pytest
 GACA_AGENT_ENGINE=hermes GACA_DB_PATH=./dev.db uv run gaca-api     # serves on 127.0.0.1:41700
 ```
 
-Design notes live in `gaca-planning/`.
+The chat screen design the apps follow is in [`docs/chat-design.md`](docs/chat-design.md); the live API schema is at
+`/api/docs` on a running server.
+
+## License
+
+Apache License 2.0 (see [`LICENSE`](LICENSE)). Copyright 2026 David Monts. Report security problems privately, as described in
+[`SECURITY.md`](SECURITY.md).

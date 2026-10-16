@@ -19,7 +19,7 @@ from gaca_api.schemas.auth import (
 # ── AgentConnect / AgentHostUpdate ────────────────────────────────────
 
 def test_agent_connect_defaults_the_first_crew_member_name_to_default():
-    connect = AgentConnect(host="http://david-claw", port=8642, api_key="k")
+    connect = AgentConnect(host="http://hermes-host", port=8642, api_key="k")
     assert connect.name == "default"
 
 
@@ -27,17 +27,17 @@ def test_agent_connect_requires_a_non_empty_host_and_key():
     with pytest.raises(ValidationError):
         AgentConnect(host="", port=8642, api_key="k")
     with pytest.raises(ValidationError):
-        AgentConnect(host="http://david-claw", port=8642, api_key="")
+        AgentConnect(host="http://hermes-host", port=8642, api_key="")
 
 
 def test_agent_host_update_requires_a_non_empty_value():
-    assert AgentHostUpdate(host="http://david-claw").host == "http://david-claw"
+    assert AgentHostUpdate(host="http://hermes-host").host == "http://hermes-host"
     with pytest.raises(ValidationError):
         AgentHostUpdate(host="")
 
 
 def test_crew_access_defaults_port_to_22():
-    conn = CrewAccess(host="david-claw.lan", username="david", private_key="k")
+    conn = CrewAccess(host="hermes-host.lan", username="david", private_key="k")
     assert conn.port == 22
 
 
@@ -45,9 +45,9 @@ def test_crew_access_requires_host_username_and_key():
     with pytest.raises(ValidationError):
         CrewAccess(host="", username="david", private_key="k")
     with pytest.raises(ValidationError):
-        CrewAccess(host="david-claw.lan", username="", private_key="k")
+        CrewAccess(host="hermes-host.lan", username="", private_key="k")
     with pytest.raises(ValidationError):
-        CrewAccess(host="david-claw.lan", username="david", private_key="")
+        CrewAccess(host="hermes-host.lan", username="david", private_key="")
 
 
 # ── CrewMemberCreate / CrewMemberUpdate ───────────────────────────────
@@ -104,9 +104,9 @@ def test_crew_member_create_access_defaults_to_none():
 def test_crew_member_create_accepts_inline_access():
     created = CrewMemberCreate(
         name="toolshed",
-        access={"host": "david-claw.lan", "username": "david", "private_key": "k"},
+        access={"host": "hermes-host.lan", "username": "david", "private_key": "k"},
     )
-    assert created.access.host == "david-claw.lan"
+    assert created.access.host == "hermes-host.lan"
     assert created.access.port == 22
 
 

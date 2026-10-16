@@ -36,7 +36,7 @@ def test_crew_defaults_to_none():
 
 
 def test_crew_accepts_an_arbitrary_profile_name():
-    assert AlertCreate(**_payload(crew="david-alerts")).crew == "david-alerts"
+    assert AlertCreate(**_payload(crew="home-alerts")).crew == "home-alerts"
 
 
 def test_arbitrary_kind_accepted():
