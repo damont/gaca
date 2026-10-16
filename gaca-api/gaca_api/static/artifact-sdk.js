@@ -23,6 +23,17 @@
     };
     try { Object.defineProperty(window, name, { value: shim, configurable: true }); } catch (e) { /* leave it */ }
   });
+  // `--app-h` is the real height of the page's area, in px. Android's WebView resolves vh / dvh /
+  // `height: 100%` to 0, so a full-screen page (a canvas, a map) must size itself with
+  // `height: var(--app-h, 100vh)` instead. Kept current as the area changes (keyboard, rotation).
+  function fit() {
+    var h = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+    if (h) document.documentElement.style.setProperty('--app-h', Math.round(h) + 'px');
+  }
+  fit();
+  window.addEventListener('resize', fit);
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', fit);
+
   var pending = {};
   var nextId = 1;
   var subs = [];

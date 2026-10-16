@@ -7,6 +7,7 @@ Every artifact page gets `window.app` before its own script runs. **A page is a 
 - **Self-contained.** One HTML file: inline `<style>` and `<script>`, no CDN scripts, no external fonts, no remote images. Inline SVG, canvas, CSS and `data:` URIs are fine. Charts: draw with SVG/canvas yourself.
 - **Mobile first.** It opens full-screen on a phone. No hover-only UI, no horizontal page scrolling (a wide table scrolls inside an `overflow-x:auto` box), no fixed pixel widths. `<meta viewport>` is already set. Rows are compact (about 32px), but **the whole row is the tap target**, not just a small checkbox or icon.
 - **Use the app's look, and don't restyle it.** The page already ships a stylesheet (see *Look* below): plain elements are styled, and a few classes cover the repeated shapes. Colors are CSS variables (`--bg`, `--text`, `--muted`, `--faint`, `--accent`, `--on-accent`, `--border`, `--rule`, `--danger`, `--ok`, `--radius`, `--font`, `--mono`); never hard-code a color, because the same variables flip for dark mode.
+- **Never size a page with `vh`, `dvh`, `svh` or `height: 100%`.** In the Android app's WebView they all resolve to **0**, so a full-screen page collapses to nothing and shows blank. The SDK keeps a CSS variable `--app-h` (the real height of the page area, in px, updated on resize and keyboard): use `height: var(--app-h, 600px)`. Width units (`vw`, `100%` width) are fine. Pages that just flow and scroll don't need any of this.
 - **No title, no intro.** The app shows the title above the page. Do not start with an `<h1>`, a subtitle, a description or "how to use this". The page opens on its content and must be self-explanatory. The one-line description goes in `--description` at publish time and nowhere else.
 - **Never use `localStorage`/`sessionStorage`/cookies.** They are off; if touched they are a throwaway in-memory stand-in that loses everything when the page closes. Anything the user would be upset to lose goes through `app.*`.
 - **Escape anything you put into `innerHTML`** (item text is user data). The template has an `esc()` helper.
@@ -72,3 +73,20 @@ The style is flat and dense: **hairlines, not boxes**. Text 14px, rows about 32p
 - **Actions are text links**; at most one `button.primary`.
 - **Pick the layout that fits the content**, not a list by default: a table for records and comparisons, a time column for schedules, label/value pairs for facts, `.stats` plus a table for trackers, a grid for a week. See `templates/`.
 - **Dark mode is automatic** if you only use the variables.
+
+## Building something richer than a list (a canvas, a map, a board)
+
+These pages are fine to build; they just need more care, because you can't see them run.
+
+1. **Data first.** Decide the collections and write them in `--data-notes`. Keep documents small and flat (strings, numbers, ISO dates `YYYY-MM-DD`), reference other documents by id (`task.project = <project id>`), and seed a few clearly-labelled example documents so the page is not empty on first open.
+2. **Render from the snapshot, don't rebuild.** `app.subscribe` fires on every change (including the agent's). Keep animation and selection state in variables and merge the new data into it; never recreate the scene, reset a scroll position, or clear a form the user is typing in.
+3. **Size from `--app-h`** (see above), then size a `<canvas>` from its box times `devicePixelRatio` (`ctx.setTransform(d,0,0,d,0,0)`). Handle `resize`.
+4. **Pointer events only** (`pointerdown/move/up`, `setPointerCapture`), with `touch-action: none` on the canvas, so dragging works on a phone without scrolling the page. Make hit areas generous (the shape plus about 14px). Treat a small movement as a tap, a larger one as a drag.
+5. **Use the full area.** Size shapes from the area (`Math.min(width, height)`), not fixed pixels, and leave room for a bottom panel (a hairline-separated list, not a card).
+6. **Labels must not collide.** Place a label, test it against the ones already placed (rectangle overlap), and nudge it or drop it. Truncate long text. Text drawn in a canvas cannot use CSS variables: read them once with `getComputedStyle(document.documentElement).getPropertyValue('--text')`, and set the font as a plain string (`'12px system-ui'`).
+7. **Colour from data and the theme**, never hard-coded greys; dim by drawing with lower alpha.
+8. **Write back small.** A tap that changes something is one `patch` on one document. Anything the agent should notice is `app.emit(name, payload)`; anything the user should say to the agent is `app.ask(text)` (it opens a chat with the text drafted, unsent).
+9. **Pause when hidden.** Stop `requestAnimationFrame` while `document.hidden`, and resume on `visibilitychange`.
+10. **Check your own page before telling the user it works.** Read it back for the three usual failures: collapsed height (rule above), an exception on empty data (every collection can be `[]`), and an overlay covering the canvas.
+
+`templates/canvas.html` is a working skeleton with all of this wired up.
