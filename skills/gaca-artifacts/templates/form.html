@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Form</title>
+<style>
+  /* An entry form: underline-only fields, one solid Save button. Change FIELDS below, not the styling. */
+  body { padding-top: 4px; }
+  .two { display: flex; gap: 16px; }
+  .two > * { flex: 1; min-width: 0; }
+  .actions { display: flex; gap: 20px; align-items: center; margin-top: 24px; }
+  .check { display: flex; gap: 8px; align-items: center; margin-top: 18px; }
+</style>
+</head>
+<body>
+<!-- No title or intro: the app already shows the title. -->
+<form id="f"></form>
+
+<script>
+  // Each submit adds one document to the collection "entries" holding the answers by field name, and tells
+  // the agent with app.emit('submitted', {id}). To keep a single set of answers instead, use
+  // app.state.patch(answers). `half: true` puts two fields side by side.
+  var FIELDS = [
+    { name: 'amount', label: 'Amount', type: 'number', big: true, required: true },
+    { name: 'date', label: 'Date', type: 'date', half: true, required: true },
+    { name: 'category', label: 'Category', type: 'select', options: ['Groceries', 'Dining', 'Transport', 'Home', 'Other'], half: true },
+    { name: 'merchant', label: 'Merchant', type: 'text' },
+    { name: 'paid', label: 'Paid with', type: 'choice', options: ['Cash', 'Card', 'Transfer'], value: 'Card' },
+    { name: 'note', label: 'Note', type: 'textarea' },
+    { name: 'split', label: 'Split with Maya', type: 'checkbox' }
+  ];
+  var entries = app.collection('entries');
+  var values = {};                                     // the page's working answers (not saved until Save)
+  var $f = document.getElementById('f');
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; }); }
+
+  function field(f) {
+    var id = 'f-' + f.name, req = f.required ? ' required' : '';
+    if (f.type === 'checkbox') return '<label class="check"><input type="checkbox" id="' + id + '"> ' + esc(f.label) + '</label>';
+    var label = '<label class="field" for="' + id + '">' + esc(f.label) + '</label>';
+    if (f.type === 'choice') {
+      return '<label class="field">' + esc(f.label) + '</label><div class="seg" data-name="' + f.name + '">' + f.options.map(function (o) {
+        return '<button type="button" aria-pressed="' + (values[f.name] === o) + '">' + esc(o) + '</button>';
+      }).join('') + '</div>';
+    }
+    if (f.type === 'select') return label + '<select id="' + id + '">' + f.options.map(function (o) { return '<option>' + esc(o) + '</option>'; }).join('') + '</select>';
+    if (f.type === 'textarea') return label + '<textarea id="' + id + '" rows="3"></textarea>';
+    return label + '<input id="' + id + '" type="' + f.type + '"' + req + (f.type === 'number' ? ' step="any" inputmode="decimal"' : '') +
+      (f.big ? ' style="font-size:22px;font-weight:600"' : '') + '>';
+  }
+  function build() {
+    FIELDS.forEach(function (f) { if (f.value !== undefined) values[f.name] = f.value; });
+    var html = '';
+    for (var i = 0; i < FIELDS.length; i++) {
+      if (FIELDS[i].half && FIELDS[i + 1] && FIELDS[i + 1].half) { html += '<div class="two"><div>' + field(FIELDS[i]) + '</div><div>' + field(FIELDS[i + 1]) + '</div></div>'; i++; }
+      else html += field(FIELDS[i]);
+    }
+    $f.innerHTML = html + '<div class="actions"><button class="primary">Save</button></div>';
+    var d = document.getElementById('f-date'); if (d) d.value = new Date().toISOString().slice(0, 10);
+  }
+
+  $f.addEventListener('click', function (e) {          // a choice (segmented control) button
+    var b = e.target.closest('.seg button'); if (!b) return;
+    var seg = b.parentNode; values[seg.dataset.name] = b.textContent;
+    Array.prototype.forEach.call(seg.children, function (x) { x.setAttribute('aria-pressed', x === b); });
+  });
+  function save() {
+    var out = {};
+    FIELDS.forEach(function (f) {
+      var el = document.getElementById('f-' + f.name);
+      if (f.type === 'choice') out[f.name] = values[f.name] || null;
+      else if (f.type === 'checkbox') out[f.name] = el.checked;
+      else if (f.type === 'number') out[f.name] = el.value === '' ? null : Number(el.value);
+      else out[f.name] = el.value.trim() || null;
+    });
+    entries.add(out).then(function (r) { app.emit('submitted', { id: r.id }); app.toast('Saved'); });
+    build();                                           // reset for the next entry; the page stays open
+  }
+  $f.addEventListener('submit', function (e) { e.preventDefault(); save(); });
+
+  build();
+</script>
+</body>
+</html>

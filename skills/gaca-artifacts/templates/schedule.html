@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Schedule</title>
+<style>
+  /* A day-by-day timeline: a heading per day with a rule under it, a time column, then the entry.
+     The status word on the right (Booked, Needs a table) is plain coloured text, never a pill. */
+  .day { display: flex; justify-content: space-between; align-items: baseline; font-weight: 600;
+    border-bottom: 1px solid var(--text); padding-bottom: 4px; margin-top: 18px; }
+  .day:first-child { margin-top: 0; }
+  .day span { font-weight: 400; font-size: 12.5px; color: var(--muted); }
+  .time { width: 56px; flex: none; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+  form[hidden] { display: none; }
+  .two { display: flex; gap: 16px; }
+  .two > * { flex: 1; }
+  .bar { display: flex; gap: 20px; margin-top: 16px; }
+</style>
+</head>
+<body>
+<!-- No title or intro: the app already shows the title. -->
+<div id="host"></div>
+<form id="add" hidden>
+  <div class="two">
+    <div><label class="field" for="day">Day</label><input id="day" type="date" required></div>
+    <div><label class="field" for="time">Time</label><input id="time" type="time"></div>
+  </div>
+  <label class="field" for="title">What</label><input id="title" type="text" autocomplete="off" required>
+  <p style="margin-top:16px"><button class="primary">Add</button></p>
+</form>
+<div class="bar"><button id="toggle">Add stop</button><button id="ask">Ask Hermes</button></div>
+
+<script>
+  // Collection "stops": {day: 'YYYY-MM-DD', time?: 'HH:MM' (24h), title, detail?, label?, status?: 'ok'|'bad'}
+  //   `label` is the small status word ("Booked", "Needs a table"); `status` colours it.
+  // Collection "days" (optional): doc id = the date, {note: "Travel"} shown at the right of the day heading.
+  var stops = app.collection('stops');
+  var $ = function (id) { return document.getElementById(id); };
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; }); }
+  function when(t) {                                    // '13:30' -> '1:30 pm'
+    if (!t) return '';
+    var p = t.split(':'), h = +p[0];
+    return (h % 12 || 12) + ':' + p[1] + (h < 12 ? ' am' : ' pm');
+  }
+  function dayLabel(d) {                                // 'YYYY-MM-DD' -> 'Fri, Nov 6' (no timezone shifts)
+    var x = new Date(d + 'T12:00:00');
+    return x.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  }
+
+  function render(snap) {
+    var docs = snap.docs('stops').slice().sort(function (a, b) {
+      return (a.day + (a.time || '')) < (b.day + (b.time || '')) ? -1 : 1;
+    });
+    if (!docs.length) { $('host').innerHTML = '<div class="empty">Nothing planned yet.</div>'; return; }
+    var notes = {}; snap.docs('days').forEach(function (d) { notes[d.id] = d.note; });
+    var html = '', day = null;
+    docs.forEach(function (s) {
+      if (s.day !== day) {
+        day = s.day;
+        html += '<div class="day">' + esc(dayLabel(day)) + (notes[day] ? '<span>' + esc(notes[day]) + '</span>' : '') + '</div>';
+      }
+      html += '<div class="row top"><span class="time">' + esc(when(s.time)) + '</span>' +
+        '<span class="grow">' + esc(s.title) + (s.detail ? '<span class="sub">' + esc(s.detail) + '</span>' : '') + '</span>' +
+        (s.label ? '<span class="' + (s.status === 'bad' ? 'bad' : s.status === 'ok' ? 'ok' : 'muted') + '" style="font-size:12.5px">' + esc(s.label) + '</span>' : '') +
+        '</div>';
+    });
+    $('host').innerHTML = html;
+  }
+
+  $('toggle').addEventListener('click', function () {
+    var f = $('add'); f.hidden = !f.hidden;
+    if (!f.hidden) $('title').focus();
+  });
+  $('add').addEventListener('submit', function (e) {
+    e.preventDefault();
+    stops.add({ day: $('day').value, time: $('time').value || null, title: $('title').value.trim() });
+    $('title').value = ''; $('time').value = ''; $('add').hidden = true;
+  });
+  $('ask').addEventListener('click', function () { app.ask('About the ' + app.artifact.title + ' schedule: '); });
+
+  app.subscribe(render);
+</script>
+</body>
+</html>

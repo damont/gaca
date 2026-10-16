@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Log</title>
+<style>
+  /* A tracker: a few numbers on top, a table of entries below, a short add form.
+     Everything here is the app's stylesheet (.stats/.stat, table, .num, .muted, .primary, label.field);
+     change the fields and the stats, not the styling. */
+  .head { display: flex; justify-content: space-between; align-items: baseline; margin-top: 18px; }
+  .head h2 { margin: 0; }
+  form[hidden] { display: none; }
+  .two { display: flex; gap: 16px; }
+  .two > * { flex: 1; }
+</style>
+</head>
+<body>
+<!-- No title or intro: the app already shows the title. -->
+<div class="stats" id="stats"></div>
+
+<div class="head"><h2>Log</h2><button id="toggle">Add entry</button></div>
+<form id="add" hidden>
+  <div class="two">
+    <div><label class="field" for="date">Date</label><input id="date" type="date" required></div>
+    <div><label class="field" for="amount">Amount</label><input id="amount" type="number" step="any" inputmode="decimal" required></div>
+  </div>
+  <label class="field" for="note">Note</label><input id="note" type="text" autocomplete="off">
+  <p style="margin-top:16px"><button class="primary">Save</button></p>
+</form>
+
+<table>
+  <thead><tr><th>Date</th><th>Note</th><th class="num">Amount</th></tr></thead>
+  <tbody id="rows"></tbody>
+</table>
+<div class="empty" id="empty" hidden>No entries yet.</div>
+
+<script>
+  // Collection "entries": {date: 'YYYY-MM-DD', amount: number, note?: string}. Newest first on screen.
+  var entries = app.collection('entries');
+  var $ = function (id) { return document.getElementById(id); };
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; }); }
+
+  function render(snap) {
+    var docs = snap.docs('entries').slice().sort(function (a, b) { return a.date < b.date ? 1 : -1; });
+    var total = docs.reduce(function (n, d) { return n + (Number(d.amount) || 0); }, 0);
+    $('stats').innerHTML =
+      '<div class="stat"><b>' + docs.length + '</b><span>Entries</span></div>' +
+      '<div class="stat"><b>' + total.toLocaleString() + '</b><span>Total</span></div>' +
+      '<div class="stat"><b>' + (docs.length ? (total / docs.length).toFixed(1) : '–') + '</b><span>Average</span></div>';
+    $('empty').hidden = docs.length > 0;
+    $('rows').innerHTML = docs.map(function (d) {
+      return '<tr data-id="' + esc(d.id) + '"><td>' + esc(d.date) + '</td><td class="muted">' + esc(d.note || '') +
+        '</td><td class="num">' + esc(d.amount) + '</td></tr>';
+    }).join('');
+  }
+
+  $('toggle').addEventListener('click', function () {
+    var f = $('add'); f.hidden = !f.hidden;
+    if (!f.hidden) { if (!$('date').value) $('date').value = new Date().toISOString().slice(0, 10); $('amount').focus(); }
+  });
+  $('add').addEventListener('submit', function (e) {
+    e.preventDefault();
+    entries.add({ date: $('date').value, amount: Number($('amount').value), note: $('note').value.trim() || null });
+    $('amount').value = ''; $('note').value = ''; $('add').hidden = true;
+  });
+
+  app.subscribe(render);
+</script>
+</body>
+</html>

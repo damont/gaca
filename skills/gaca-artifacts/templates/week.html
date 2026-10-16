@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Week</title>
+<style>
+  /* A week grid: a row per day, a column per slot. Tap a cell to type in it. Today is bold in the accent colour. */
+  table { table-layout: fixed; }
+  th:first-child, td:first-child { width: 52px; }
+  td { padding: 9px 6px 9px 0; height: 20px; cursor: pointer; }
+  td.day { font-weight: 600; }
+  td.day span { display: block; font-weight: 400; font-size: 12px; color: var(--muted); }
+  tr.today td.day, tr.today td.day span { color: var(--accent); }
+  tr.today td { font-weight: 600; }
+  td input { padding: 0; }
+  .nav { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+  .bar { display: flex; gap: 20px; margin-top: 16px; }
+</style>
+</head>
+<body>
+<!-- No title or intro: the app already shows the title. -->
+<div class="nav"><button id="prev">Prev</button><b id="range"></b><button id="next">Next</button></div>
+<table><thead id="head"></thead><tbody id="body"></tbody></table>
+<div class="bar"><button id="ask">Ask Hermes</button></div>
+
+<script>
+  // Change SLOTS to fit the page (['Breakfast','Lunch','Dinner'], ['Chore'], ...). Collection "cells":
+  // doc id = '<YYYY-MM-DD>-<slot lowercased>', data {date, slot, text}. An empty cell has no document.
+  var SLOTS = ['Lunch', 'Dinner'];
+  var cells = app.collection('cells');
+  var $ = function (id) { return document.getElementById(id); };
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; }); }
+  function iso(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+  function cid(date, slot) { return date + '-' + slot.toLowerCase(); }
+
+  var offset = 0;                                       // weeks from this one (Monday start); lives in the page only
+  var editing = null, waiting = null, last = null;      // while a cell is being typed in, hold re-renders
+
+  function monday() {
+    var d = new Date(); d.setHours(12, 0, 0, 0);
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7) + offset * 7);
+    return d;
+  }
+  function render(snap) {
+    last = snap;
+    if (editing) { waiting = snap; return; }            // never rebuild the cell the user is typing in
+    var text = {}; snap.docs('cells').forEach(function (c) { text[c.id] = c.text; });
+    var start = monday(), end = new Date(start); end.setDate(end.getDate() + 6);
+    $('range').textContent = start.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' – ' +
+      end.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    $('head').innerHTML = '<tr><th></th>' + SLOTS.map(function (s) { return '<th>' + esc(s) + '</th>'; }).join('') + '</tr>';
+    var today = iso(new Date()), html = '';
+    for (var i = 0; i < 7; i++) {
+      var d = new Date(start); d.setDate(d.getDate() + i);
+      var date = iso(d);
+      html += '<tr class="' + (date === today ? 'today' : '') + '"><td class="day">' +
+        d.toLocaleDateString(undefined, { weekday: 'short' }) + '<span>' + d.getDate() + (date === today ? ' · today' : '') + '</span></td>' +
+        SLOTS.map(function (s) {
+          var v = text[cid(date, s)];
+          return '<td data-date="' + date + '" data-slot="' + esc(s) + '"' + (v ? '' : ' class="faint"') + '>' + (v ? esc(v) : '—') + '</td>';
+        }).join('') + '</tr>';
+    }
+    $('body').innerHTML = html;
+  }
+
+  function finish(td, input, commit) {
+    var id = cid(td.dataset.date, td.dataset.slot), v = input.value.trim();
+    editing = null;
+    if (commit) {
+      if (v) cells.set(id, { date: td.dataset.date, slot: td.dataset.slot, text: v });
+      else cells.remove(id).catch(function () {});      // clearing a cell that was never filled is fine
+    }
+    render(waiting || last); waiting = null;
+  }
+  $('body').addEventListener('click', function (e) {
+    var td = e.target.closest('td[data-slot]'); if (!td || editing) return;
+    var old = td.classList.contains('faint') ? '' : td.textContent;
+    editing = td.dataset.date + td.dataset.slot;
+    td.innerHTML = '<input type="text" value="' + esc(old) + '" aria-label="Edit">';
+    var input = td.firstChild; input.focus();
+    input.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter') finish(td, input, true);
+      else if (ev.key === 'Escape') finish(td, input, false);
+    });
+    input.addEventListener('blur', function () { if (editing) finish(td, input, true); });
+  });
+  $('prev').addEventListener('click', function () { offset--; render(last); });
+  $('next').addEventListener('click', function () { offset++; render(last); });
+  $('ask').addEventListener('click', function () { app.ask('About the ' + app.artifact.title + ' plan: '); });
+
+  app.subscribe(render);
+</script>
+</body>
+</html>

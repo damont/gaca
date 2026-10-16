@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Comparison</title>
+<style>
+  /* A side-by-side table: one column per option, one row per attribute. The chosen option gets a
+     top rule on its column. Everything else is the app's stylesheet. */
+  table { table-layout: fixed; }
+  th:first-child, td:first-child { width: 22%; color: var(--muted); }
+  th.opt { color: var(--text); text-transform: none; letter-spacing: 0; font-size: 14px; font-weight: 600; vertical-align: bottom; }
+  th.opt .sub { font-weight: 400; }
+  .picked { border-top: 2px solid var(--accent); }
+  td.best { color: var(--accent); font-weight: 600; }
+  .bar { display: flex; gap: 20px; margin-top: 16px; padding-top: 10px; border-top: 1px solid var(--rule); flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<!-- No title or intro: the app already shows the title. -->
+<div id="host"></div>
+<div class="bar" id="bar"></div>
+
+<script>
+  // Collection "options", one document per thing being compared:
+  //   {name, sub?, specs: {"Weight": "2.7 lb", "Battery": "15 h", ...}, best?: ["Weight", ...], order?: number}
+  // `best` lists the spec names where this option wins (shown in the accent colour).
+  // State: {chosen?: <option id>}. Rows are the spec names in first-seen order.
+  var options = app.collection('options');
+  var $ = function (id) { return document.getElementById(id); };
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; }); }
+
+  function render(snap) {
+    var docs = snap.docs('options').slice().sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
+    var chosen = (snap.state || {}).chosen;
+    if (!docs.length) { $('host').innerHTML = '<div class="empty">No options yet.</div>'; $('bar').innerHTML = ''; return; }
+    var rows = [];
+    docs.forEach(function (d) { Object.keys(d.specs || {}).forEach(function (k) { if (rows.indexOf(k) < 0) rows.push(k); }); });
+
+    var html = '<table><thead><tr><th></th>' + docs.map(function (d) {
+      return '<th class="opt' + (d.id === chosen ? ' picked' : '') + '">' + esc(d.name) +
+        (d.sub ? '<span class="sub">' + esc(d.sub) + '</span>' : '') + '</th>';
+    }).join('') + '</tr></thead><tbody>';
+    rows.forEach(function (k) {
+      html += '<tr><td>' + esc(k) + '</td>' + docs.map(function (d) {
+        var win = (d.best || []).indexOf(k) >= 0;
+        return '<td class="num' + (win ? ' best' : '') + '" style="text-align:left">' + esc((d.specs || {})[k] || '–') + '</td>';
+      }).join('') + '</tr>';
+    });
+    $('host').innerHTML = html + '</tbody></table>';
+
+    $('bar').innerHTML = docs.map(function (d) {
+      return '<button data-id="' + esc(d.id) + '">' + (d.id === chosen ? 'Chosen: ' : 'Choose ') + esc(d.name) + '</button>';
+    }).join('') + '<button id="ask">Ask Hermes</button>';
+  }
+
+  $('bar').addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    if (b.id === 'ask') { app.ask('About the ' + app.artifact.title + ' comparison: '); return; }
+    app.state.patch({ chosen: b.dataset.id });
+    app.emit('chosen', { option: b.dataset.id });      // the agent can see the decision
+  });
+
+  app.subscribe(render);
+</script>
+</body>
+</html>
