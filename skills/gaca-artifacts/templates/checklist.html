@@ -4,68 +4,55 @@
 <meta charset="utf-8">
 <title>Checklist</title>
 <style>
-  /* Colors, font and radius come from the app's CSS variables (--bg, --surface, --text, --muted,
-     --accent, --on-accent, --border, --chip, --danger, --ok, --radius, --font). */
-  h1 { font-size: 22px; margin: 0 0 12px; color: var(--accent); }
-  form { display: flex; gap: 8px; margin-bottom: 16px; }
-  input[type=text] { flex: 1; min-width: 0; padding: 12px; border: 1px solid var(--border);
-    border-radius: var(--radius); background: var(--surface); color: var(--text); }
-  button { padding: 12px 16px; border: 0; border-radius: var(--radius); background: var(--accent); color: var(--on-accent); }
-  button.quiet { background: var(--chip); color: var(--accent); }
-  h2 { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 20px 0 6px; }
-  ul { list-style: none; margin: 0; padding: 0; }
-  li { display: flex; align-items: center; gap: 12px; padding: 12px; margin-bottom: 6px;
-    background: var(--surface); border-radius: var(--radius); }
-  li.done span.text { text-decoration: line-through; color: var(--muted); }
-  li input[type=checkbox] { width: 22px; height: 22px; flex: none; accent-color: var(--accent); }
-  span.text { flex: 1; }
-  .qty { color: var(--muted); font-size: 14px; }
-  .del { background: none; color: var(--muted); padding: 4px 8px; font-size: 20px; }
-  .empty { color: var(--muted); padding: 24px 0; text-align: center; }
-  .bar { display: flex; gap: 8px; margin-top: 20px; }
+  /* Look comes from the app's stylesheet: plain elements, .row, .grow, .sub, .muted, .done, .empty, h2.
+     Nothing to style here except what is unique to this page. */
+  form { display: flex; gap: 12px; align-items: center; border-bottom: 1px solid var(--text); }
+  form input { border: 0; }
+  .bar { display: flex; gap: 20px; margin-top: 16px; }
 </style>
 </head>
 <body>
-<h1 id="title">Checklist</h1>
-<form id="add"><input id="text" type="text" placeholder="Add an item…" autocomplete="off" enterkeyhint="done"><button>Add</button></form>
+<!-- No title or intro: the app already shows the title. The page opens on its content. -->
+<form id="add"><input id="text" type="text" placeholder="Add item" aria-label="Add item" autocomplete="off" enterkeyhint="done"><button>Add</button></form>
 <div id="list"></div>
-<div class="bar"><button class="quiet" id="clear">Clear checked</button><button class="quiet" id="ask">Ask Hermes…</button></div>
+<div class="bar"><button id="clear">Clear checked</button><button id="ask">Ask Hermes</button></div>
 
 <script>
   // The page is only a view. Items live in the API (collection "items"), so they survive
   // closing the page, and the agent can add to the same list while the page is closed.
   var items = app.collection('items');
-  document.getElementById('title').textContent = app.artifact.title;
 
   function render(snap) {
-    var docs = snap.docs('items');                       // [{id, text, done, category, quantity}]
+    var docs = snap.docs('items');                       // [{id, text, done, category?, quantity?}]
     var host = document.getElementById('list');
     if (!docs.length) { host.innerHTML = '<div class="empty">Nothing here yet.</div>'; return; }
-    var groups = {};
-    docs.filter(function (d) { return !d.done; }).forEach(function (d) {
-      (groups[d.category || ''] = groups[d.category || ''] || []).push(d);
-    });
-    var html = '';
-    Object.keys(groups).sort().forEach(function (cat) {
-      html += (cat ? '<h2>' + esc(cat) + '</h2>' : '') + '<ul>' + groups[cat].map(row).join('') + '</ul>';
-    });
+    var open = docs.filter(function (d) { return !d.done; });
     var done = docs.filter(function (d) { return d.done; });
-    if (done.length) html += '<h2>Checked off</h2><ul>' + done.map(row).join('') + '</ul>';
+    var html = '';
+    // Groups are optional: a section label appears only when items actually have a category.
+    var cats = {};
+    open.forEach(function (d) { (cats[d.category || ''] = cats[d.category || ''] || []).push(d); });
+    Object.keys(cats).sort().forEach(function (cat) {
+      html += (cat ? '<h2>' + esc(cat) + '</h2>' : '') + cats[cat].map(row).join('');
+    });
+    if (done.length) html += '<h2>Done · ' + done.length + '</h2>' + done.map(row).join('');
     host.innerHTML = html;
   }
   function row(d) {
-    return '<li class="' + (d.done ? 'done' : '') + '" data-id="' + esc(d.id) + '">' +
-      '<input type="checkbox"' + (d.done ? ' checked' : '') + '>' +
-      '<span class="text">' + esc(d.text) + (d.quantity ? ' <span class="qty">' + esc(d.quantity) + '</span>' : '') + '</span>' +
-      '<button class="del" aria-label="Remove">×</button></li>';
+    return '<div class="row" data-id="' + esc(d.id) + '">' +
+      '<input type="checkbox"' + (d.done ? ' checked' : '') + ' aria-label="' + esc(d.text) + '">' +
+      '<span class="grow' + (d.done ? ' done' : '') + '">' + esc(d.text) + '</span>' +
+      (d.quantity ? '<span class="muted num">' + esc(d.quantity) + '</span>' : '') +
+      '<button class="faint" aria-label="Remove">×</button></div>';
   }
   function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; }); }
 
   document.getElementById('list').addEventListener('click', function (e) {
-    var li = e.target.closest('li'); if (!li) return;
-    var id = li.dataset.id;
-    if (e.target.matches('.del')) items.remove(id);
+    var r = e.target.closest('.row'); if (!r) return;
+    var id = r.dataset.id;
+    if (e.target.closest('button')) items.remove(id);
     else if (e.target.matches('input[type=checkbox]')) items.patch(id, { done: e.target.checked });
+    else items.patch(id, { done: !r.querySelector('input').checked });   // the whole row is the tap target
   });
   document.getElementById('add').addEventListener('submit', function (e) {
     e.preventDefault();

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Brief</title>
+<style>
+  /* A read-only answer: a recommendation, the facts behind it, one thing to watch, and next steps.
+     No stored data, so nothing here needs the SDK except the two links at the bottom. Delete the sections
+     you don't need; a short answer is just one or two of them. */
+  h2:first-child { margin-top: 0; }
+  ol { margin: 0; padding: 0 0 0 20px; }
+  ol li { padding: 3px 0; }
+  .bar { display: flex; gap: 20px; margin-top: 20px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<!-- No title or intro: the app already shows the title. Open on the answer itself. -->
+<h2>Recommendation</h2>
+<p>One or two sentences that answer the question directly.</p>
+
+<h2>What I found</h2>
+<div class="kv"><span>Label</span><span>Value</span></div>
+<div class="kv"><span>Label</span><span>Value</span></div>
+<div class="kv"><span>Label</span><span>Value</span></div>
+
+<div class="note"><b>One thing to check.</b> A caveat or decision the reader should make, in a sentence or two.</div>
+
+<h2>Steps</h2>
+<ol>
+  <li>First thing to do.</li>
+  <li>Second thing to do.</li>
+  <li>Third thing to do.</li>
+</ol>
+
+<div class="bar">
+  <button id="followup">Ask a follow-up</button>
+  <button id="todo">Make it a to-do list</button>
+</div>
+
+<script>
+  document.getElementById('followup').addEventListener('click', function () { app.ask('About ' + app.artifact.title + ': '); });
+  document.getElementById('todo').addEventListener('click', function () { app.ask('Turn the steps in ' + app.artifact.title + ' into a to-do list.'); });
+</script>
+</body>
+</html>

@@ -23,7 +23,7 @@ An **artifact** is an HTML page you write that opens inside the user's GACA app,
 
 Helper: `python3 ${HERMES_SKILL_DIR}/scripts/artifacts.py <command>` (run it with no arguments for the full list). It reads the token from the environment and never prints it. **Pass everything as plain arguments or files** — don't pipe, heredoc or `-c` anything into it (unattended runs block that). To publish, write the page to a file first with your file tool, then pass `--html-file`.
 
-**Read `references/sdk.md` before writing a page** — it is the contract for `window.app` (reading, writing, events) and the rules every page must follow (self-contained, mobile-first, app theme variables, no browser storage). Start from `templates/checklist.html` when the page is list-shaped.
+**Read `references/sdk.md` before writing a page** — it is the contract for `window.app` (reading, writing, events) and the rules every page must follow (self-contained, mobile-first, app theme variables, no browser storage). Templates to start from, by shape (copy the closest one, change the fields): `checklist.html` (a list; groups only if items have a category), `log.html` (stats + a table of entries + a short add form), `compare.html` (options side by side, pick one), `schedule.html` (a timeline by day), `form.html` (an entry form), `week.html` (a day-by-slot grid, tap to edit), `brief.html` (a read-only answer, no stored data). They all show the house look: flat, dense, no title or intro.
 
 ## Artifact or list?
 
@@ -34,10 +34,10 @@ Helper: `python3 ${HERMES_SKILL_DIR}/scripts/artifacts.py <command>` (run it wit
 ## Making a page
 
 1. **Decide the data shape first.** List-like things → a keyed collection (`items`, `entries`, `tasks`), one document per thing. Single values and settings → `state`. Write it down in `--data-notes` (one or two sentences, e.g. `items: {text, done, category?, quantity?}`) — that note is what you, or another crew member, read when you rewrite the page later.
-2. **Write the page** to a file (e.g. `/tmp/costco.html`), following `references/sdk.md`. Keep it one file, mobile-first, using the theme CSS variables.
+2. **Write the page** to a file (e.g. `/tmp/costco.html`), following `references/sdk.md`. Keep it one file, mobile-first, using the app's stylesheet and variables. **No title, intro or explainer at the top**: the app already shows the title, and the page should explain itself by what it shows. Pick the layout that fits the content (table, schedule, form, stats), not a list by default; group only if the data has natural groups.
 3. **Seed data** if it should open with content: `--collection items=/tmp/items.json` where the file holds `{"milk": {"text":"Milk","done":false}, ...}` (document id → document), or `--state-file`.
 4. **Publish:** `publish --title "Costco" --html-file /tmp/costco.html --description "Weekly run, by aisle" --data-notes "items: {text, done, category?}" --collection items=/tmp/items.json`.
-5. **Tell the user**, and include the printed `link` (`gaca://artifact/<id>`) in your reply — the app turns it into a tappable chip. Say what the page does in a sentence. Don't paste HTML into the chat.
+5. **Tell the user**, and include the printed `link` (`gaca://artifact/<id>`) in your reply — the app turns it into a tappable chip. Say what the page does in a sentence, in your reply only; the page itself carries no description. Don't paste HTML into the chat.
 
 Titles are short and nicely cased (`Costco`, `Denver trip`), one page per purpose — look first (`list`) and **update the existing page rather than making a near-duplicate**.
 

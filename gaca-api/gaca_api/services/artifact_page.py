@@ -36,17 +36,59 @@ CSP = (
     "img-src data: blob:; font-src data:; media-src data: blob:; base-uri 'none'; form-action 'none'"
 )
 
-_THEME_CSS = "".join(
-    [
-        ":root{--bg:#F0F4F9;--surface:#FFFFFF;--text:#282F35;--muted:#747B83;--accent:#2D3C4C;",
-        "--on-accent:#F4F9FE;--border:#C8CED5;--chip:#D8DFE6;--danger:#C55C43;--ok:#4C8C6A;",
-        "--radius:12px;--font:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color-scheme:light}",
-        "html{-webkit-text-size-adjust:100%}",
-        "body{margin:0;padding:16px;background:var(--bg);color:var(--text);font:16px/1.45 var(--font);",
-        "-webkit-tap-highlight-color:transparent}",
-        "button,input,select,textarea{font:inherit}",
-    ]
-)
+# The page look: the app's own "Slate" tokens as CSS variables (docs/chat-design.md §4), plus a
+# dark set (data-dark, set by the SDK when the client reports a dark theme — the apps are
+# light-only today), and a dense, flat default style for plain elements, so an unstyled page
+# already looks right and the agent only writes CSS for what is unusual. Opt-in classes cover
+# the shapes pages repeat (rows, tabs, stats, status words). Kept in step with
+# skills/gaca-artifacts/references/sdk.md.
+_THEME_CSS = """
+:root{--bg:#F0F4F9;--surface:#FFFFFF;--text:#282F35;--muted:#5A6169;--faint:#747B83;--accent:#2D3C4C;
+--on-accent:#F4F9FE;--border:#C8CED5;--rule:#D8DFE6;--chip:#D8DFE6;--danger:#B34D36;--ok:#3F7858;
+--radius:4px;--font:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color-scheme:light}
+:root[data-dark]{--bg:#151C23;--surface:#1C252E;--text:#E6ECF2;--muted:#9AA6B2;--faint:#7F8B97;--accent:#A9C1D9;
+--on-accent:#151C23;--border:#3A4856;--rule:#27323D;--chip:#27323D;--danger:#E07D63;--ok:#6FB08C;color-scheme:dark}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;padding:12px 16px;background:var(--bg);color:var(--text);font:14px/1.4 var(--font);-webkit-tap-highlight-color:transparent}
+h1{font-size:18px;font-weight:600;margin:0 0 8px}
+h2{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:18px 0 4px}
+h3{font-size:14px;font-weight:600;margin:12px 0 4px}
+p{margin:0 0 8px}
+a{color:var(--accent);text-underline-offset:3px}
+hr{border:0;border-top:1px solid var(--rule);margin:12px 0}
+button,input,select,textarea{font:inherit;color:inherit}
+button{background:none;border:0;padding:6px 2px;color:var(--accent);text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+button.primary{background:var(--accent);color:var(--on-accent);text-decoration:none;font-weight:600;padding:7px 16px;border-radius:var(--radius)}
+input:not([type=checkbox]):not([type=radio]),select,textarea{display:block;width:100%;box-sizing:border-box;background:transparent;border:0;border-bottom:1px solid var(--border);border-radius:0;padding:6px 0;outline:0}
+input:focus,select:focus,textarea:focus{border-bottom-color:var(--accent)}
+input[type=checkbox],input[type=radio]{width:16px;height:16px;margin:0;accent-color:var(--accent);flex:none}
+label.field{display:block;font-size:12px;color:var(--muted);margin:14px 0 2px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);text-align:left;padding:6px 6px 6px 0;border-bottom:1px solid var(--text)}
+td{padding:7px 6px 7px 0;border-bottom:1px solid var(--rule);vertical-align:top}
+.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.row{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--rule)}
+.row.top{align-items:flex-start}
+.grow{flex:1;min-width:0}
+.sub{display:block;font-size:12.5px;color:var(--muted)}
+.muted{color:var(--muted)}.faint{color:var(--faint)}.ok{color:var(--ok)}.bad{color:var(--danger)}
+.done{color:var(--faint);text-decoration:line-through}
+.tabs{display:flex;gap:16px;margin:10px 0 2px}
+.tabs a,.tabs button{color:var(--muted);text-decoration:none;padding:0 0 3px;font-size:13px}
+.tabs [aria-current]{color:var(--text);border-bottom:2px solid var(--text)}
+.stats{display:flex}
+.stat{flex:1;padding:0 12px;border-left:1px solid var(--rule)}
+.stat:first-child{padding-left:0;border:0}
+.stat b{display:block;font-size:22px;font-weight:600;line-height:1.1;font-variant-numeric:tabular-nums}
+.stat span{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.kv{display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--rule);font-size:13px}
+.kv>:first-child{color:var(--muted)}
+.note{border-top:1px solid var(--border);border-bottom:1px solid var(--border);padding:8px 0;margin:14px 0;font-size:13px}
+.seg{display:flex;border:1px solid var(--border);font-size:13px}
+.seg button{flex:1;padding:5px 0;text-align:center;text-decoration:none;color:var(--muted)}
+.seg [aria-pressed=true]{background:var(--text);color:var(--bg)}
+.empty{color:var(--faint);padding:20px 0;text-align:center}
+"""
 
 # Same patterns as the Android port, kept as-is: `<head` also matches `<header>`, which only
 # matters for a page with no <head> at all — and the CSP is also sent as a response header,

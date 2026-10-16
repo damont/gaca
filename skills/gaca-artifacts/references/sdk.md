@@ -5,8 +5,9 @@ Every artifact page gets `window.app` before its own script runs. **A page is a 
 ## Page rules
 
 - **Self-contained.** One HTML file: inline `<style>` and `<script>`, no CDN scripts, no external fonts, no remote images. Inline SVG, canvas, CSS and `data:` URIs are fine. Charts: draw with SVG/canvas yourself.
-- **Mobile first.** It opens full-screen on a phone. Big tap targets (≥ 44px), 16px+ text, no hover-only UI, no horizontal scrolling, no fixed pixel widths. `<meta viewport>` is already set.
-- **Use the app's look.** Colors and fonts come as CSS variables: `--bg` (page), `--surface` (cards), `--text`, `--muted`, `--accent`, `--on-accent` (text on accent), `--border`, `--chip`, `--danger`, `--ok`, `--radius`, `--font`. Use them instead of hard-coded colors so the page matches the app. `body` already has padding and the base font.
+- **Mobile first.** It opens full-screen on a phone. No hover-only UI, no horizontal page scrolling (a wide table scrolls inside an `overflow-x:auto` box), no fixed pixel widths. `<meta viewport>` is already set. Rows are compact (about 32px), but **the whole row is the tap target**, not just a small checkbox or icon.
+- **Use the app's look, and don't restyle it.** The page already ships a stylesheet (see *Look* below): plain elements are styled, and a few classes cover the repeated shapes. Colors are CSS variables (`--bg`, `--text`, `--muted`, `--faint`, `--accent`, `--on-accent`, `--border`, `--rule`, `--danger`, `--ok`, `--radius`, `--font`, `--mono`); never hard-code a color, because the same variables flip for dark mode.
+- **No title, no intro.** The app shows the title above the page. Do not start with an `<h1>`, a subtitle, a description or "how to use this". The page opens on its content and must be self-explanatory. The one-line description goes in `--description` at publish time and nowhere else.
 - **Never use `localStorage`/`sessionStorage`/cookies.** They are off; if touched they are a throwaway in-memory stand-in that loses everything when the page closes. Anything the user would be upset to lose goes through `app.*`.
 - **Escape anything you put into `innerHTML`** (item text is user data). The template has an `esc()` helper.
 - **Render from data, not from clicks.** On a click, write with `app.*`; `app.subscribe` re-renders when the change lands. That is also how an agent's edits show up. Don't rebuild a form while the user is typing in it.
@@ -56,3 +57,18 @@ app.artifact  // {id, title}      app.theme  // {dark, accent}      app.uid()  /
 ```
 
 Use `app.emit` for "the agent should know" (a form submitted, a decision made) and `app.ask` for "the user wants to say something to the agent". Neither sends anything by itself to the user's chat.
+
+## Look
+
+The style is flat and dense: **hairlines, not boxes**. Text 14px, rows about 32px, 4px radius, no shadows, no gradients, no emoji. Write as little CSS as you can; most pages need none.
+
+**Plain elements are already styled**: `h2` is a small uppercase section label, `table` has a heavy header rule and hairline rows, `input`/`select`/`textarea` are underline-only, `a` and a bare `button` are underlined text links, `input[type=checkbox]` takes the accent. `button.primary` is the single solid button; use at most one per page (Save, Choose).
+
+**Classes** (all optional): `.row` (a flex line with a hairline under it; `.row.top` aligns to the top), `.grow`, `.sub` (second line, small and muted), `.muted`, `.faint`, `.ok`, `.bad` (a status as one coloured word, never a pill), `.done` (struck through and dimmed), `.num` (right-aligned tabular numbers), `.tabs` (underlined text tabs; mark the active one with `aria-current`), `.stats` > `.stat` > `<b>` number + `<span>` label, `label.field` (small label above an input), `.kv` (a label/value pair on one line), `.note` (a callout set off by two hairlines, not a box), `.seg` (a segmented choice: buttons with `aria-pressed`), `.empty`.
+
+**Rules**
+- **Structure is optional.** Group only when the data really has groups. A flat list is the default; a section label (`h2`) appears only when it adds meaning.
+- **Separate with hairlines**, never cards or filled panels. Emphasis is weight or the accent colour, not a background.
+- **Actions are text links**; at most one `button.primary`.
+- **Pick the layout that fits the content**, not a list by default: a table for records and comparisons, a time column for schedules, label/value pairs for facts, `.stats` plus a table for trackers, a grid for a week. See `templates/`.
+- **Dark mode is automatic** if you only use the variables.

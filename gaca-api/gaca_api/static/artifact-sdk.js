@@ -150,6 +150,9 @@
     resume: function () { poll(true); }
   };
 
+  // The page's dark tokens (see _THEME_CSS) switch on when the client reports a dark theme.
+  if (init.theme && init.theme.dark) document.documentElement.setAttribute('data-dark', '');
+
   window.app = {
     artifact: init.artifact || {},
     theme: init.theme || {},
