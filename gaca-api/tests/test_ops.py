@@ -574,8 +574,8 @@ def test_backup_leaves_the_live_database_and_its_wal_untouched(box, tmp_path):
 
 def test_doctor_notes_when_lingering_is_off_but_does_not_fail_for_it(box, tmp_path, monkeypatch):
     build_healthy_box(box, tmp_path, monkeypatch)
-    monkeypatch.setenv("USER", "ronna")
+    monkeypatch.setenv("USER", "alice")
     code, out = run_doctor(box, FakeShell(linger="no"))
-    assert code == 0 and "lingering is off" in out and "sudo loginctl enable-linger ronna" in out
+    assert code == 0 and "lingering is off" in out and "sudo loginctl enable-linger alice" in out
     code, out = run_doctor(box, FakeShell(linger="yes"))
     assert code == 0 and "lingering is off" not in out

@@ -6,7 +6,7 @@ chips below the message rather than inline. Both halves of that — the text wit
 the links taken out, and the list of what they pointed at — are worked out here,
 so no client has to parse message text. The rule was ported verbatim from the
 Android client (which used to do this itself); keep it in lockstep with
-the API contract (gaca-planning/alerts/api-contract.md) if it ever changes.
+the clients if it ever changes.
 """
 from __future__ import annotations
 

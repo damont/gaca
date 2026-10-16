@@ -22,15 +22,15 @@ def test_agent_host_needs_no_migration_the_name_never_actually_changed():
     """`agent_host` is both the 2026-08-22 name and the current one — the
     brief `crew_host` rename reverted the same day, so a row from either end
     of that timeline reads directly, no shim required for this key."""
-    user = UserDoc.model_validate({**_BASE, "agent_host": "http://david-claw"})
-    assert user.agent_host == "http://david-claw"
+    user = UserDoc.model_validate({**_BASE, "agent_host": "http://hermes-host"})
+    assert user.agent_host == "http://hermes-host"
 
 
 def test_legacy_crew_host_maps_onto_agent_host():
     """The one shape that DOES need a shim: a row saved during the brief
     2026-09-20 `crew_host` window, if one ever existed."""
-    user = UserDoc.model_validate({**_BASE, "crew_host": "http://david-claw"})
-    assert user.agent_host == "http://david-claw"
+    user = UserDoc.model_validate({**_BASE, "crew_host": "http://hermes-host"})
+    assert user.agent_host == "http://hermes-host"
 
 
 def test_legacy_default_agent_maps_onto_default_crew():
@@ -66,11 +66,11 @@ def test_round_trips_through_json_like_the_real_store_does():
     migration survives that path too, not just a plain dict."""
     raw = json.dumps({
         **_BASE,
-        "agent_host": "http://david-claw",
+        "agent_host": "http://hermes-host",
         "agents": [{"name": "toolshed", "port": 8643, "api_key": "k1"}],
         "default_agent": "toolshed",
     })
     user = UserDoc.model_validate_json(raw)
-    assert user.agent_host == "http://david-claw"
+    assert user.agent_host == "http://hermes-host"
     assert user.default_crew == "toolshed"
     assert user.crew[0].name == "toolshed"

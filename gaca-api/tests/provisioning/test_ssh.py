@@ -149,7 +149,7 @@ def _write_env(path, **values) -> None:
 
 
 def test_discover_profiles_finds_default_and_named_profiles(tmp_path):
-    """Mirrors the real layout confirmed on david-claw, 2026-09-20: the
+    """Mirrors the real layout confirmed on hermes-host, 2026-09-20: the
     root .env is "default", each profiles/<name>/.env is a named one."""
     home = tmp_path / "home"
     _write_env(
@@ -278,7 +278,7 @@ def test_next_free_port_falls_back_to_base_with_nothing_configured(tmp_path):
 # ── create_profile — against a FAKE hermes CLI, since the real one isn't
 # available in a test sandbox. Faithful about what matters here: the exact
 # argv sequence gaca-api sends and the .env it writes, not Hermes' own
-# internals (already confirmed live against david-claw, 2026-09-20 — see
+# internals (already confirmed live against hermes-host, 2026-09-20 — see
 # the comment above _CREATE_PROFILE_SCRIPT in ssh.py).
 
 _FAKE_HERMES = r"""#!/bin/bash

@@ -102,7 +102,7 @@ class UserDoc(BaseModel):
 
     # Each operator brings their own Hermes agent — there is no shared,
     # app-wide one. `agent_host` is the scheme and host that agent (and every
-    # crew member under it) lives on, e.g. "http://david-claw", no port; each
+    # crew member under it) lives on, e.g. "http://hermes-host", no port; each
     # CrewMember supplies its own port and key. Unset until the user connects
     # via POST /api/agent/connect, which also creates the first crew member;
     # every delegate/chat call until then raises CrewNotConfigured. Stored

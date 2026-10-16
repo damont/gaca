@@ -35,7 +35,7 @@ layer (a hardened systemd unit — deploy/gaca-api.service) limits what the
 process could do if the rest of the app were compromised. Be aware that gaca-api
 also holds each crew member's Hermes API key and can start agent runs; a Hermes
 agent can run commands, so this boundary is not what stands between a fully
-compromised gaca-api and the box. See gaca-planning/hermes/0004-local-agent-mode.md.
+compromised gaca-api and the box.
 """
 from __future__ import annotations
 

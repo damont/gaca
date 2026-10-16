@@ -74,7 +74,7 @@ def test_old_passwords_and_google_identities_are_scrubbed_on_startup(tmp_path, w
         "id": "u1", "email": "david@example.com", "display_name": "David",
         "hashed_password": "$argon2id$v=19$m=65536,t=3,p=4$abc$def", "google_sub": "g-123",
         "email_verified": True, "is_active": True, "created_at": "2026-01-01T00:00:00+00:00",
-        "agent_host": "http://david-claw", "crew": [], "default_crew": None,
+        "agent_host": "http://hermes-host", "crew": [], "default_crew": None,
     }
     if not with_google:  # the oldest shape: a password, and none of the Google fields at all
         del legacy_doc["google_sub"], legacy_doc["email_verified"]
@@ -94,7 +94,7 @@ def test_old_passwords_and_google_identities_are_scrubbed_on_startup(tmp_path, w
     assert row[0] is None
     doc = json.loads(row[1])
     assert "hashed_password" not in doc and "google_sub" not in doc and "email_verified" not in doc
-    assert doc["agent_host"] == "http://david-claw" and doc["display_name"] == "David"
+    assert doc["agent_host"] == "http://hermes-host" and doc["display_name"] == "David"
 
 
 
@@ -112,14 +112,14 @@ def test_set_agent_host_persists(tmp_path):
     async def go():
         user = await _new_user()
         assert user.agent_host is None
-        updated = await auth_service.set_agent_host(user, "http://david-claw.lan")
+        updated = await auth_service.set_agent_host(user, "http://hermes-host.lan")
         reloaded = await auth_service.find_by_id(user.id)
         return updated, reloaded
 
     updated, reloaded = _run(go)
-    assert updated.agent_host == "http://david-claw.lan"
+    assert updated.agent_host == "http://hermes-host.lan"
     # persisted, not just returned
-    assert reloaded.agent_host == "http://david-claw.lan"
+    assert reloaded.agent_host == "http://hermes-host.lan"
 
 
 def test_connect_agent_sets_host_and_creates_the_first_crew_member(tmp_path):
@@ -128,14 +128,14 @@ def test_connect_agent_sets_host_and_creates_the_first_crew_member(tmp_path):
     async def go():
         user = await _new_user()
         updated = await auth_service.connect_agent(
-            user, "http://david-claw.lan", 8642, "the-key"
+            user, "http://hermes-host.lan", 8642, "the-key"
         )
         reloaded = await auth_service.find_by_id(user.id)
         return updated, reloaded
 
     updated, reloaded = _run(go)
     for user in (updated, reloaded):
-        assert user.agent_host == "http://david-claw.lan"
+        assert user.agent_host == "http://hermes-host.lan"
         assert [c.name for c in user.crew] == ["default"]
         assert user.crew[0].port == 8642
         assert user.crew[0].api_key == "the-key"
@@ -148,7 +148,7 @@ def test_connect_agent_honors_a_custom_first_crew_member_name(tmp_path):
     async def go():
         user = await _new_user()
         return await auth_service.connect_agent(
-            user, "http://david-claw.lan", 8642, "the-key", name="toolshed"
+            user, "http://hermes-host.lan", 8642, "the-key", name="toolshed"
         )
 
     updated = _run(go)
@@ -469,14 +469,14 @@ def test_set_ssh_connection_persists(tmp_path):
         user = await _new_user()
         assert user.ssh is None
         updated = await auth_service.set_ssh_connection(
-            user, "david-claw.lan", 22, "david", "-----BEGIN KEY-----\nfake\n"
+            user, "hermes-host.lan", 22, "david", "-----BEGIN KEY-----\nfake\n"
         )
         reloaded = await auth_service.find_by_id(user.id)
         return updated, reloaded
 
     updated, reloaded = _run(go)
     for user in (updated, reloaded):
-        assert user.ssh.host == "david-claw.lan"
+        assert user.ssh.host == "hermes-host.lan"
         assert user.ssh.port == 22
         assert user.ssh.username == "david"
 
@@ -502,7 +502,7 @@ def _install_fake_discovery(monkeypatch, found: dict):
 
 async def _connected_user() -> UserDoc:
     user = await _new_user()
-    return await auth_service.set_ssh_connection(user, "david-claw", 22, "david", "k")
+    return await auth_service.set_ssh_connection(user, "hermes-host", 22, "david", "k")
 
 
 def test_discover_crew_raises_crew_not_configured_without_ssh(tmp_path):
@@ -562,7 +562,7 @@ def test_discover_crew_sets_agent_host_from_the_ssh_host_when_unset(tmp_path, mo
         return await auth_service.discover_crew(user)
 
     updated = _run(go)
-    assert updated.agent_host == "http://david-claw"
+    assert updated.agent_host == "http://hermes-host"
 
 
 def test_discover_crew_leaves_an_existing_agent_host_alone(tmp_path, monkeypatch):
@@ -712,12 +712,12 @@ def test_provision_crew_member_accepts_access_inline_on_a_fresh_account(
         user = await _new_user()
         assert user.ssh is None
         access = SSHConnection(
-            host="david-claw.lan", port=22, username="david", private_key="k"
+            host="hermes-host.lan", port=22, username="david", private_key="k"
         )
         return await auth_service.provision_crew_member(user, "default", access=access)
 
     updated = _run(go)
-    assert updated.ssh.host == "david-claw.lan"
+    assert updated.ssh.host == "hermes-host.lan"
     assert updated.crew[0].name == "default"
 
 
@@ -728,7 +728,7 @@ def test_provision_crew_member_remembers_access_for_next_time(tmp_path, monkeypa
     async def go():
         user = await _new_user()
         access = SSHConnection(
-            host="david-claw.lan", port=22, username="david", private_key="k"
+            host="hermes-host.lan", port=22, username="david", private_key="k"
         )
         user = await auth_service.provision_crew_member(user, "default", access=access)
         # Second call gives no access at all — it should still work, using
@@ -746,12 +746,12 @@ def test_discover_crew_accepts_access_inline_on_a_fresh_account(tmp_path, monkey
     async def go():
         user = await _new_user()
         access = SSHConnection(
-            host="david-claw.lan", port=22, username="david", private_key="k"
+            host="hermes-host.lan", port=22, username="david", private_key="k"
         )
         return await auth_service.discover_crew(user, access=access)
 
     updated = _run(go)
-    assert updated.ssh.host == "david-claw.lan"
+    assert updated.ssh.host == "hermes-host.lan"
     assert updated.crew[0].name == "default"
 
 
