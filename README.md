@@ -262,5 +262,4 @@ The chat screen design the apps follow is in [`docs/chat-design.md`](docs/chat-d
 
 ## License
 
-Apache License 2.0 (see [`LICENSE`](LICENSE)). Copyright 2026 David Monts. Report security problems privately, as described in
-[`SECURITY.md`](SECURITY.md).
+Apache License 2.0 (see [`LICENSE`](LICENSE)). Copyright 2026 David Monts.
