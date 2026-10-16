@@ -46,6 +46,32 @@ app.state.set({ ... });  app.state.get()
 
 Writes return promises; a failed write rejects with an `Error` (`err.status` is the HTTP code; 409 means someone else changed it — re-read and retry).
 
+## Schemas (what a document must look like)
+
+A collection can have a schema. GACA checks every write against it — the page's and the agent's, adds, replaces, merges and batches, and the seed data at publish time — and refuses a bad document with a `422` that names the problem (`items/milk doesn't match its schema: 'done' must be true or false, got 'yes'`). In a page, a refused write rejects its promise with that message (`err.status === 422`), so catch it and `app.toast(err.message)`.
+
+```json
+{
+  "items": {
+    "fields": {
+      "text":     {"type": "string", "required": true, "max_length": 200},
+      "done":     {"type": "boolean"},
+      "quantity": {"type": "integer", "min": 1, "max": 99},
+      "due":      {"type": "date"},
+      "status":   {"type": "string", "enum": ["open", "snoozed"]}
+    },
+    "strict": false
+  }
+}
+```
+
+- Types: `string`, `number`, `integer`, `boolean`, `date` (`YYYY-MM-DD`), `datetime` (ISO 8601), `array`, `object`, `any`. A `null` or missing field counts as missing, so `required` fails for it (and a `patch` that sets a required field to `null` is refused).
+- Per field, optionally: `required`, `enum`, `min`, `max` (numbers), `max_length` (strings).
+- `strict: true` refuses fields you did not list; by default extra fields are allowed.
+- Collections without a schema stay free-form. Names follow the same rules as collections (lowercase, digits, `-`, `_`).
+- Set it with `publish --schema-file F`, or replace all of them later with `update REF --schema-file F` (`{}` removes them). Documents already stored are never rewritten: `update` prints the stored ones that no longer match so you can fix them with `patch`.
+- Write dates as `YYYY-MM-DD` strings, not words. Keep the schema in step with `--data-notes`.
+
 ## Talking to the agent and the app
 
 ```js

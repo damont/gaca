@@ -22,6 +22,7 @@ from ..db import artifacts as db
 from ..models.artifact import ArtifactDoc
 from ..models.base import utcnow
 from ..schemas import artifact as s
+from . import artifact_schema
 from . import sessions as session_service
 from .exceptions import Conflict, NotFound, PayloadTooLarge
 
@@ -45,10 +46,16 @@ def merge_patch(target: Any, patch: Any) -> Any:
     return result
 
 
-def _out(row: db.ArtifactRow) -> s.ArtifactOut:
+def _schema_of(row: db.ArtifactRow, collection: str) -> dict | None:
+    return row.doc.schemas.get(collection)
+
+
+def _out(row: db.ArtifactRow, schema_issues: list[str] | None = None) -> s.ArtifactOut:
     d = row.doc
     return s.ArtifactOut(
         id=d.id, title=d.title, description=d.description, data_notes=d.data_notes, crew=d.crew,
+        schemas={name: s.CollectionSchema.model_validate(v) for name, v in d.schemas.items()},
+        schema_issues=schema_issues or [],
         session_id=d.session_id, alert_id=d.alert_id, archived=row.archived, position=row.position,
         version=row.version,
         rev=row.rev, state_version=row.state_version, created_at=d.created_at,
@@ -87,10 +94,14 @@ async def create(user_id: str, body: s.ArtifactCreate) -> s.ArtifactOut:
         for doc_id, data in docs.items():
             if _json_size(data) > s.MAX_DOC_BYTES:
                 raise PayloadTooLarge(f"document {name}/{doc_id} is too large")
+    schemas = {name: schema.model_dump(exclude_none=True) for name, schema in body.schemas.items()}
+    for name, docs in body.collections.items():
+        for doc_id, data in docs.items():
+            artifact_schema.check(name, doc_id, schemas.get(name), data)
     now = utcnow()
     doc = ArtifactDoc(
         user_id=user_id, title=body.title, description=body.description, data_notes=body.data_notes,
-        crew=body.crew, session_id=body.session_id, alert_id=body.alert_id, created_at=now,
+        schemas=schemas, crew=body.crew, session_id=body.session_id, alert_id=body.alert_id, created_at=now,
     )
     async with _write_lock:
         await db.insert(doc, body.html, body.state, now)
@@ -154,6 +165,8 @@ async def patch(user_id: str, artifact_id: str, body: s.ArtifactPatch) -> s.Arti
                         continue
                     value = " ".join(value.split())
                 update[key] = value
+        if body.schemas is not None:
+            update["schemas"] = {name: schema.model_dump(exclude_none=True) for name, schema in body.schemas.items()}
         doc = row.doc.model_copy(update=update)
         archived = row.archived if body.archived is None else body.archived
         now = utcnow()
@@ -163,7 +176,21 @@ async def patch(user_id: str, artifact_id: str, body: s.ArtifactPatch) -> s.Arti
             await db.update_meta(doc, archived, now, html=body.html, version=version)
         else:
             await db.update_meta(doc, archived, now)
-    return _out(await _owned(user_id, artifact_id))
+        issues: list[str] = []
+        if body.schemas is not None:
+            issues = await _existing_issues(artifact_id, doc.schemas)
+    return _out(await _owned(user_id, artifact_id), issues)
+
+
+async def _existing_issues(artifact_id: str, schemas: dict) -> list[str]:
+    """Up to 10 stored documents that don't match the schemas (stored data is never rewritten)."""
+    found: list[str] = []
+    for d in await db.list_docs(artifact_id):
+        for problem in artifact_schema.problems(schemas.get(d.collection), d.data):
+            found.append(f"{d.collection}/{d.id}: {problem}")
+            if len(found) >= 10:
+                return found
+    return found
 
 
 async def restore(user_id: str, artifact_id: str, version: int) -> s.ArtifactOut:
@@ -255,7 +282,7 @@ def _check_doc_size(collection: str, doc_id: str, data: dict) -> None:
 
 async def _set_doc(
     artifact_id: str, collection: str, doc_id: str, data: dict, expected: int | None,
-    *, create_only: bool = False, commit: bool = True,
+    *, schema: dict | None = None, create_only: bool = False, commit: bool = True,
 ) -> db.DocRow:
     existing = await db.get_doc(artifact_id, collection, doc_id)
     if create_only and existing is not None:
@@ -264,6 +291,7 @@ async def _set_doc(
         have = "missing" if existing is None else f"version {existing.version}"
         raise Conflict(f"{collection}/{doc_id} is {have}, not {expected} — reread it and apply your change again")
     _check_doc_size(collection, doc_id, data)
+    artifact_schema.check(collection, doc_id, schema, data)
     now = utcnow()
     if existing is None:
         if await db.count_docs(artifact_id, collection) >= s.MAX_DOCS_PER_COLLECTION:
@@ -278,27 +306,30 @@ async def _set_doc(
 async def put_doc(user_id: str, artifact_id: str, collection: str, doc_id: str, body: s.DocPut) -> s.DocOut:
     s.check_name(collection)
     async with _write_lock:
-        await _owned(user_id, artifact_id)
-        return _doc_out(await _set_doc(artifact_id, collection, doc_id, body.data, body.expected_version))
+        row = await _owned(user_id, artifact_id)
+        return _doc_out(await _set_doc(
+            artifact_id, collection, doc_id, body.data, body.expected_version, schema=_schema_of(row, collection)))
 
 
 async def add_doc(user_id: str, artifact_id: str, collection: str, body: s.DocCreate) -> s.DocOut:
     s.check_name(collection)
     async with _write_lock:
-        await _owned(user_id, artifact_id)
+        row = await _owned(user_id, artifact_id)
         doc_id = body.id or uuid.uuid4().hex[:12]
-        return _doc_out(await _set_doc(artifact_id, collection, doc_id, body.data, None, create_only=True))
+        return _doc_out(await _set_doc(
+            artifact_id, collection, doc_id, body.data, None, schema=_schema_of(row, collection), create_only=True))
 
 
 async def patch_doc(user_id: str, artifact_id: str, collection: str, doc_id: str, body: s.DocPatch) -> s.DocOut:
     s.check_name(collection)
     async with _write_lock:
-        await _owned(user_id, artifact_id)
+        row = await _owned(user_id, artifact_id)
         existing = await db.get_doc(artifact_id, collection, doc_id)
         if existing is None:
             raise NotFound("document", f"{collection}/{doc_id}")
         merged = merge_patch(existing.data, body.patch)
-        return _doc_out(await _set_doc(artifact_id, collection, doc_id, merged, body.expected_version))
+        return _doc_out(await _set_doc(
+            artifact_id, collection, doc_id, merged, body.expected_version, schema=_schema_of(row, collection)))
 
 
 async def delete_doc(user_id: str, artifact_id: str, collection: str, doc_id: str) -> None:
@@ -317,16 +348,18 @@ async def clear_collection(user_id: str, artifact_id: str, collection: str) -> i
 async def batch(user_id: str, artifact_id: str, body: s.Batch) -> s.BatchResult:
     """All-or-nothing: if any op fails, none of them are applied."""
     async with _write_lock:
-        await _owned(user_id, artifact_id)
+        owned = await _owned(user_id, artifact_id)
         try:
             for op in body.ops:
                 if op.op == "set":
-                    await _set_doc(artifact_id, op.collection, op.id, op.data, None, commit=False)
+                    await _set_doc(artifact_id, op.collection, op.id, op.data, None,
+                                   schema=_schema_of(owned, op.collection), commit=False)
                 elif op.op == "patch":
                     existing = await db.get_doc(artifact_id, op.collection, op.id)
                     if existing is None:
                         raise NotFound("document", f"{op.collection}/{op.id}")
-                    await _set_doc(artifact_id, op.collection, op.id, merge_patch(existing.data, op.data), None, commit=False)
+                    await _set_doc(artifact_id, op.collection, op.id, merge_patch(existing.data, op.data), None,
+                                   schema=_schema_of(owned, op.collection), commit=False)
                 elif op.op == "delete":
                     if not await db.delete_docs(artifact_id, op.collection, op.id, utcnow(), commit=False):
                         raise NotFound("document", f"{op.collection}/{op.id}")

@@ -32,6 +32,7 @@
 
 <script>
   // Collection "stops": {day: 'YYYY-MM-DD', time?: 'HH:MM' (24h), title, detail?, label?, status?: 'ok'|'bad'}
+  // Schema (publish with --schema-file): {"stops":{"fields":{"day":{"type":"date","required":true},"time":{"type":"string","max_length":5},"title":{"type":"string","required":true},"detail":{"type":"string"},"label":{"type":"string"},"status":{"type":"string","enum":["ok","bad"]}}},"days":{"fields":{"note":{"type":"string"}}}}
   //   `label` is the small status word ("Booked", "Needs a table"); `status` colours it.
   // Collection "days" (optional): doc id = the date, {note: "Travel"} shown at the right of the day heading.
   var stops = app.collection('stops');

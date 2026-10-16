@@ -18,6 +18,7 @@
 
 <script>
   // Each submit adds one document to the collection "entries" holding the answers by field name, and tells
+  // Schema (publish with --schema-file): {"entries":{"fields":{"amount":{"type":"number","required":true},"date":{"type":"date","required":true},"category":{"type":"string"},"merchant":{"type":"string"},"paid":{"type":"string"},"note":{"type":"string"},"split":{"type":"boolean"}}}}
   // the agent with app.emit('submitted', {id}). To keep a single set of answers instead, use
   // app.state.patch(answers). `half: true` puts two fields side by side.
   var FIELDS = [

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from .base import new_id, utcnow
@@ -28,5 +30,8 @@ class ArtifactDoc(BaseModel):
     # next ("state: {items:[{id,text,done}]}"), so a rewrite migrates data instead of
     # resetting it.
     data_notes: str | None = None
+    # collection name -> its shape ({fields: {name: {type, required, enum, min, max, max_length}}, strict}); see
+    # schemas/artifact.py CollectionSchema and services/artifact_schema.py. Stored as plain dicts in the doc JSON.
+    schemas: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utcnow)
     last_opened_at: datetime | None = None

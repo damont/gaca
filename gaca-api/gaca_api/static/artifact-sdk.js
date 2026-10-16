@@ -30,6 +30,7 @@
   var lastSnap = null;
   var inFlight = 0;
   var polling = false;
+  var pollAgain = false;
 
   // The app's side of the bridge: Android injects `GacaBridge` (addJavascriptInterface); iOS
   // registers a `gaca` WKScriptMessageHandler. Either way the answer comes back through
@@ -60,11 +61,14 @@
     });
   }
 
+  // A write changes the data on the server, but the page only learns of it by fetching again. So the moment a
+  // write finishes (or fails: the page may be out of date), fetch right away instead of waiting for the next
+  // timer tick; a user's own edit then shows up in about one round trip rather than up to 4 seconds later.
   function write(method, args) {
     inFlight++;
     return call(method, args).then(
-      function (v) { inFlight--; return v; },
-      function (e) { inFlight--; throw e; }
+      function (v) { inFlight--; poll(true); return v; },
+      function (e) { inFlight--; poll(true); throw e; }
     );
   }
 
@@ -100,17 +104,24 @@
   }
 
   function poll(force) {
-    if (polling || inFlight > 0 || subs.length === 0) return;
+    if (subs.length === 0) return;
+    // A fetch already under way may have been answered before the write that asked for this one, so ask again
+    // once it lands. And while a write is in flight don't fetch: the write's own completion will.
+    if (polling) { if (force) pollAgain = true; return; }
+    if (inFlight > 0) return;
     if (!force && document.visibilityState === 'hidden') return;
     polling = true;
     call('data', { since_rev: lastRev }).then(function (raw) {
       polling = false;
-      if (raw.changed === false) return;
-      lastRev = raw.rev;
-      lastSnap = snapshot(raw);
-      subs.slice().forEach(function (cb) { try { cb(lastSnap); } catch (e) { console.error(e); } });
-    }, function () { polling = false; });
+      if (raw.changed !== false) {
+        lastRev = raw.rev;
+        lastSnap = snapshot(raw);
+        subs.slice().forEach(function (cb) { try { cb(lastSnap); } catch (e) { console.error(e); } });
+      }
+      again();
+    }, function () { polling = false; again(); });
   }
+  function again() { if (pollAgain) { pollAgain = false; poll(true); } }
   setInterval(poll, 4000);
   document.addEventListener('visibilitychange', function () { poll(true); });
 
