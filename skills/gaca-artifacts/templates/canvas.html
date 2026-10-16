@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Canvas</title>
+<style>
+  /* A full-screen drawing page: one canvas, and a hairline panel at the bottom when something is selected.
+     The page is sized from --app-h (set by the app's SDK), NOT vh / dvh / height:100%, which are 0 on Android. */
+  html, body { margin: 0; padding: 0; overflow: hidden; }
+  #stage { position: relative; width: 100%; height: var(--app-h, 600px); overflow: hidden; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  #panel { position: absolute; left: 0; right: 0; bottom: 0; max-height: 40%; overflow: auto; display: none;
+    background: var(--bg); border-top: 1px solid var(--border); padding: 8px 16px 12px; }
+  #panel.open { display: block; }
+</style>
+</head>
+<body>
+<!-- No title or intro: the app already shows the title. -->
+<div id="stage"><canvas id="c" aria-label="Interactive map"></canvas><section id="panel" aria-live="polite"></section></div>
+
+<script>
+  // Collection "nodes": {name, size: 1-5, color?: '#rrggbb', note?: string}. Replace with your own shape; the structure
+  // (merge data into live state, pointer events, collision-free labels, pause when hidden) is what to keep.
+  var nodes = app.collection('nodes');
+  var cv = document.getElementById('c'), ctx = cv.getContext('2d'), panel = document.getElementById('panel');
+  var docs = [], live = {}, selected = null, down = null, frame = 0, running = true;
+
+  function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '#888'; }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; }); }
+
+  function resize() {                                     // size the bitmap from the box x devicePixelRatio
+    var r = cv.getBoundingClientRect(), d = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.round(r.width * d); cv.height = Math.round(r.height * d);
+    ctx.setTransform(d, 0, 0, d, 0, 0);
+  }
+
+  // Merge the new data into the live state, so animation angles and the selection survive every update.
+  function update(snap) {
+    docs = snap.docs('nodes');
+    var ids = {};
+    docs.forEach(function (d, i) { ids[d.id] = 1; if (!live[d.id]) live[d.id] = { angle: i * 2.4, x: 0, y: 0, r: 10 }; });
+    Object.keys(live).forEach(function (id) { if (!ids[id]) delete live[id]; });
+    if (selected && !ids[selected]) selected = null;
+    renderPanel();
+  }
+
+  function draw() {
+    if (!running) return;
+    var w = cv.clientWidth, h = cv.clientHeight;
+    if (w && h) {
+      ctx.clearRect(0, 0, w, h);
+      var cx = w / 2, cy = h * 0.42, ring = Math.min(w, h) * 0.34, unit = Math.min(w, h) / 40;
+      var rule = css('--rule'), text = css('--text'), accent = css('--accent');
+      ctx.strokeStyle = rule; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(cx, cy, ring, 0, Math.PI * 2); ctx.stroke();
+      var placed = [];                                    // label boxes already used, to avoid overlap
+      docs.forEach(function (d) {
+        var s = live[d.id]; s.angle += 0.0008;
+        s.r = unit * (1 + (Number(d.size) || 1) * 0.6);
+        s.x = cx + Math.cos(s.angle) * ring; s.y = cy + Math.sin(s.angle) * ring;
+        ctx.globalAlpha = 0.9; ctx.fillStyle = /^#[0-9a-f]{6}$/i.test(d.color || '') ? d.color : accent;
+        ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1;
+        if (selected === d.id) { ctx.strokeStyle = text; ctx.beginPath(); ctx.arc(s.x, s.y, s.r + 5, 0, Math.PI * 2); ctx.stroke(); }
+        label(d.name, s.x, s.y + s.r + 13, placed, text);
+      });
+    }
+    frame++; requestAnimationFrame(draw);                 // always reschedule, even if the size was 0 this frame
+  }
+  function label(t, x, y, placed, color) {                // draw a label unless it would land on one already drawn
+    t = String(t || ''); if (t.length > 20) t = t.slice(0, 19) + '…';
+    ctx.font = '12px system-ui, sans-serif'; ctx.textAlign = 'center';
+    var wd = ctx.measureText(t).width, box = { l: x - wd / 2 - 2, r: x + wd / 2 + 2, t: y - 12, b: y + 4 };
+    for (var i = 0; i < placed.length; i++) {
+      var p = placed[i]; if (box.l < p.r && box.r > p.l && box.t < p.b && box.b > p.t) return;
+    }
+    placed.push(box); ctx.fillStyle = color; ctx.fillText(t, x, y);
+  }
+
+  function hit(px, py) {                                  // nearest node whose circle (plus a generous margin) contains the point
+    var best = null, bd = 1e9;
+    docs.forEach(function (d) {
+      var s = live[d.id], dist = Math.hypot(px - s.x, py - s.y);
+      if (dist < s.r + 14 && dist < bd) { best = d.id; bd = dist; }
+    });
+    return best;
+  }
+  function pt(e) { var r = cv.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
+  cv.addEventListener('pointerdown', function (e) { down = pt(e); cv.setPointerCapture(e.pointerId); e.preventDefault(); });
+  cv.addEventListener('pointerup', function (e) {
+    if (!down) return;
+    var p = pt(e), moved = Math.hypot(p.x - down.x, p.y - down.y) > 8;
+    if (!moved) { selected = hit(p.x, p.y); renderPanel(); }   // a small movement is a tap; a drag would be handled here
+    down = null; e.preventDefault();
+  });
+  cv.addEventListener('pointercancel', function () { down = null; });
+
+  function renderPanel() {
+    var d = docs.filter(function (x) { return x.id === selected; })[0];
+    if (!d) { panel.className = ''; panel.innerHTML = ''; return; }
+    panel.className = 'open';
+    panel.innerHTML = '<div class="row"><b class="grow">' + esc(d.name) + '</b><button id="close">Close</button></div>' +
+      (d.note ? '<p class="muted" style="margin:6px 0">' + esc(d.note) + '</p>' : '') +
+      '<div class="row" style="border:0"><button id="bigger">Bigger</button><button id="ask">Ask about this</button></div>';
+    document.getElementById('close').onclick = function () { selected = null; renderPanel(); };
+    document.getElementById('bigger').onclick = function () { nodes.patch(d.id, { size: Math.min(5, (Number(d.size) || 1) + 1) }); };
+    document.getElementById('ask').onclick = function () { app.ask('About ' + d.name + ': '); };
+  }
+
+  window.addEventListener('resize', resize);
+  document.addEventListener('visibilitychange', function () {
+    running = !document.hidden; if (running) requestAnimationFrame(draw);   // pause the loop while the page is hidden
+  });
+  resize(); app.subscribe(update); requestAnimationFrame(draw);
+  new MutationObserver(resize).observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });  // --app-h changed
+</script>
+</body>
+</html>
