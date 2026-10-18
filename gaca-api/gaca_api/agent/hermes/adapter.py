@@ -27,10 +27,12 @@ from ...schemas.model import ModelConfig, ModelInfo, ProviderCredential
 from ...schemas.skill import SkillInfo, SkillUsage
 from ...provisioning.base import Provisioner, ProvisioningError
 from ...schemas.crew_profile import ProfileInfo, PurposeInfo
+from . import translate_automations as tau
 from . import translate_profile as tp
 from . import translate_purpose as tpu
 from . import translate_skills as tsk
-from ..base import EngineUnavailable, ProfileReadError
+from ...schemas.automation import Automation, AutomationAction, AutomationRun
+from ..base import AutomationNotFound, AutomationRejected, EngineUnavailable, ProfileReadError
 from .translate import translate
 
 
@@ -250,6 +252,67 @@ class HermesAdapter:
             raise ProfileReadError(str(error)) from error
         return tsk.to_usage(text)
 
+    # ── Automations ────────────────────────────────────────────────────
+    async def _jobs_call(self, method: str, path: str, *, params: dict | None = None) -> dict:
+        """One call to the gateway's /api/jobs family: the parsed answer, or a neutral error."""
+        try:
+            resp = await self._client.request(
+                method, f"{self._base_url}{path}", headers=self._headers, params=params,
+                timeout=httpx.Timeout(10.0),
+            )
+        except httpx.HTTPError as exc:
+            logger.warning("engine automations unreachable: %s", exc)
+            raise EngineUnavailable(f"Couldn't reach Hermes for its automations ({type(exc).__name__}).") from exc
+        if resp.status_code == 404:
+            raise AutomationNotFound(path)
+        if resp.status_code == 400:
+            raise AutomationRejected(_error_text(resp) or "Hermes refused that.")
+        if resp.status_code != 200:
+            logger.warning("engine automations returned %s: %s", resp.status_code, resp.text[:300])
+            raise EngineUnavailable(f"Hermes answered {resp.status_code} when asked about its automations.")
+        try:
+            body = resp.json()
+        except ValueError as exc:
+            raise EngineUnavailable("Hermes sent an automations answer gaca-api couldn't read.") from exc
+        return body if isinstance(body, dict) else {}
+
+    async def list_automations(
+        self, *, name: str, provisioner: Provisioner | None, include_done: bool = False
+    ) -> list[Automation]:
+        """GET /api/jobs (disabled ones too: a paused job is disabled) joined with each job's
+        recent executions read off the box. The history is a nicety: if the box can't be read the
+        automations still list, with empty `recent`."""
+        jobs = await self._jobs_call("GET", "/api/jobs", params={"include_disabled": "true"})
+        rows_by_job: dict[str, list[dict]] = {}
+        if provisioner is not None:
+            try:
+                rows = await provisioner.read_cron_runs(name, job_id=None, limit=10, with_output=False)
+            except (ProvisioningError, ValueError) as error:
+                logger.warning("couldn't read run history for %r: %s", name, error)
+                rows = None
+            for row in rows or []:
+                rows_by_job.setdefault(str(row.get("job_id")), []).append(row)
+        return tau.automations(jobs, rows_by_job, include_done=include_done)
+
+    async def automation_runs(
+        self, *, name: str, job_id: str, limit: int, provisioner: Provisioner
+    ) -> list[AutomationRun]:
+        """One job's runs from the box's ledger, each with the end of what it said. The gateway is
+        asked first so an unknown id is a clean "not found" rather than an empty history."""
+        await self._jobs_call("GET", f"/api/jobs/{job_id}")
+        try:
+            rows = await provisioner.read_cron_runs(name, job_id=job_id, limit=limit, with_output=True)
+        except (ProvisioningError, ValueError) as error:
+            raise ProfileReadError(str(error)) from error
+        if rows is None:
+            raise ProfileReadError(f"no profile called {name!r} on the engine's host")
+        return tau.runs(rows)
+
+    async def control_automation(self, *, job_id: str, action: AutomationAction) -> None:
+        """POST /api/jobs/{id}/run | pause | resume. Hermes' "run" only marks the job due; its
+        scheduler starts it on the next tick (about a minute)."""
+        await self._jobs_call("POST", f"/api/jobs/{job_id}/{action}")
+
     # ── Profile ────────────────────────────────────────────────────────
     async def describe_profile(self) -> ProfileInfo:
         """Assemble this crew member's picture from five read-only Hermes endpoints,
@@ -314,6 +377,15 @@ _PROFILE_SOURCES = {
     "toolsets": ("/v1/toolsets", "tools"),
     "jobs": ("/api/jobs", "scheduled jobs"),
 }
+
+
+def _error_text(resp: httpx.Response) -> str | None:
+    """Hermes' `{"error": "..."}` message, short enough to show."""
+    try:
+        text = resp.json().get("error")
+    except (ValueError, AttributeError):
+        return None
+    return text[:300] if isinstance(text, str) and text else None
 
 
 def create(base_url: str, api_key: str) -> HermesAdapter:

@@ -108,20 +108,24 @@ def _strip_emoji(label: str) -> str:
     return re.sub(r"^[^\w]+", "", label) or label
 
 
+def schedule_text(job: dict) -> str:
+    """A job's schedule in plain English (the raw expression if it isn't one we can say)."""
+    schedule = job.get("schedule") or {}
+    expr = schedule.get("expr") or schedule.get("display") or job.get("schedule_display") or ""
+    if schedule.get("kind", "cron") == "cron" and expr:
+        return describe_cron(expr)
+    return schedule.get("display") or job.get("schedule_display") or "One time"
+
+
 def jobs(jobs_response: dict) -> list[ProfileJob]:
     out: list[ProfileJob] = []
     for j in jobs_response.get("jobs") or []:
         if not isinstance(j, dict) or not j.get("id"):
             continue
-        schedule = j.get("schedule") or {}
-        expr = schedule.get("expr") or schedule.get("display") or j.get("schedule_display") or ""
-        text = describe_cron(expr) if schedule.get("kind", "cron") == "cron" and expr else (
-            schedule.get("display") or j.get("schedule_display") or "One time"
-        )
         out.append(ProfileJob(
             id=str(j["id"]),
             name=j.get("name") or str(j["id"]),
-            schedule=text,
+            schedule=schedule_text(j),
             enabled=bool(j.get("enabled", True)) and not j.get("paused_at"),
             next_run=_dt(j.get("next_run_at")),
             last_run=_dt(j.get("last_run_at")),

@@ -21,7 +21,7 @@ from .db import client
 from .provisioning.base import ProvisioningError
 from .config import settings
 from .security import BodyLimitMiddleware, SecurityHeadersMiddleware, cors_origins
-from .routers import agent, alerts, artifacts, auth, briefings, crew, devices, push, sessions, setup, tokens
+from .routers import agent, alerts, artifacts, auth, automations, briefings, crew, devices, push, sessions, setup, tokens
 from .services import push as push_service
 from .services.exceptions import (
     BadRequest,
@@ -191,6 +191,7 @@ app.include_router(crew.router, prefix="/api")
 app.include_router(alerts.router, prefix="/api")
 app.include_router(push.router, prefix="/api")
 app.include_router(sessions.router, prefix="/api")
+app.include_router(automations.router, prefix="/api")
 app.include_router(briefings.router, prefix="/api")
 app.include_router(artifacts.router, prefix="/api")
 

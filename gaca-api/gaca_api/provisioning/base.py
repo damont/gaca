@@ -42,6 +42,15 @@ class Provisioner(Protocol):
         profile or the file doesn't exist. Read-only; the engine's adapter parses it."""
         ...
 
+    async def read_cron_runs(
+        self, name: str, *, job_id: str | None, limit: int, with_output: bool
+    ) -> list[dict] | None:
+        """Execution history of a profile's scheduled jobs, read-only, as raw rows (newest first):
+        `{"id","job_id","status","claimed_at","started_at","finished_at","error", "output"?}`. With
+        `job_id`, that job's last `limit` runs; without, the last `limit` runs of EVERY job. `output`
+        (only when `with_output`) is the tail of the run's output file. None if no such profile."""
+        ...
+
     async def next_free_port(self) -> int: ...
 
     async def create_profile(
