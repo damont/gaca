@@ -1,6 +1,6 @@
 """API tokens: format, hashing, and what each scope may call.
 
-An API token is for software acting for the owner (Hermes skills posting alerts, lists,
+An API token is for software acting for the owner (Hermes skills posting alerts,
 briefings, artifacts) — not for a person, and not for the app. It is deliberately narrower than
 a paired device (the app), which has the owner's full access:
 
@@ -29,7 +29,6 @@ SCOPE_RULES: dict[str, list[tuple[str, str]]] = {
         ("GET", r"/api/alerts"),
         ("GET", r"/api/alerts/[^/]+"),
     ],
-    "lists": [("*", r"/api/lists(/.*)?")],
     "briefings": [("*", r"/api/briefings(/.*)?")],
     "artifacts": [("*", r"/api/artifacts(/.*)?")],
 }

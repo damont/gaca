@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 SKILLS = Path(__file__).resolve().parents[2] / "skills"
-EXPECTED = {"gaca", "gaca-alerts", "gaca-briefing", "gaca-lists", "gaca-artifacts"}
+EXPECTED = {"gaca", "gaca-alerts", "gaca-briefing", "gaca-artifacts"}
 
 
 def skill_dirs():

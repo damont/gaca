@@ -208,5 +208,5 @@ def test_a_corrupt_manifest_is_treated_as_empty(tmp_path, skills):
 
 def test_the_repos_skills_install_cleanly(tmp_path, skills):
     result = sync(REPO_SKILLS, skills)
-    assert {"gaca", "gaca-alerts", "gaca-briefing", "gaca-lists", "gaca-artifacts"} <= {r.split("/")[0] for r in result.written}
+    assert {"gaca", "gaca-alerts", "gaca-briefing", "gaca-artifacts"} <= {r.split("/")[0] for r in result.written}
     assert not result.left_alone

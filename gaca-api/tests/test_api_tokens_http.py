@@ -35,7 +35,7 @@ def http(tmp_path, monkeypatch):
         yield client
 
 
-def mint(http, name="hermes-test", scopes=("alerts", "lists", "briefings", "artifacts"), **extra):
+def mint(http, name="hermes-test", scopes=("alerts", "briefings", "artifacts"), **extra):
     r = http.post("/api/tokens", headers=http.session, json={"name": name, "scopes": list(scopes), **extra})
     assert r.status_code == 201, r.text
     return r.json()
@@ -92,7 +92,6 @@ def test_a_token_can_do_what_hermes_skills_need(http):
     alert_id = made.json()["id"]
     assert http.get("/api/alerts", headers=h).status_code == 200
     assert http.get(f"/api/alerts/{alert_id}", headers=h).status_code == 200
-    assert http.get("/api/lists", headers=h).status_code == 200
     assert http.get("/api/briefings", params={"date": "2026-10-10"}, headers=h).status_code == 200
     assert http.get("/api/artifacts", headers=h).status_code == 200
 
@@ -125,18 +124,18 @@ def test_an_api_token_cannot_mint_or_revoke_tokens(http):
 
 
 def test_scopes_are_independent(http):
-    lists_only = bearer(mint(http, "a", ["lists"])["token"])
+    artifacts_only = bearer(mint(http, "a", ["artifacts"])["token"])
     alerts_only = bearer(mint(http, "b", ["alerts"])["token"])
-    assert http.get("/api/lists", headers=lists_only).status_code == 200
-    assert http.get("/api/alerts", headers=lists_only).status_code == 403
+    assert http.get("/api/artifacts", headers=artifacts_only).status_code == 200
+    assert http.get("/api/alerts", headers=artifacts_only).status_code == 403
     assert http.get("/api/alerts", headers=alerts_only).status_code == 200
-    assert http.get("/api/lists", headers=alerts_only).status_code == 403
-    assert http.get("/api/auth/me", headers=lists_only).status_code == 200  # "is my token good" always works
+    assert http.get("/api/artifacts", headers=alerts_only).status_code == 403
+    assert http.get("/api/auth/me", headers=artifacts_only).status_code == 200  # "is my token good" always works
 
 
-@pytest.mark.parametrize("path", ["/api/lists/../crew", "/api/lists/./x", "/api//alerts", "/api/alerts/../crew"])
+@pytest.mark.parametrize("path", ["/api/briefings/../crew", "/api/briefings/./x", "/api//alerts", "/api/alerts/../crew"])
 def test_dot_segments_cannot_walk_a_token_out_of_its_scope(path):
-    assert token_utils.allowed(["alerts", "lists"], "GET", path) is False
+    assert token_utils.allowed(["alerts", "briefings"], "GET", path) is False
 
 
 # ── lifecycle ────────────────────────────────────────────────────────
@@ -144,9 +143,9 @@ def test_dot_segments_cannot_walk_a_token_out_of_its_scope(path):
 def test_revoking_cuts_the_token_off_immediately_and_is_idempotent(http):
     made = mint(http)
     h = bearer(made["token"])
-    assert http.get("/api/lists", headers=h).status_code == 200
+    assert http.get("/api/artifacts", headers=h).status_code == 200
     assert http.delete(f"/api/tokens/{made['id']}", headers=http.session).status_code == 204
-    assert http.get("/api/lists", headers=h).status_code == 401
+    assert http.get("/api/artifacts", headers=h).status_code == 401
     assert http.delete(f"/api/tokens/{made['id']}", headers=http.session).status_code == 204
     assert http.delete("/api/tokens/nope", headers=http.session).status_code == 404
     listed = http.get("/api/tokens", headers=http.session).json()
@@ -156,12 +155,12 @@ def test_revoking_cuts_the_token_off_immediately_and_is_idempotent(http):
 def test_an_expired_token_stops_working(http):
     made = mint(http, expires_in_days=1)
     h = bearer(made["token"])
-    assert http.get("/api/lists", headers=h).status_code == 200
+    assert http.get("/api/artifacts", headers=h).status_code == 200
     con = sqlite3.connect(http.db)
     con.execute("UPDATE api_tokens SET expires_at = ? WHERE id = ?", ((utcnow() - timedelta(seconds=1)).isoformat(), made["id"]))
     con.commit()
     con.close()
-    assert http.get("/api/lists", headers=h).status_code == 401
+    assert http.get("/api/artifacts", headers=h).status_code == 401
 
 
 def test_a_token_does_not_expire_unless_asked(http):
@@ -171,7 +170,7 @@ def test_a_token_does_not_expire_unless_asked(http):
 def test_unknown_or_tampered_tokens_are_401(http):
     secret = mint(http)["token"]
     for bad in (secret[:-1] + ("A" if secret[-1] != "A" else "B"), token_utils.PREFIX + "x" * 43, token_utils.PREFIX, secret.upper()):
-        assert http.get("/api/lists", headers=bearer(bad)).status_code == 401
+        assert http.get("/api/artifacts", headers=bearer(bad)).status_code == 401
 
 
 def test_a_disabled_owner_loses_every_token(http):
@@ -182,13 +181,13 @@ def test_a_disabled_owner_loses_every_token(http):
     con.execute("UPDATE users SET doc = ?", (json.dumps(doc),))
     con.commit()
     con.close()
-    assert http.get("/api/lists", headers=bearer(secret)).status_code == 401
+    assert http.get("/api/artifacts", headers=bearer(secret)).status_code == 401
 
 
 def test_using_a_token_records_when(http):
     made = mint(http)
     assert http.get("/api/tokens", headers=http.session).json()[0]["last_used_at"] is None
-    http.get("/api/lists", headers=bearer(made["token"]))
+    http.get("/api/artifacts", headers=bearer(made["token"]))
     assert http.get("/api/tokens", headers=http.session).json()[0]["last_used_at"] is not None
 
 

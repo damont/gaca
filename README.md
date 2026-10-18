@@ -1,7 +1,7 @@
 # GACA
 
 A phone app for the AI agent you run yourself. GACA is a small server plus an Android and an iPhone app: your
-[Hermes](https://github.com/NousResearch/hermes-agent) agent posts alerts, briefings, lists and
+[Hermes](https://github.com/NousResearch/hermes-agent) agent posts alerts, briefings and
 pages to the app, and you chat with it from anywhere.
 
 **One server belongs to one person.** You run it on a machine you control (next to Hermes), pair
@@ -195,7 +195,7 @@ is printed. Non-interactive: `--fcm-credentials FILE`, or `--apns-key FILE --apn
 
 Two things connect Hermes to GACA, both done by the installer and redone by `gaca-api hermes connect`:
 
-- **A token per profile.** Each Hermes profile gets its own scoped, revocable token (alerts, lists, briefings,
+- **A token per profile.** Each Hermes profile gets its own scoped, revocable token (alerts, briefings,
   artifacts only) in its `.env`. Hermes talks to GACA over `127.0.0.1`, never the public address.
 - **Skills.** GACA's skills (the repo's `skills/`) are copied into every profile's `skills/gaca/` folder so the
   agent knows how to use GACA:
@@ -205,7 +205,6 @@ Two things connect Hermes to GACA, both done by the installer and redone by `gac
   | `gaca` | reach GACA safely (local address, token, live API schema) and pick the right skill |
   | `gaca-alerts` | send alerts and permission requests to your phone instead of only the chat |
   | `gaca-briefing` | build the daily briefing in sections plus a summary, and schedule it |
-  | `gaca-lists` | keep shopping, gift and to-do lists in GACA, not in memory |
   | `gaca-artifacts` | publish interactive pages (trackers, planners) that open in the app |
 
 Profiles you create later, in the app or by hand, get both automatically. Re-running `./install.sh` (or

@@ -350,7 +350,7 @@ async def set_ssh_connection(
 
 async def _install_skills(provisioner, names) -> None:
     """Give each named profile GACA's Hermes skills (so the agent knows how to post alerts,
-    briefings, lists and pages). Best-effort and quiet: a profile that cannot take them yet must
+    briefings and pages). Best-effort and quiet: a profile that cannot take them yet must
     never make crew creation or discovery fail, and re-running is cheap and safe."""
     for name in names:
         if name == "default":

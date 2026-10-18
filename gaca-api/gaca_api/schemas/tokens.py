@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 class TokenCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=60, description="What this token is for, e.g. 'hermes-toolshed'")
-    scopes: list[Literal["alerts", "lists", "briefings", "artifacts"]] = Field(..., min_length=1)
+    scopes: list[Literal["alerts", "briefings", "artifacts"]] = Field(..., min_length=1)
     expires_in_days: int | None = Field(default=None, ge=1, le=3650, description="Omit for a token that does not expire")
 
 

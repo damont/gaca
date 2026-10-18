@@ -64,10 +64,10 @@ def active_tokens():
 # ── token create / list / revoke ─────────────────────────────────────
 
 def test_token_create_prints_the_secret_once_and_list_never_does(server, capsys):
-    assert cli.main(["token", "create", "--name", "ci", "--scopes", "alerts,lists"]) == 0
+    assert cli.main(["token", "create", "--name", "ci", "--scopes", "alerts,briefings"]) == 0
     out = capsys.readouterr().out
     secret = re.search(r"gaca_pat_[A-Za-z0-9_-]+", out).group(0)
-    assert "alerts, lists" in out
+    assert "alerts, briefings" in out
     assert cli.main(["token", "list"]) == 0
     listing = capsys.readouterr().out
     assert "ci" in listing and "active" in listing and "never" in listing and secret not in listing
@@ -217,12 +217,12 @@ def test_connect_installs_the_gaca_skills_into_every_profile_and_reports_it(serv
 def test_connect_again_says_the_skills_are_up_to_date_and_respects_agent_edits(server, hermes_home, capsys):
     cli.main(["hermes", "connect", "--hermes-home", str(hermes_home)])
     capsys.readouterr()
-    mine = hermes_home / "profiles" / "toolshed" / "skills" / "gaca" / "gaca-lists" / "SKILL.md"
-    mine.write_text("my lists skill")
+    mine = hermes_home / "profiles" / "toolshed" / "skills" / "gaca" / "gaca-briefing" / "SKILL.md"
+    mine.write_text("my briefing skill")
     cli.main(["hermes", "connect", "--hermes-home", str(hermes_home)])
     out = capsys.readouterr().out
-    assert mine.read_text() == "my lists skill"
-    assert "up to date" in out and "were left alone" in out and "gaca-lists/SKILL.md" in out
+    assert mine.read_text() == "my briefing skill"
+    assert "up to date" in out and "were left alone" in out and "gaca-briefing/SKILL.md" in out
 
 
 def test_connect_reports_a_profile_that_cannot_take_the_skills(server, hermes_home, tmp_path, capsys):
