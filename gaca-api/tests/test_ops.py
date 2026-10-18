@@ -140,9 +140,9 @@ def test_a_skills_dry_run_reports_without_writing(tmp_path):
     assert plan.written and not (skills / "gaca").exists()
     skill_sync.sync(SKILLS, skills)
     assert not skill_sync.sync(SKILLS, skills, dry_run=True).changed
-    (skills / "gaca" / "gaca-lists" / "SKILL.md").write_text("edited")
-    assert skill_sync.sync(SKILLS, skills, dry_run=True).left_alone == ["gaca-lists/SKILL.md"]
-    assert (skills / "gaca" / "gaca-lists" / "SKILL.md").read_text() == "edited"
+    (skills / "gaca" / "gaca-briefing" / "SKILL.md").write_text("edited")
+    assert skill_sync.sync(SKILLS, skills, dry_run=True).left_alone == ["gaca-briefing/SKILL.md"]
+    assert (skills / "gaca" / "gaca-briefing" / "SKILL.md").read_text() == "edited"
     assert not skill_sync.sync(SKILLS, tmp_path / "absent", dry_run=True).left_alone
     assert not (tmp_path / "absent").exists()
 
@@ -482,7 +482,7 @@ def test_doctor_notices_a_missing_or_old_style_token(box, tmp_path, monkeypatch)
 
 def test_doctor_notices_skills_that_are_missing_and_tolerates_edited_ones(box, tmp_path, monkeypatch):
     home = build_healthy_box(box, tmp_path, monkeypatch)
-    (home / "skills" / "gaca" / "gaca-lists" / "SKILL.md").write_text("an agent edited this")
+    (home / "skills" / "gaca" / "gaca-briefing" / "SKILL.md").write_text("an agent edited this")
     code, out = run_doctor(box)
     assert code == 0 and "were edited by you or an agent and are kept" in out
     (home / "skills" / "gaca" / "gaca-alerts" / "SKILL.md").unlink()
@@ -547,15 +547,15 @@ def test_a_dry_run_changes_nothing_even_when_the_skills_are_partly_there(tmp_pat
     assert plan.written == ["gaca-alerts/SKILL.md"] and not victim.exists()
     assert (manifest.read_bytes(), manifest.stat().st_mtime_ns) == before
     # an out-of-date file and a dropped one are reported but not touched either
-    stale = skills / "gaca" / "gaca-lists" / "SKILL.md"
+    stale = skills / "gaca" / "gaca-briefing" / "SKILL.md"
     manifest_data = json.loads(manifest.read_text())
     stale.write_text("old")
-    manifest_data["files"]["gaca-lists/SKILL.md"] = skill_sync._sha(b"old")
+    manifest_data["files"]["gaca-briefing/SKILL.md"] = skill_sync._sha(b"old")
     (skills / "gaca" / "gone.md").write_text("x")
     manifest_data["files"]["gone.md"] = skill_sync._sha(b"x")
     manifest.write_text(json.dumps(manifest_data))
     plan = skill_sync.sync(SKILLS, skills, dry_run=True)
-    assert "gaca-lists/SKILL.md" in plan.updated and plan.removed == ["gone.md"]
+    assert "gaca-briefing/SKILL.md" in plan.updated and plan.removed == ["gone.md"]
     assert stale.read_text() == "old" and (skills / "gaca" / "gone.md").exists()
 
 

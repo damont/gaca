@@ -228,7 +228,7 @@ def test_a_crew_member_created_in_the_app_gets_the_gaca_skills(box):
         user = await auth_service.discover_crew(owner)
         await auth_service.provision_crew_member(user, "fresh", None)
     run(go)
-    for skill in ("gaca", "gaca-alerts", "gaca-briefing", "gaca-lists", "gaca-artifacts"):
+    for skill in ("gaca", "gaca-alerts", "gaca-briefing", "gaca-artifacts"):
         assert skill_file(box, "fresh", skill).is_file(), skill
     assert skill_file(box, "fresh", "gaca-alerts", "scripts/gaca.py").is_file()
 

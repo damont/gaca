@@ -166,7 +166,7 @@ def test_a_device_has_the_owners_full_access_including_managing_tokens(http):
 
 def test_a_hermes_token_cannot_touch_devices(http):
     made = paired(http)
-    secret = http.post("/api/tokens", headers=bearer(made["access_token"]), json={"name": "h", "scopes": ["alerts", "lists", "briefings", "artifacts"]}).json()["token"]
+    secret = http.post("/api/tokens", headers=bearer(made["access_token"]), json={"name": "h", "scopes": ["alerts", "briefings", "artifacts"]}).json()["token"]
     assert http.get("/api/devices", headers=bearer(secret)).status_code == 403
     assert http.delete(f"/api/devices/{made['device_id']}", headers=bearer(secret)).status_code == 403
     assert http.delete("/api/devices/me", headers=bearer(secret)).status_code == 403

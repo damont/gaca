@@ -1,6 +1,6 @@
 ---
 name: gaca
-description: How to reach GACA — the app on the user's phone that this agent posts alerts, daily briefings, lists and pages to. Load this first whenever a task involves GACA, the user's phone, notifying the user, or the GACA API; it says which GACA skill to use for what and how to call the API safely.
+description: How to reach GACA — the app on the user's phone that this agent posts alerts, daily briefings and pages to. Load this first whenever a task involves GACA, the user's phone, notifying the user, or the GACA API; it says which GACA skill to use for what and how to call the API safely.
 license: MIT
 compatibility: GACA runs on the same machine as Hermes. Needs a GACA API token issued for this agent.
 required_environment_variables:
@@ -19,7 +19,7 @@ metadata:
 
 # GACA
 
-GACA is the user's phone app for this agent. It is how you reach them when they are not in the chat, and where durable things live: alerts, the daily briefing, lists, and small web pages. Use it, not memory or notes, for these.
+GACA is the user's phone app for this agent. It is how you reach them when they are not in the chat, and where durable things live: alerts, the daily briefing, and small web pages. Use it, not memory or notes, for these.
 
 ## Which skill for what
 
@@ -27,8 +27,7 @@ GACA is the user's phone app for this agent. It is how you reach them when they 
 |---|---|
 | to be told something, or to approve something, away from this chat; a failure, a risk, finished background work | **gaca-alerts** |
 | a morning digest of what matters today, in sections | **gaca-briefing** |
-| a shopping, gift or to-do list kept somewhere durable | **gaca-lists** |
-| an interactive page: a tracker, planner, checklist with buttons, a form, a dashboard | **gaca-artifacts** |
+| an interactive page: a shopping or to-do list, a tracker, planner, form, dashboard | **gaca-artifacts** |
 
 If a request is about the user's phone, notifications, or "put it in GACA", it belongs to one of these. Load the skill, then follow it.
 
@@ -38,7 +37,7 @@ If a request is about the user's phone, notifications, or "put it in GACA", it b
 - **Token from the environment.** `GACA_API_TOKEN` is already set for this agent. Never print it, log it, or put it on a command line. Send it as `Authorization: Bearer …` (the skills' helper scripts do this).
 - **Read the live schema.** The API describes itself at `<base>/api/openapi.json`. Use it as the source of truth for paths and payloads instead of remembering them.
 - **Check you are connected.** `GET <base>/api/auth/me` succeeds with a good token. Each skill's helper has a command for it.
-- **What this token may do.** Its scopes cover alerts (create and read), lists, briefings and artifacts. It cannot chat as the user, act on or dismiss alerts (those are the user's decisions), or manage devices and tokens. A `403` means exactly that: report it, do not work around it.
+- **What this token may do.** Its scopes cover alerts (create and read), briefings and artifacts. It cannot chat as the user, act on or dismiss alerts (those are the user's decisions), or manage devices and tokens. A `403` means exactly that: report it, do not work around it.
 
 ## When something fails
 

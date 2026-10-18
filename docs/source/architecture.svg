@@ -48,7 +48,7 @@
   <text x="1095" y="390" text-anchor="middle" class="t h">gaca-api</text>
   <text x="1095" y="422" text-anchor="middle" class="m d">127.0.0.1:41700</text>
   <rect x="980" y="452" width="230" height="52" rx="14" class="pill"/><text x="1095" y="486" text-anchor="middle" class="t s">chat · alerts · briefings</text>
-  <rect x="980" y="516" width="230" height="52" rx="14" class="pill"/><text x="1095" y="550" text-anchor="middle" class="t s">lists · pages</text>
+  <rect x="980" y="516" width="230" height="52" rx="14" class="pill"/><text x="1095" y="550" text-anchor="middle" class="t s">pages</text>
   <rect x="980" y="580" width="230" height="52" rx="14" class="pill"/><text x="1095" y="614" text-anchor="middle" class="t s">paired phones · tokens</text>
   <rect x="980" y="644" width="230" height="52" rx="14" class="pill"/><text x="1095" y="678" text-anchor="middle" class="t s">SQLite database</text>
   <text x="1095" y="722" text-anchor="middle" class="d" style="font-size:17px">a sandboxed systemd service</text>

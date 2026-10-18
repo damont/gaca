@@ -1,6 +1,6 @@
 ---
 name: gaca-artifacts
-description: Build interactive HTML pages for the user in GACA — a Costco list they can tick off, a trip planner, a tracker, a comparison, a form, a dashboard — that open in their app, keep their data, and that you can read and update later. Use when the user asks for a page, tracker, planner, checklist with custom behavior, or anything that needs buttons, inputs or a layout a chat message can't give; or when you want to show something richer than text in a chat or alert. Not for plain shopping/gift/to-do lists (use gaca-lists).
+description: Build interactive HTML pages for the user in GACA — a Costco list they can tick off, a trip planner, a tracker, a comparison, a form, a dashboard — that open in their app, keep their data, and that you can read and update later. Use when the user asks for a page, tracker, planner, checklist with custom behavior, or anything that needs buttons, inputs or a layout a chat message can't give; or when you want to show something richer than text in a chat or alert.
 license: MIT
 compatibility: Requires network access to GACA and a GACA API token issued for this agent.
 required_environment_variables:
@@ -25,9 +25,8 @@ Helper: `python3 ${HERMES_SKILL_DIR}/scripts/artifacts.py <command>` (run it wit
 
 **Read `references/sdk.md` before writing a page** — it is the contract for `window.app` (reading, writing, events) and the rules every page must follow (self-contained, mobile-first, app theme variables, no browser storage). Templates to start from, by shape (copy the closest one, change the fields): `checklist.html` (a list; groups only if items have a category), `log.html` (stats + a table of entries + a short add form), `compare.html` (options side by side, pick one), `schedule.html` (a timeline by day), `form.html` (an entry form), `week.html` (a day-by-slot grid, tap to edit), `brief.html` (a read-only answer, no stored data), `canvas.html` (a full-screen canvas: a map, a board, anything drawn). For anything beyond a list or table, read "Building something richer" in `references/sdk.md` first. They all show the house look: flat, dense, no title or intro.
 
-## Artifact or list?
+## When to make an artifact
 
-- A plain shopping, gift or to-do list → **use gaca-lists**, not this. It's faster, and chat can edit it.
 - Use an artifact when the user **asks for a page/tracker/planner/dashboard**, or wants something custom (categories with progress bars, a packing list per person, a meal planner, a side-by-side comparison, a form, a countdown, a checklist with notes and photos-by-link). If the user says "make me a … page" or "an artifact", make one even if it's list-shaped.
 - A one-off richer answer (a comparison table, a schedule) can be a read-only artifact with no stored data.
 
