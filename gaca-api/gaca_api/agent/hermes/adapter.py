@@ -24,7 +24,7 @@ from ...config import settings
 from ...schemas.event import GacaEvent, RunFailed
 from ...schemas.message import ImageInput, MessageOut
 from ...schemas.model import ModelConfig, ModelInfo, ProviderCredential
-from ...schemas.skill import SkillInfo
+from ...schemas.skill import SkillInfo, SkillUsage
 from ...provisioning.base import Provisioner, ProvisioningError
 from ...schemas.crew_profile import ProfileInfo, PurposeInfo
 from . import translate_profile as tp
@@ -241,6 +241,14 @@ class HermesAdapter:
         if files is None:
             raise ProfileReadError(f"no profile called {name!r} on the engine's host")
         return tsk.to_skills(files)
+
+    async def read_skill_usage(self, *, name: str, provisioner: Provisioner) -> dict[str, SkillUsage]:
+        """Use counts from the profile's skills/.usage.json on the box (Hermes' API doesn't serve them)."""
+        try:
+            text = await provisioner.read_skill_usage(name)
+        except (ProvisioningError, ValueError) as error:
+            raise ProfileReadError(str(error)) from error
+        return tsk.to_usage(text)
 
     # ── Profile ────────────────────────────────────────────────────────
     async def describe_profile(self) -> ProfileInfo:

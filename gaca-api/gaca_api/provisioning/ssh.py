@@ -211,6 +211,29 @@ if root.is_dir() and not root.is_symlink():
 print(json.dumps({"found": True, "skills": found}))
 """
 
+# The skill-usage counters: one small file in a profile's skills/. Read-only, size-capped.
+_READ_SKILL_USAGE_SCRIPT = r"""
+import json, pathlib, re, sys
+
+name = sys.argv[1]
+home = pathlib.Path.home() / ".hermes"
+if name == "default":
+    d = home
+elif re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", name):
+    d = home / "profiles" / name
+else:
+    d = None
+text = None
+if d is not None and d.is_dir() and not (d / "skills").is_symlink():
+    path = d / "skills" / ".usage.json"
+    if path.is_file() and not path.is_symlink():
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")[:400000]
+        except OSError:
+            pass
+print(json.dumps({"text": text}))
+"""
+
 _PROFILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 
 
@@ -237,6 +260,16 @@ async def read_skill_files(conn: SSHConnection, name: str) -> list[dict] | None:
     )
     data = json.loads(stdout)
     return data["skills"] if data.get("found") else None
+
+
+async def read_skill_usage(conn: SSHConnection, name: str) -> str | None:
+    """The text of one profile's skill-usage file, or None if there isn't one."""
+    if name != "default" and not _PROFILE_NAME.fullmatch(name):
+        raise SSHError(f"not a valid profile name: {name!r}")
+    stdout = await run(
+        conn, f"python3 -c {shlex.quote(_READ_SKILL_USAGE_SCRIPT)} {shlex.quote(name)}", timeout=10.0
+    )
+    return json.loads(stdout).get("text")
 
 
 async def next_free_port(conn: SSHConnection, *, base: int = 8642) -> int:
@@ -428,6 +461,9 @@ class SshProvisioner:
 
     async def read_skill_files(self, name: str) -> list[dict] | None:
         return await read_skill_files(self.conn, name)
+
+    async def read_skill_usage(self, name: str) -> str | None:
+        return await read_skill_usage(self.conn, name)
 
     async def next_free_port(self) -> int:
         return await next_free_port(self.conn)

@@ -37,6 +37,11 @@ class Provisioner(Protocol):
         (path relative to skills/, text size-capped), or None if no such profile. Read-only."""
         ...
 
+    async def read_skill_usage(self, name: str) -> str | None:
+        """The text of one profile's skill-usage counter file (size-capped), or None when the
+        profile or the file doesn't exist. Read-only; the engine's adapter parses it."""
+        ...
+
     async def next_free_port(self) -> int: ...
 
     async def create_profile(

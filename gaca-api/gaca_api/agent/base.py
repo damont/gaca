@@ -19,7 +19,7 @@ from ..schemas.crew_profile import ProfileInfo, PurposeInfo
 from ..schemas.event import GacaEvent
 from ..schemas.message import ImageInput, MessageOut
 from ..schemas.model import ModelConfig, ModelInfo, ProviderCredential
-from ..schemas.skill import SkillInfo
+from ..schemas.skill import SkillInfo, SkillUsage
 
 
 class EngineUnavailable(Exception):
@@ -114,6 +114,12 @@ class AgentBackend(Protocol):
         """The same list, read from the engine's host instead of its API, for when the API
         can't answer (list_skills raised EngineUnavailable). Raises ProfileReadError when the
         host can't be read either."""
+        ...
+
+    async def read_skill_usage(self, *, name: str, provisioner: Provisioner) -> dict[str, SkillUsage]:
+        """How often each skill has been used, by skill name, for ranking. Read from the
+        engine's host (an engine may keep its counters only there). Skills it has no count
+        for are simply absent. Raises ProfileReadError when the host can't be read."""
         ...
 
     # ── Profile (read-only picture of how this crew member is set up) ──

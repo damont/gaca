@@ -77,6 +77,7 @@ _OUTPUT_LIMIT = 2_000
 _SKILL_LIMIT = 4_000      # Hermes itself reads only the first 4000 characters of a SKILL.md
 _SKILL_DEPTH = 3          # skills/<category>/<skill>/SKILL.md, with room for one more level
 _MAX_SKILLS = 500
+_USAGE_LIMIT = 400_000     # Hermes' skills/.usage.json is ~30 KB for 90 skills
 DEFAULT_GATEWAY_PORT = 8642
 
 
@@ -347,6 +348,20 @@ class LocalHermes:
         if name != "default" and not (isinstance(name, str) and PROFILE_NAME.fullmatch(name)):
             raise LocalError(f"not a valid profile name: {name!r}")
         return await asyncio.to_thread(self._read_skill_files, name)
+
+    def _read_skill_usage(self, name: str) -> str | None:
+        directory = self._profile_dir(name)
+        if directory is None:
+            return None
+        root = directory / "skills"
+        if root.is_symlink() or not root.is_dir():
+            return None
+        return _read_regular_file(root / ".usage.json", _USAGE_LIMIT)
+
+    async def read_skill_usage(self, name: str) -> str | None:
+        if name != "default" and not (isinstance(name, str) and PROFILE_NAME.fullmatch(name)):
+            raise LocalError(f"not a valid profile name: {name!r}")
+        return await asyncio.to_thread(self._read_skill_usage, name)
 
     # -- running hermes ------------------------------------------------
 

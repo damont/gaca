@@ -10,7 +10,9 @@ a different question with a different lifecycle (once, vs. any time).
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, status
+from typing import Literal
+
+from fastapi import APIRouter, Depends, Query, status
 
 from ..config import settings
 from ..models.user import SSHConnection, UserDoc
@@ -156,13 +158,19 @@ async def set_default_crew_member(name: str, user: UserDoc = Depends(get_current
 
 
 @router.get("/{name}/skills", response_model=list[SkillInfo])
-async def list_crew_member_skills(name: str, user: UserDoc = Depends(get_current_user)):
-    """This crew member's skills, read live from its own Hermes gateway.
+async def list_crew_member_skills(
+    name: str,
+    sort: Literal["name", "popular"] = Query("name", description="`popular`: most used first."),
+    limit: int | None = Query(None, ge=1, le=500, description="Return only the first n."),
+    user: UserDoc = Depends(get_current_user),
+):
+    """This crew member's skills, read live from its own engine.
 
-    Never cached by gaca-api — a skill Hermes no longer has installed can
-    never show up here.
+    Never cached by gaca-api — a skill the engine no longer has installed can
+    never show up here. Each skill carries `use_count` / `last_used_at` when
+    the engine keeps them (0 and null otherwise); `sort=popular` ranks by them.
     """
-    return await auth_service.list_skills(user, name)
+    return await auth_service.list_skills(user, name, sort, limit)
 
 
 @router.get("/{name}/profile", response_model=CrewProfile)
