@@ -22,6 +22,7 @@ from .provisioning.base import ProvisioningError
 from .config import settings
 from .security import BodyLimitMiddleware, SecurityHeadersMiddleware, cors_origins
 from .routers import agent, alerts, artifacts, auth, automations, briefings, crew, devices, push, sessions, setup, tokens
+from .services import automation_watch
 from .services import push as push_service
 from .services.exceptions import (
     BadRequest,
@@ -53,7 +54,9 @@ async def lifespan(app: FastAPI):
         with suppress(Exception):
             await client.close()
         raise
+    watcher = automation_watch.start()
     yield
+    await automation_watch.stop(watcher)
     # Shutdown, reverse order. Every step is attempted even if an earlier one fails: not being
     # able to close Firebase must not skip closing the database.
     for step in (push_service.aclose, agent_runtime.close, event_bus.aclose, client.close):

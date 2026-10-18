@@ -62,6 +62,13 @@ class Settings(BaseSettings):
     # a long but active run won't trip it.
     agent_stream_idle_timeout: float = 180.0
 
+    # Raise an alert when a crew member's scheduled automation fails. gaca-api looks every
+    # `automation_watch_seconds`; a failure older than `automation_alert_window_hours` (say, from
+    # before it was switched on or while it was down) is not worth a notification now.
+    automation_alerts: bool = True
+    automation_watch_seconds: float = 60.0
+    automation_alert_window_hours: float = 6.0
+
     # How gaca-api reaches the machine Hermes runs on, for discovering and creating crew
     # members and reading what a crew member is for. "local": gaca-api runs on that same
     # machine (the supported setup) and reads/acts on HERMES_HOME directly through

@@ -8,6 +8,14 @@ from gaca_api.models.user import UserDoc
 
 
 @pytest.fixture(autouse=True)
+def _no_background_watchers(monkeypatch):
+    """The automation watcher is a background task of the running app; tests call it directly."""
+    from gaca_api.config import settings
+
+    monkeypatch.setattr(settings, "automation_alerts", False)
+
+
+@pytest.fixture(autouse=True)
 def _fresh_limiter():
     security.limiter.reset()
     yield
