@@ -23,6 +23,7 @@ AutomationStatus = Literal["ok", "failed", "running", "paused", "done", "never_r
 
 class RunMark(BaseModel):
     """One past run, as small as a list row needs it (the row of coloured squares)."""
+    id: str | None = None  # the same id the runs list uses
     status: RunStatus
     at: datetime | None = None
 

@@ -160,7 +160,7 @@ def automations(
             next_run=_dt(job.get("next_run_at")) if status not in ("paused", "done") else None,
             kind="script" if job.get("no_agent") else "agent",
             recent=[
-                RunMark(status=run_status(r.get("status")), at=_dt(r.get("started_at")) or _dt(r.get("claimed_at")))
+                RunMark(id=str(r["id"]) if r.get("id") else None, status=run_status(r.get("status")), at=_dt(r.get("started_at")) or _dt(r.get("claimed_at")))
                 for r in reversed(rows[:10])  # rows are newest first; the strip reads oldest to newest
                 if isinstance(r, dict)
             ],
