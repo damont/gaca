@@ -26,6 +26,7 @@ import shlex
 import asyncssh
 
 from ..models.user import SSHConnection
+from . import cron_runs
 from .base import ProvisioningError
 
 
@@ -272,6 +273,21 @@ async def read_skill_usage(conn: SSHConnection, name: str) -> str | None:
     return json.loads(stdout).get("text")
 
 
+async def read_cron_runs(
+    conn: SSHConnection, name: str, *, job_id: str | None, limit: int, with_output: bool
+) -> list[dict] | None:
+    """A profile's scheduled-run history (see provisioning/cron_runs.py, whose source runs on the box).
+    Read-only; the command is fixed and every argument is validated here first."""
+    if name != "default" and not _PROFILE_NAME.fullmatch(name):
+        raise SSHError(f"not a valid profile name: {name!r}")
+    if job_id is not None and not cron_runs.JOB_ID.fullmatch(job_id):
+        raise SSHError(f"not a valid job id: {job_id!r}")
+    args = " ".join(shlex.quote(a) for a in (name, job_id or "-", str(int(limit)), "1" if with_output else "0"))
+    stdout = await run(conn, f"python3 -c {shlex.quote(cron_runs.script())} {args}", timeout=15.0)
+    data = json.loads(stdout)
+    return data["rows"] if data.get("found") else None
+
+
 async def next_free_port(conn: SSHConnection, *, base: int = 8642) -> int:
     """One past the highest API_SERVER_PORT already in use across every
     profile on the box (default, toolshed, trading = 8642/8643/8644 on
@@ -464,6 +480,11 @@ class SshProvisioner:
 
     async def read_skill_usage(self, name: str) -> str | None:
         return await read_skill_usage(self.conn, name)
+
+    async def read_cron_runs(
+        self, name: str, *, job_id: str | None, limit: int, with_output: bool
+    ) -> list[dict] | None:
+        return await read_cron_runs(self.conn, name, job_id=job_id, limit=limit, with_output=with_output)
 
     async def next_free_port(self) -> int:
         return await next_free_port(self.conn)

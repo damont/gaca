@@ -15,6 +15,7 @@ from collections.abc import AsyncIterator, Sequence
 from typing import Protocol, runtime_checkable
 
 from ..provisioning.base import Provisioner
+from ..schemas.automation import Automation, AutomationRun
 from ..schemas.crew_profile import ProfileInfo, PurposeInfo
 from ..schemas.event import GacaEvent
 from ..schemas.message import ImageInput, MessageOut
@@ -31,6 +32,15 @@ class EngineUnavailable(Exception):
 class ProfileReadError(Exception):
     """The engine's host couldn't be asked what a profile is for (unreachable, no such
     profile, unreadable). Callers show the rest of the profile without it."""
+
+
+class AutomationNotFound(Exception):
+    """The engine has no automation with that id (never existed, or was deleted)."""
+
+
+class AutomationRejected(Exception):
+    """The engine refused to do that to this automation (e.g. run a finished one-time job).
+    The message says why, in words fit to show."""
 
 
 @runtime_checkable
@@ -120,6 +130,30 @@ class AgentBackend(Protocol):
         """How often each skill has been used, by skill name, for ranking. Read from the
         engine's host (an engine may keep its counters only there). Skills it has no count
         for are simply absent. Raises ProfileReadError when the host can't be read."""
+        ...
+
+    # ── Automations (scheduled work) ──────────────────────────────────
+    async def list_automations(
+        self, *, name: str, provisioner: Provisioner | None, include_done: bool = False
+    ) -> list[Automation]:
+        """This crew member's automations, soonest next run first. `provisioner` (direct access to
+        the engine's host) fills in each one's recent runs; without it, or when the host can't be
+        read, `recent` is empty and everything else is still true. Raises EngineUnavailable when
+        the engine can't list them at all. Finished one-time automations are left out unless
+        `include_done`."""
+        ...
+
+    async def automation_runs(
+        self, *, name: str, job_id: str, limit: int, provisioner: Provisioner
+    ) -> list[AutomationRun]:
+        """One automation's run history, newest first, each with a trimmed summary of what it
+        said. Needs the host: an engine may keep history only there. Raises ProfileReadError
+        when it can't be read, AutomationNotFound for an unknown id."""
+        ...
+
+    async def run_automation(self, *, job_id: str) -> None:
+        """Run it now. A request: the engine starts it on its next tick, not instantly. Raises
+        AutomationNotFound, AutomationRejected (with a reason), or EngineUnavailable."""
         ...
 
     # ── Profile (read-only picture of how this crew member is set up) ──

@@ -51,7 +51,7 @@ from pathlib import Path
 
 import httpx
 
-from . import skill_sync
+from . import cron_runs, skill_sync
 from .base import ProvisioningError
 from .envfile import has_gaca_token, upsert_env
 
@@ -362,6 +362,24 @@ class LocalHermes:
         if name != "default" and not (isinstance(name, str) and PROFILE_NAME.fullmatch(name)):
             raise LocalError(f"not a valid profile name: {name!r}")
         return await asyncio.to_thread(self._read_skill_usage, name)
+
+    # -- scheduled-run history (cron/executions.db and cron/output/) ------
+
+    def _read_cron_runs(self, name: str, job_id: str | None, limit: int, with_output: bool) -> list[dict] | None:
+        directory = self._profile_dir(name)
+        if directory is None:
+            return None
+        try:
+            return cron_runs.read(directory, job_id, limit, with_output)
+        except ValueError as error:
+            raise LocalError(str(error)) from error
+
+    async def read_cron_runs(
+        self, name: str, *, job_id: str | None, limit: int, with_output: bool
+    ) -> list[dict] | None:
+        if name != "default" and not (isinstance(name, str) and PROFILE_NAME.fullmatch(name)):
+            raise LocalError(f"not a valid profile name: {name!r}")
+        return await asyncio.to_thread(self._read_cron_runs, name, job_id, limit, with_output)
 
     # -- running hermes ------------------------------------------------
 
