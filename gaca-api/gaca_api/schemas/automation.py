@@ -5,8 +5,8 @@ name, when it runs, whether the last run worked, and a history of runs. Each eng
 translates its own vocabulary into this (see agent/<engine>/translate_automations.py), so
 clients never learn how any particular engine names things.
 
-Read-mostly: a client can ask an automation to run now, pause or resume. Creating and editing
-them is done by talking to the crew member in chat.
+Read-mostly: a client can ask an automation to run now. Creating, editing, pausing and
+resuming them is done by talking to the crew member in chat.
 """
 from __future__ import annotations
 
@@ -16,10 +16,9 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 RunStatus = Literal["ok", "failed", "running"]
-# paused: switched off · running: a run is under way · failed: the last run failed ·
+# paused: switched off (by the crew member; a client can't do it) · running: a run is under way · failed: the last run failed ·
 # done: a one-time automation that has finished · never_run: scheduled but hasn't fired yet · ok: the last run worked
 AutomationStatus = Literal["ok", "failed", "running", "paused", "done", "never_run"]
-AutomationAction = Literal["run", "pause", "resume"]
 
 
 class RunMark(BaseModel):

@@ -15,7 +15,7 @@ from collections.abc import AsyncIterator, Sequence
 from typing import Protocol, runtime_checkable
 
 from ..provisioning.base import Provisioner
-from ..schemas.automation import Automation, AutomationAction, AutomationRun
+from ..schemas.automation import Automation, AutomationRun
 from ..schemas.crew_profile import ProfileInfo, PurposeInfo
 from ..schemas.event import GacaEvent
 from ..schemas.message import ImageInput, MessageOut
@@ -151,10 +151,9 @@ class AgentBackend(Protocol):
         when it can't be read, AutomationNotFound for an unknown id."""
         ...
 
-    async def control_automation(self, *, job_id: str, action: AutomationAction) -> None:
-        """Run it now, pause it, or resume it. Running is a request: the engine starts it on its
-        next tick, not instantly. Raises AutomationNotFound, AutomationRejected (with a reason),
-        or EngineUnavailable."""
+    async def run_automation(self, *, job_id: str) -> None:
+        """Run it now. A request: the engine starts it on its next tick, not instantly. Raises
+        AutomationNotFound, AutomationRejected (with a reason), or EngineUnavailable."""
         ...
 
     # ── Profile (read-only picture of how this crew member is set up) ──

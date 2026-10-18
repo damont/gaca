@@ -11,7 +11,7 @@ import re
 from ..agent.base import AutomationNotFound, AutomationRejected, EngineUnavailable, ProfileReadError
 from ..models.user import CrewMember, UserDoc
 from ..provisioning.select import provisioner_for
-from ..schemas.automation import Automation, AutomationAction, AutomationList, AutomationRun
+from ..schemas.automation import Automation, AutomationList, AutomationRun
 from . import auth as auth_service
 from .exceptions import InvalidRequest, NotFound
 
@@ -79,12 +79,12 @@ async def runs(user: UserDoc, name: str, job_id: str, limit: int) -> list[Automa
         raise EngineUnavailable(str(error) or "Couldn't read the run history in time.") from error
 
 
-async def control(user: UserDoc, name: str, job_id: str, action: AutomationAction) -> Automation:
-    """Run now / pause / resume, then the automation as it now stands."""
+async def run_now(user: UserDoc, name: str, job_id: str) -> Automation:
+    """Ask for a run now, then return the automation as it now stands."""
     member = _member(user, name)
     backend = auth_service.backend_for_crew(user, member)
     try:
-        await backend.control_automation(job_id=_job_id(job_id), action=action)
+        await backend.run_automation(job_id=_job_id(job_id))
     except AutomationNotFound:
         raise NotFound("automation", job_id) from None
     except AutomationRejected as why:

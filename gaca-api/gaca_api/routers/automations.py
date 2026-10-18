@@ -1,8 +1,8 @@
 """HTTP layer for automations — the scheduled work a user's crew members do.
 
 Thin: validate the request, call the service, return its schema. Read live from each
-member's engine every time (see schemas/automation.py for the neutral shape). Creating and
-editing automations is done by talking to the crew member in chat.
+member's engine every time (see schemas/automation.py for the neutral shape). Creating,
+editing, pausing and resuming automations is done by talking to the crew member in chat.
 """
 from __future__ import annotations
 
@@ -44,16 +44,4 @@ async def automation_runs(
 async def run_automation(name: str, job_id: str, user: UserDoc = Depends(get_current_user)):
     """Run it now. A request, not an instant start: the engine begins on its next tick (about a
     minute), so poll the runs or the list. `422` if the engine refuses (a finished one-time job)."""
-    return await service.control(user, name, job_id, "run")
-
-
-@router.post("/crew/{name}/automations/{job_id}/pause", response_model=Automation)
-async def pause_automation(name: str, job_id: str, user: UserDoc = Depends(get_current_user)):
-    """Stop it running on its schedule until resumed."""
-    return await service.control(user, name, job_id, "pause")
-
-
-@router.post("/crew/{name}/automations/{job_id}/resume", response_model=Automation)
-async def resume_automation(name: str, job_id: str, user: UserDoc = Depends(get_current_user)):
-    """Put a paused automation back on its schedule."""
-    return await service.control(user, name, job_id, "resume")
+    return await service.run_now(user, name, job_id)

@@ -52,10 +52,6 @@ class Gateway:
         if len(parts) == 4:
             if parts[3] == "run" and self.refuse_run:
                 return httpx.Response(400, json={"error": "Cannot run: job is completed (terminal)."})
-            if parts[3] == "pause":
-                found.update(enabled=False, state="paused")
-            elif parts[3] == "resume":
-                found.update(enabled=True, state="scheduled")
         return httpx.Response(200, json={"job": found})
 
 
@@ -155,22 +151,27 @@ def test_runs_need_access_to_the_box(world):
     assert http.get(f"/api/crew/default/automations/{BRIEFING}/runs").status_code == 502
 
 
-def test_pause_resume_and_run_now(world):
+def test_run_now_is_accepted_and_pause_resume_are_not_offered(world):
     http, gateway, _ = world
-    paused = http.post(f"/api/crew/default/automations/{SCOUT}/pause")
-    assert paused.status_code == 200 and paused.json()["status"] == "paused" and paused.json()["next_run"] is None
-    resumed = http.post(f"/api/crew/default/automations/{SCOUT}/resume").json()
-    assert resumed["status"] == "ok" and resumed["next_run"] is not None
     ran = http.post(f"/api/crew/default/automations/{SCOUT}/run")
     assert ran.status_code == 202 and ran.json()["id"] == SCOUT
     assert ("POST", f"/api/jobs/{SCOUT}/run", {}) in gateway.calls
+    for action in ("pause", "resume"):
+        assert http.post(f"/api/crew/default/automations/{SCOUT}/{action}").status_code in (404, 405)
+
+
+def test_a_job_paused_in_the_engine_shows_as_paused(world):
+    http, gateway, _ = world
+    gateway.jobs[SCOUT].update(enabled=False, state="paused")
+    paused = {a["id"]: a for a in http.get("/api/automations").json()["automations"]}[SCOUT]
+    assert paused["status"] == "paused" and paused["next_run"] is None
 
 
 def test_errors_are_plain(world):
     http, gateway, _ = world
-    assert http.post("/api/crew/default/automations/dddddddddddd/pause").status_code == 404
+    assert http.post("/api/crew/default/automations/dddddddddddd/run").status_code == 404
     gateway.refuse_run = True
     refused = http.post(f"/api/crew/default/automations/{ONCE}/run")
     assert refused.status_code == 422 and "terminal" in refused.json()["detail"]
     gateway.down = True
-    assert http.post(f"/api/crew/default/automations/{SCOUT}/pause").status_code == 502
+    assert http.post(f"/api/crew/default/automations/{SCOUT}/run").status_code == 502

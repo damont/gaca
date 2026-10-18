@@ -31,7 +31,7 @@ from . import translate_automations as tau
 from . import translate_profile as tp
 from . import translate_purpose as tpu
 from . import translate_skills as tsk
-from ...schemas.automation import Automation, AutomationAction, AutomationRun
+from ...schemas.automation import Automation, AutomationRun
 from ..base import AutomationNotFound, AutomationRejected, EngineUnavailable, ProfileReadError
 from .translate import translate
 
@@ -308,10 +308,10 @@ class HermesAdapter:
             raise ProfileReadError(f"no profile called {name!r} on the engine's host")
         return tau.runs(rows)
 
-    async def control_automation(self, *, job_id: str, action: AutomationAction) -> None:
-        """POST /api/jobs/{id}/run | pause | resume. Hermes' "run" only marks the job due; its
-        scheduler starts it on the next tick (about a minute)."""
-        await self._jobs_call("POST", f"/api/jobs/{job_id}/{action}")
+    async def run_automation(self, *, job_id: str) -> None:
+        """POST /api/jobs/{id}/run. Hermes only marks the job due; its scheduler starts it on
+        the next tick (about a minute)."""
+        await self._jobs_call("POST", f"/api/jobs/{job_id}/run")
 
     # ── Profile ────────────────────────────────────────────────────────
     async def describe_profile(self) -> ProfileInfo:
