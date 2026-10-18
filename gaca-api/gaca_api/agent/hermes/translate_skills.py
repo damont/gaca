@@ -10,7 +10,10 @@ skills, so this does too.
 """
 from __future__ import annotations
 
-from ...schemas.skill import SkillInfo
+import json
+from datetime import datetime
+
+from ...schemas.skill import SkillInfo, SkillUsage
 
 _MAX_DESCRIPTION = 1024
 
@@ -55,3 +58,30 @@ def to_skills(files: list[dict]) -> list[SkillInfo]:
     them (category, then name)."""
     skills = [to_skill_info(list(f["path"]), f["text"]) for f in files if f.get("path")]
     return sorted(skills, key=lambda s: (s.category or "", s.name))
+
+
+def to_usage(text: str | None) -> dict[str, SkillUsage]:
+    """Hermes' `skills/.usage.json` -> usage by skill name. The file is
+    `{"<skill>": {"use_count": 31, "view_count": 11, "last_used_at": "<iso>"|null, "state": ...}}`.
+    A skill that was only viewed, never run, counts as unused. Anything odd is skipped, never raised."""
+    try:
+        raw = json.loads(text) if text else {}
+    except ValueError:
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, SkillUsage] = {}
+    for name, record in raw.items():
+        if not isinstance(record, dict):
+            continue
+        count = record.get("use_count")
+        used = record.get("last_used_at")
+        try:
+            last = datetime.fromisoformat(used) if isinstance(used, str) and used else None
+        except ValueError:
+            last = None
+        out[str(name)] = SkillUsage(
+            use_count=count if isinstance(count, int) and not isinstance(count, bool) and count > 0 else 0,
+            last_used_at=last,
+        )
+    return out

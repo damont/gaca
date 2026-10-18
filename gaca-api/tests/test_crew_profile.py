@@ -176,7 +176,7 @@ def test_skills_route_lists_hermes_skills(http):
 
 def test_a_skill_without_a_description_still_lists(http, monkeypatch):
     r = _skills_route(http, monkeypatch, {"/v1/skills": {"data": [{"name": "x", "description": None}]}})
-    assert r.status_code == 200 and r.json() == [{"name": "x", "description": "", "category": None}]
+    assert r.status_code == 200 and r.json() == [{"name": "x", "description": "", "category": None, "use_count": 0, "last_used_at": None}]
 
 
 def test_hermes_error_on_skills_is_a_502_with_a_reason(http, monkeypatch):

@@ -301,12 +301,40 @@ def backend_for_crew(user: UserDoc, crew_member: CrewMember) -> AgentBackend:
     return agent_runtime.backend_for(base_url, crew_member.api_key)
 
 
-async def list_skills(user: UserDoc, name: str):
-    """The named crew member's skills, straight from its own Hermes gateway."""
+async def list_skills(user: UserDoc, name: str, sort: str = "name", limit: int | None = None):
+    """The named crew member's skills, straight from its own engine, with use counts when the
+    engine's host can be read. `sort="popular"` puts the most used first (ties: most recently
+    used, then name); without counts it is the engine's own order. `limit` keeps the first n."""
     member = find_crew_member(user, name)
     if member is None:
         raise NotFound("crew member", name)
     backend = backend_for_crew(user, member)
+    skills = await _read_skills(user, member, backend)
+    await _add_usage(user, member, backend, skills)
+    if sort == "popular":
+        skills = sorted(skills, key=lambda s: (
+            -s.use_count, -(s.last_used_at.timestamp() if s.last_used_at else 0.0), s.name))
+    return skills[:limit] if limit else skills
+
+
+async def _add_usage(user: UserDoc, member, backend, skills) -> None:
+    """Fill in each skill's use count. Best effort: counts are a nicety, so a host that can't
+    be read just leaves them at 0 rather than failing the list."""
+    provisioner = provisioner_for(user)
+    if provisioner is None:
+        return
+    try:
+        usage = await asyncio.wait_for(
+            backend.read_skill_usage(name=member.name, provisioner=provisioner), timeout=8.0
+        )
+    except (ProfileReadError, asyncio.TimeoutError):
+        return
+    for skill in skills:
+        if (found := usage.get(skill.name)) is not None:
+            skill.use_count, skill.last_used_at = found.use_count, found.last_used_at
+
+
+async def _read_skills(user: UserDoc, member, backend):
     try:
         return await backend.list_skills()
     except EngineUnavailable as unavailable:
