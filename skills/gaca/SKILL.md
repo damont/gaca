@@ -27,6 +27,7 @@ GACA is the user's phone app for this agent. It is how you reach them when they 
 |---|---|
 | to be told something, or to approve something, away from this chat; a failure, a risk, finished background work | **gaca-alerts** |
 | a morning digest of what matters today, in sections | **gaca-briefing** |
+| the half-hourly scheduled check-in that decides whether anything is worth interrupting them for | **gaca-heartbeat** |
 | an interactive page: a shopping or to-do list, a tracker, planner, form, dashboard | **gaca-artifacts** |
 
 If a request is about the user's phone, notifications, or "put it in GACA", it belongs to one of these. Load the skill, then follow it.

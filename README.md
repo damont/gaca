@@ -206,10 +206,19 @@ Two things connect Hermes to GACA, both done by the installer and redone by `gac
   | `gaca-alerts` | send alerts and permission requests to your phone instead of only the chat |
   | `gaca-briefing` | build the daily briefing in sections plus a summary, and schedule it |
   | `gaca-artifacts` | publish interactive pages (trackers, planners) that open in the app |
+  | `gaca-heartbeat` | wake every 30 minutes, look at what it can see, and alert you only when something is worth it |
 
 Profiles you create later, in the app or by hand, get both automatically. Re-running `./install.sh` (or
 `gaca-api hermes connect`) after a `git pull` updates the skills; a skill file that an agent has edited is left
 alone and reported, never overwritten. `gaca-api token list|revoke` manages the tokens.
+
+**The heartbeat.** Once a phone is paired, the installer also schedules a Hermes cron job named `gaca-heartbeat` on
+the default profile (every 30 minutes). Most runs end in silence. The skill's helper holds it to quiet hours
+(22:00 to 07:00), a daily run budget, at most 3 alerts a day with gaps between them, and a pause of a few hours if
+the model provider says it is out of budget. It never needs write access to anything: it only suggests. To change
+the schedule set `GACA_HEARTBEAT_SCHEDULE` in the server's `.env` (a cron expression; empty means do not create the
+job) and re-run `gaca-api hermes connect`; an existing job is never overwritten, so to change one that exists edit
+or remove it with `hermes cron`.
 
 ## Day to day: the `gaca-api` command
 

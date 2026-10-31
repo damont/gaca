@@ -16,6 +16,16 @@ def _no_background_watchers(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_heartbeat_job(monkeypatch):
+    """`hermes connect` and the installer schedule the heartbeat by running the real `hermes` CLI;
+    on a machine that has Hermes, a test must never touch its real cron jobs. The heartbeat tests
+    turn it back on, with a fake shell."""
+    from gaca_api.config import settings
+
+    monkeypatch.setattr(settings, "heartbeat_schedule", "")
+
+
+@pytest.fixture(autouse=True)
 def _fresh_limiter():
     security.limiter.reset()
     yield
