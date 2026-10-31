@@ -266,6 +266,13 @@ async def _hermes_connect(hermes_home: str | None, base_url: str | None, rotate:
         if outcome.left_alone:
             note += f"; {len(outcome.left_alone)} you or an agent edited were left alone ({', '.join(outcome.left_alone)})"
         print(f"  {profile:12} {note}")
+    from .installer.run import Say, _hermes_bin
+    from .installer.shell import Shell
+    from .provisioning import heartbeat_job
+
+    shell = Shell()
+    outcome = heartbeat_job.ensure_job(shell, _hermes_bin(shell) or settings.hermes_bin, "default", settings.heartbeat_schedule)
+    heartbeat_job.report(outcome, "default", settings.heartbeat_schedule, Say(print))
     return 0
 
 

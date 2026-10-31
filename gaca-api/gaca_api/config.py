@@ -83,6 +83,9 @@ class Settings(BaseSettings):
     # Where GACA's Hermes skills live (the repo's `skills/`). Empty = next to this code. Only used to
     # give a newly created or discovered crew member its skills.
     skills_dir: str = ""
+    # When the heartbeat check-in runs (a cron expression, Hermes' time zone). Empty = do not set the
+    # heartbeat job up. Cost matters: each run is a model call, so the skill gates itself first.
+    heartbeat_schedule: str = "*/30 * * * *"
 
     # --- Push notifications --------------------------------------------
     # Path to a Firebase service-account JSON key (Firebase console → Project

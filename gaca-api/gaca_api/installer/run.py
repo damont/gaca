@@ -479,6 +479,11 @@ def wire_hermes(opts: Options, shell: Shell, say: Say) -> None:
         say.warn("restart Hermes so running agents pick it up (e.g. `systemctl --user restart hermes-gateway`)")
     else:
         say.ok("every Hermes profile already has a GACA token")
+    if crew is not None:  # somebody has paired, so the profiles have tokens and the heartbeat could work
+        from ..provisioning import heartbeat_job
+
+        outcome = heartbeat_job.ensure_job(shell, _hermes_bin(shell) or settings.hermes_bin, "default", settings.heartbeat_schedule)
+        heartbeat_job.report(outcome, "default", settings.heartbeat_schedule, say)
 
 
 async def _issue_code(opts: Options) -> str:

@@ -387,7 +387,8 @@ def test_a_server_with_a_paired_phone_is_not_given_a_new_code(flow, capsys):
     assert "already paired" in out and "Pairing code" not in out and "gaca-api pair" in out
 
 
-def test_the_installer_waits_for_the_first_pairing_then_wires_hermes(flow, capsys):
+def test_the_installer_waits_for_the_first_pairing_then_wires_hermes(flow, capsys, monkeypatch):
+    monkeypatch.setattr(settings, "heartbeat_schedule", "*/30 * * * *")
     (flow.hermes_home / "profiles" / "toolshed").mkdir(parents=True)
     (flow.hermes_home / ".env").write_text("OPENAI_API_KEY=keep\nAPI_SERVER_ENABLED=true\nAPI_SERVER_KEY=" + "k" * 32 + "\n")
     flow.service, flow.wait_for_claim, flow.use_hermes = "user", True, True
@@ -412,6 +413,8 @@ def test_the_installer_waits_for_the_first_pairing_then_wires_hermes(flow, capsy
     for env in (flow.hermes_home / ".env", flow.hermes_home / "profiles" / "toolshed" / ".env"):
         assert "GACA_API_TOKEN=gaca_pat_" in env.read_text()
     assert "OPENAI_API_KEY=keep" in (flow.hermes_home / ".env").read_text()
+    assert "scheduled the heartbeat" in out  # the check-in job is created once somebody has paired
+    assert sum(call[0][3:5] == ["cron", "create"] for call in shell.calls) == 1
 
 
 def test_no_hermes_is_not_an_error(flow, capsys):
