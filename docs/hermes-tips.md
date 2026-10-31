@@ -101,7 +101,7 @@ profile created by hand starts with the defaults.
 - **Google Workspace.** It arrives as a skill, with the OAuth client created in your own Google Cloud project. Start with
   read-only scopes (gmail, drive, sheets, docs). A client left in *testing* mode has its refresh tokens expire after **seven
   days**, and the symptom is an auth failure deep inside a skill. Publish the app (a formality for one user) or plan to
-  re-consent.
+  re-consent. Step-by-step, read-only, including the traps: [Read-only Google access](hermes-google-readonly.md).
 - **A chat front end such as Telegram.** A bot is reachable by anyone who finds it, so the allowlist (`TELEGRAM_ALLOWED_USERS`)
   is the whole security model: required, not optional.
 - **Docker.** Being in the `docker` group is effectively root (`docker run -v /:/host`). That is the normal trade for a
