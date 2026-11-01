@@ -14,7 +14,7 @@ from ..installer.shell import Shell
 
 NAME = "gaca-heartbeat"
 DEFAULT_SCHEDULE = "*/30 * * * *"
-PROMPT = "Run the gaca-heartbeat skill. Follow it exactly: gate first, and reply [SILENT] unless you posted an alert."
+PROMPT = "Run the gaca-heartbeat skill. Follow it exactly, including how it says to end your reply."
 
 
 @dataclass

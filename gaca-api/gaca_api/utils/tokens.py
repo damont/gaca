@@ -31,6 +31,8 @@ SCOPE_RULES: dict[str, list[tuple[str, str]]] = {
     ],
     "briefings": [("*", r"/api/briefings(/.*)?")],
     "artifacts": [("*", r"/api/artifacts(/.*)?")],
+    # Read-only on purpose: the heartbeat may learn its limits but never change them.
+    "heartbeat": [("GET", r"/api/heartbeat/settings")],
 }
 SCOPES = tuple(SCOPE_RULES)
 # Allowed with any scope: lets a client check "is my token good, and whose is it".

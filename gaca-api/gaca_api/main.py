@@ -21,7 +21,7 @@ from .db import client
 from .provisioning.base import ProvisioningError
 from .config import settings
 from .security import BodyLimitMiddleware, SecurityHeadersMiddleware, cors_origins
-from .routers import agent, alerts, artifacts, auth, automations, briefings, crew, devices, push, sessions, setup, tokens
+from .routers import agent, alerts, artifacts, auth, automations, briefings, crew, devices, heartbeat, push, sessions, setup, tokens
 from .services import automation_watch
 from .services import push as push_service
 from .services.exceptions import (
@@ -197,6 +197,7 @@ app.include_router(sessions.router, prefix="/api")
 app.include_router(automations.router, prefix="/api")
 app.include_router(briefings.router, prefix="/api")
 app.include_router(artifacts.router, prefix="/api")
+app.include_router(heartbeat.router, prefix="/api")
 
 
 def run() -> None:

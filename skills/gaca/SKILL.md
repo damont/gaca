@@ -38,7 +38,7 @@ If a request is about the user's phone, notifications, or "put it in GACA", it b
 - **Token from the environment.** `GACA_API_TOKEN` is already set for this agent. Never print it, log it, or put it on a command line. Send it as `Authorization: Bearer …` (the skills' helper scripts do this).
 - **Read the live schema.** The API describes itself at `<base>/api/openapi.json`. Use it as the source of truth for paths and payloads instead of remembering them.
 - **Check you are connected.** `GET <base>/api/auth/me` succeeds with a good token. Each skill's helper has a command for it.
-- **What this token may do.** Its scopes cover alerts (create and read), briefings and artifacts. It cannot chat as the user, act on or dismiss alerts (those are the user's decisions), or manage devices and tokens. A `403` means exactly that: report it, do not work around it.
+- **What this token may do.** Its scopes cover alerts (create and read), briefings, artifacts, and reading (never changing) the heartbeat settings. It cannot chat as the user, act on or dismiss alerts (those are the user's decisions), or manage devices and tokens. A `403` means exactly that: report it, do not work around it.
 
 ## When something fails
 
