@@ -84,8 +84,16 @@ DEFAULT_GATEWAY_PORT = 8642
 # ── The only commands this module will ever run ──────────────────────
 
 def argv_allowed(args: tuple[str, ...]) -> bool:
-    """True only for the two hermes invocations local mode needs."""
+    """True only for the three hermes invocations local mode needs."""
     if args == ("--version",):
+        return True
+    if (
+        len(args) == 4
+        and args[:2] == ("profile", "delete")
+        and PROFILE_NAME.fullmatch(args[2]) is not None
+        and args[2] != "default"
+        and args[3] == "-y"
+    ):
         return True
     return (
         len(args) == 4
@@ -551,6 +559,21 @@ class LocalHermes:
                 return await self._create_profile(name, api_key, extra_env)
         except TimeoutError:
             raise LocalError(f"provisioning {name!r} failed at serve: timed out") from None
+
+    async def delete_profile(self, name: str) -> bool:
+        """`hermes profile delete <name> -y`. The directory is checked first (a profile that is
+        already gone is a success) and again afterwards (a command that exits 0 but leaves the
+        profile in place is a failure, because discovery would simply bring it back)."""
+        if name == "default" or not (isinstance(name, str) and PROFILE_NAME.fullmatch(name)):
+            raise LocalError(f"not a profile that can be deleted: {name!r}")
+        if await asyncio.to_thread(self._profile_dir, name) is None:
+            return False
+        code, _, err = await self._hermes("profile", "delete", name, "-y", timeout=120)
+        if code != 0:
+            raise LocalError(f"deleting profile {name!r} failed: {err.strip() or 'hermes exited with an error'}")
+        if await asyncio.to_thread(self._profile_dir, name) is not None:
+            raise LocalError(f"deleting profile {name!r} failed: it is still on the box")
+        return True
 
     async def _create_profile(
         self, name: str, api_key: str, extra_env: dict[str, str] | None = None

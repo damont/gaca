@@ -5,6 +5,7 @@ import re
 from datetime import datetime
 
 from ..db import alerts as alerts_db
+from ..db import users as users_db
 from ..db import artifacts as artifacts_db
 from ..models.alert import AlertDoc
 from ..models.base import utcnow
@@ -116,10 +117,13 @@ async def to_out(user_id: str, alerts: list[AlertDoc]) -> list[AlertOut]:
     """Alerts in the client shape: effective status derived, and each `artifact_id`
     resolved to its chip — one artifact query for the whole list."""
     refs = await artifact_refs.resolve(user_id, {a.artifact_id: None for a in alerts if a.artifact_id})
+    owner = await users_db.find(user_id)
+    removed = auth_service.removed_crew_names(owner) if owner else set()
     return [
         AlertOut(
             **a.model_dump(),
             effective_status=effective_status(a),
+            crew_removed=a.crew in removed,
             artifact=refs.get(a.artifact_id) if a.artifact_id else None,
         )
         for a in alerts

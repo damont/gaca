@@ -459,6 +459,24 @@ async def create_profile(
     return int(result["port"]), result.get("path", "")
 
 
+_GONE = re.compile(r"not found|does not exist|no such|unknown profile", re.IGNORECASE)
+
+
+async def delete_profile(conn: SSHConnection, name: str) -> bool:
+    """`hermes profile delete <name> -y` on the box. A profile Hermes says is not there counts
+    as already deleted (False); any other failure raises SSHError."""
+    if not _PROFILE_NAME.fullmatch(name) or name == "default":
+        raise SSHError(f"not a profile that can be deleted: {name!r}")
+    inner = f"hermes profile delete {shlex.quote(name)} -y"
+    try:
+        await run(conn, f"bash -lc {shlex.quote(inner)}", timeout=120.0)
+    except SSHError as error:
+        if _GONE.search(str(error)):
+            return False
+        raise
+    return True
+
+
 class SshProvisioner:
     """The module-level functions above, bound to one stored connection, so callers can
     treat SSH and local access the same way (see base.Provisioner)."""
@@ -493,6 +511,9 @@ class SshProvisioner:
         self, name: str, port: int, api_key: str, extra_env: dict[str, str] | None = None
     ) -> tuple[int, str]:
         return await create_profile(self.conn, name, port, api_key)  # extra_env: not supported over SSH
+
+    async def delete_profile(self, name: str) -> bool:
+        return await delete_profile(self.conn, name)
 
     async def profiles_missing_gaca_token(self) -> list[str]:
         return []

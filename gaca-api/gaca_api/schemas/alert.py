@@ -113,6 +113,8 @@ class AlertOut(BaseModel):
     created_at: datetime
     source: str
     crew: str | None = None
+    # True when `crew` names a crew member the user has since removed; the alert stays as history.
+    crew_removed: bool = False
     kind: str
     severity: str
     title: str

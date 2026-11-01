@@ -117,6 +117,9 @@ class UserDoc(BaseModel):
     # a configured name). Cleared automatically if the member it names is
     # removed.
     default_crew: str | None = None
+    # Names of crew members this user removed (and so deleted from the Hermes box). Kept only so
+    # their old alerts can be labelled "removed"; a name that is a crew member again is not removed.
+    removed_crew: list[str] = Field(default_factory=list)
     # Optional — see SSHConnection. Unset until PUT /api/agent/provisioning; nothing
     # about connecting the agent (POST /api/agent/connect) requires it.
     ssh: SSHConnection | None = None

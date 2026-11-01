@@ -143,8 +143,12 @@ async def update_crew_member(
 
 @router.delete("/{name}", response_model=CrewOut)
 async def remove_crew_member(name: str, user: UserDoc = Depends(get_current_user)):
-    """Delete a named crew member. Rejected if it's the default and others
-    remain — set a different default first."""
+    """Delete a named crew member for real. When GACA can reach the Hermes box (`can_create`),
+    this permanently deletes the profile there too (its memory, sessions, skills and scheduled
+    jobs) and revokes its GACA token; if the box fails the answer is 502 and nothing is
+    removed. Rejected (422) if it's the default and others remain — set a different default
+    first — or if it's the Hermes `default` profile. Past chats and alerts that name it stay as
+    read-only history (`crew_removed: true`)."""
     updated = await auth_service.remove_crew_member(user, name)
     return crew_out(updated)
 
