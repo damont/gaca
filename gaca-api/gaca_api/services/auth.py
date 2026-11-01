@@ -207,12 +207,20 @@ async def update_crew_member(
 
 
 async def remove_crew_member(user: UserDoc, name: str) -> UserDoc:
-    """Delete a named crew member.
+    """Delete a named crew member, everywhere.
 
-    Deleting the current default while others remain is rejected rather than
-    silently picking a new default — that's a real decision the user should
-    make explicitly via set_default_crew_member. Deleting the last one clears
-    the default too, since there's nothing left for it to name.
+    When GACA can reach the Hermes box, that means deleting the profile there too (permanent: its
+    memory, sessions, skills and scheduled jobs go), and revoking the GACA token it was given.
+    Removing only GACA's entry would be undone at the next listing, because discovery re-registers
+    any profile that still exists on the box. The box goes first: if it fails (ProvisioningError,
+    a 502) nothing else has changed, so the member is not half-removed. A profile that is already
+    gone from the box is fine. With no access to the box, only GACA's entry is removed.
+
+    Deleting the current default while others remain is rejected rather than silently picking a
+    new default — that's a real decision the user should make explicitly via
+    set_default_crew_member. Deleting the last one clears the default too. The Hermes `default`
+    profile cannot be deleted. Old chats and alerts that name the member are kept as read-only
+    history (see removed_crew_names).
     """
     if find_crew_member(user, name) is None:
         raise NotFound("crew member", name)
@@ -224,14 +232,27 @@ async def remove_crew_member(user: UserDoc, name: str) -> UserDoc:
             "before removing it"
         )
 
+    provisioner = provisioner_for(user)
+    if provisioner is not None:
+        if name == "default":
+            raise InvalidRequest("the default Hermes profile cannot be deleted")
+        await provisioner.delete_profile(name)
+        await token_service.revoke_all_with_name(user, f"hermes-{name}")
+
     updated = user.model_copy(
         update={
             "crew": remaining,
             "default_crew": user.default_crew if remaining else None,
+            "removed_crew": [*[n for n in user.removed_crew if n != name], name],
         }
     )
     await users_db.replace(updated)
     return updated
+
+
+def removed_crew_names(user: UserDoc) -> set[str]:
+    """Crew members this user removed and has not added back."""
+    return set(user.removed_crew) - {c.name for c in user.crew}
 
 
 async def set_default_crew_member(user: UserDoc, name: str) -> UserDoc:

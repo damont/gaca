@@ -29,6 +29,9 @@ class SessionOut(BaseModel):
     title: str | None = None
     status: str
     crew: str | None = None
+    # True when the crew member this chat is bound to no longer exists. The chat is then read-only
+    # history: sending a message answers 409.
+    crew_removed: bool = False
     # The alert this session was opened from, if any — lets the client show
     # a "from alert" pill and link straight back. None for a session started
     # directly from the Chat tab.

@@ -21,10 +21,17 @@ from ..services import auth as auth_service
 from ..services import events as events_service
 from ..services import runs as run_service
 from ..services import sessions as session_service
-from ..services.exceptions import PayloadTooLarge
+from ..services.exceptions import Conflict, PayloadTooLarge
 from ..utils.auth import get_current_user
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
+
+
+def _crew_gone(user: UserDoc, crew: str | None) -> bool:
+    """A chat is bound to one crew member for life. If that member no longer exists the chat is
+    read-only history. (`crew` is unset only for a chat from before crew members existed, which
+    falls back to the default member and is never "gone".)"""
+    return bool(crew) and auth_service.find_crew_member(user, crew) is None
 
 
 @router.post("", status_code=201)
@@ -45,6 +52,7 @@ async def list_sessions(user: UserDoc = Depends(get_current_user)) -> SessionLis
         sessions=[
             SessionOut.model_validate(s).model_copy(
                 update={
+                    "crew_removed": _crew_gone(user, s.crew),
                     "summary": labels.summary,
                     "preview": labels.preview,
                     "last_activity_at": labels.last_activity_at or s.created_at,
@@ -59,7 +67,8 @@ async def list_sessions(user: UserDoc = Depends(get_current_user)) -> SessionLis
 async def get_session(
     session_id: str, user: UserDoc = Depends(get_current_user)
 ) -> SessionDetail:
-    return await session_service.get_detail(user.id, session_id)
+    detail = await session_service.get_detail(user.id, session_id)
+    return detail.model_copy(update={"crew_removed": _crew_gone(user, detail.crew)})
 
 
 @router.post("/{session_id}/messages", status_code=202)
@@ -71,7 +80,11 @@ async def post_message(
     session = await session_service.ensure_owned(user.id, session_id)
     # `session.crew` is unset only for a session created before crew members
     # existed; fall back to the account default the same way a fresh session
-    # would have resolved it, rather than 400ing on old data.
+    # would have resolved it, rather than 400ing on old data. A chat bound to a member who has
+    # since been removed is NOT redirected to the default one: the words would reach the wrong
+    # agent. It is read-only history.
+    if _crew_gone(user, session.crew):
+        raise Conflict(f"{session.crew!r} was removed from your crew, so this chat is read-only")
     crew_member = auth_service.find_crew_member(user, session.crew)
     if crew_member is None:
         crew_member = auth_service.resolve_crew_member(user, None)

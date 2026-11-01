@@ -70,6 +70,11 @@ async def revoke_older_with_name(user: UserDoc, name: str, *, keep_id: str) -> i
     return await tokens_db.revoke_active_by_name(user.id, name, utcnow(), keep_id=keep_id)
 
 
+async def revoke_all_with_name(user: UserDoc, name: str) -> int:
+    """Revoke every live token called `name` (e.g. a deleted Hermes profile's `hermes-<profile>`)."""
+    return await tokens_db.revoke_active_by_name(user.id, name, utcnow(), keep_id=None)
+
+
 async def authenticate(plaintext: str) -> tuple[UserDoc, ApiTokenDoc] | None:
     """The owner and token record for a presented API token, or None if it is unknown,
     revoked, expired, or its user is gone/disabled."""
