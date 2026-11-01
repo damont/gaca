@@ -12,6 +12,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field, model_validator, field_validator
 
 from .base import new_id, utcnow
+from .heartbeat import HeartbeatSettings
 
 # Muted, low-saturation hues (matching the app's existing slate/severity
 # palette) auto-assigned to a crew member on creation so identity is visually
@@ -119,6 +120,8 @@ class UserDoc(BaseModel):
     # Optional — see SSHConnection. Unset until PUT /api/agent/provisioning; nothing
     # about connecting the agent (POST /api/agent/connect) requires it.
     ssh: SSHConnection | None = None
+    # How the heartbeat check-in behaves (see models/heartbeat.py). Defaults for anyone saved before it existed.
+    heartbeat: HeartbeatSettings = Field(default_factory=HeartbeatSettings)
 
     @model_validator(mode="before")
     @classmethod

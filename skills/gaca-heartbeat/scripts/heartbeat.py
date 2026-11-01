@@ -19,6 +19,12 @@ memory of what the user did with earlier alerts. Deciding what is worth saying i
 Secrets come from the environment (GACA_API_TOKEN) and are never printed. Times are the user's own
 time zone: set GACA_TIMEZONE (e.g. America/Chicago) or the machine's local zone is used.
 State lives in $HERMES_HOME/gaca-heartbeat/ (state.json, config.json), one per Hermes profile.
+
+The limits (quiet hours, daily caps, the on/off switch, a pause, the time zone) are the user's, and
+they set them in the GACA app. Every command reads them from GACA first. If GACA cannot supply them
+(an older GACA, a token without the `heartbeat` scope, no network) the local config.json and the
+defaults below are used instead, so a half-upgraded install keeps working. The app can change the
+settings; this skill cannot.
 """
 
 from __future__ import annotations
@@ -62,7 +68,8 @@ def die(message: str, code: int = 1):
 # ── time and state ──────────────────────────────────────────────────
 
 def zone() -> ZoneInfo | None:
-    name = os.environ.get("GACA_TIMEZONE", "").strip()
+    remote = remote_settings()
+    name = ((remote or {}).get("timezone") or os.environ.get("GACA_TIMEZONE", "")).strip()
     if not name:
         return None
     try:
@@ -101,11 +108,45 @@ def write_json(path: Path, data: dict) -> None:
     temp.replace(path)
 
 
+# The limits the app owns. Everything else in DEFAULTS stays a local matter.
+APP_KEYS = ("quiet_start_hour", "quiet_end_hour", "max_alerts_per_day", "min_minutes_between_alerts", "max_runs_per_day")
+_UNSET = object()
+_remote_cache: object = _UNSET
+
+
+def remote_settings() -> dict | None:
+    """The user's settings from GACA, or None when GACA cannot supply them. Never raises and never
+    dies: a missing endpoint (404), a token without the scope (403) or no answer all mean "use the
+    local limits". Asked once per run."""
+    global _remote_cache
+    if _remote_cache is not _UNSET:
+        return _remote_cache  # type: ignore[return-value]
+    _remote_cache = None
+    value = os.environ.get("GACA_API_TOKEN", "").strip()
+    if not value or "\n" in value or "\r" in value:
+        return None
+    req = urllib.request.Request(f"{GACA_BASE}/api/heartbeat/settings", method="GET", headers={
+        "Accept": "application/json", "User-Agent": USER_AGENT, "Authorization": f"Bearer {value}"})
+    try:
+        with urllib.request.build_opener(NoRedirects).open(req, timeout=10) as response:
+            body = json.loads(response.read().decode("utf-8", errors="replace"))
+        if isinstance(body, dict):
+            _remote_cache = body
+    except (urllib.error.URLError, OSError, ValueError):  # HTTPError is a URLError
+        pass
+    return _remote_cache  # type: ignore[return-value]
+
+
 def load_config() -> dict:
     config = dict(DEFAULTS)
     for key, value in read_json(state_dir() / "config.json", {}).items():
         if key in DEFAULTS and isinstance(value, int) and not isinstance(value, bool):
             config[key] = value
+    remote = remote_settings()
+    for key in APP_KEYS:
+        if remote and isinstance(remote.get(key), int) and not isinstance(remote.get(key), bool):
+            config[key] = remote[key]
+    config["settings_from"] = "app" if remote else "local"
     return config
 
 
@@ -200,7 +241,13 @@ def cmd_gate(_args) -> int:
     config, state, moment = load_config(), load_state(), now()
     reason = None
     paused = state.get("paused_until")
-    if paused and datetime.fromisoformat(paused) > moment:
+    remote = remote_settings() or {}
+    app_pause = remote.get("paused_until")
+    if remote.get("enabled") is False:
+        reason = "switched off in the app"
+    elif app_pause and datetime.fromisoformat(str(app_pause).replace("Z", "+00:00")) > moment:
+        reason = f"paused in the app until {app_pause}"
+    elif paused and datetime.fromisoformat(paused) > moment:
         reason = f"paused until {paused} (the model provider said it was out of budget)"
     elif in_quiet_hours(moment, config):
         reason = f"quiet hours ({config['quiet_start_hour']}:00-{config['quiet_end_hour']}:00)"
@@ -209,8 +256,8 @@ def cmd_gate(_args) -> int:
     if reason is None:
         state["runs"] += 1
         save_state(state)
-    print(json.dumps({"run": reason is None, "reason": reason or "ok",
-                      "runs_today": state["runs"], "now": moment.isoformat(timespec="minutes")}))
+    print(json.dumps({"run": reason is None, "reason": reason or "ok", "runs_today": state["runs"],
+                      "now": moment.isoformat(timespec="minutes"), "settings_from": config["settings_from"]}))
     return 0
 
 
@@ -219,7 +266,7 @@ def cmd_context(args) -> int:
     days = args.days or config["remember_days"]
     alerts = recent_alerts(days)
     left = max(0, config["max_alerts_per_day"] - state["alerts"])
-    print(f"Now: {now().isoformat(timespec='minutes')}")
+    print(f"Now: {now().isoformat(timespec='minutes')}  (limits from the {config['settings_from']})")
     print(f"Alert budget today: {left} of {config['max_alerts_per_day']} left; "
           f"at least {config['min_minutes_between_alerts']} minutes between alerts.")
     if state.get("last_alert_at"):
@@ -325,7 +372,10 @@ def cmd_config(args) -> int:
         saved[name] = value
     if args.set:
         write_json(path, saved)
-    print(json.dumps(load_config(), indent=2, sort_keys=True))
+    shown = load_config()
+    if shown["settings_from"] == "app" and any(k in APP_KEYS for k in saved):
+        print("Note: the app's settings are in force, so these local values are only a fallback.", file=sys.stderr)
+    print(json.dumps(shown, indent=2, sort_keys=True))
     return 0
 
 

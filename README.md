@@ -213,12 +213,20 @@ Profiles you create later, in the app or by hand, get both automatically. Re-run
 alone and reported, never overwritten. `gaca-api token list|revoke` manages the tokens.
 
 **The heartbeat.** Once a phone is paired, the installer also schedules a Hermes cron job named `gaca-heartbeat` on
-the default profile (every 30 minutes). Most runs end in silence. The skill's helper holds it to quiet hours
-(22:00 to 07:00), a daily run budget, at most 3 alerts a day with gaps between them, and a pause of a few hours if
-the model provider says it is out of budget. It never needs write access to anything: it only suggests. To change
-the schedule set `GACA_HEARTBEAT_SCHEDULE` in the server's `.env` (a cron expression; empty means do not create the
-job) and re-run `gaca-api hermes connect`; an existing job is never overwritten, so to change one that exists edit
-or remove it with `hermes cron`.
+the default profile (every 30 minutes). Most runs end in silence. It never needs write access to anything: it only
+suggests.
+
+- **The limits are yours, and live in the app** (`GET`/`PUT /api/heartbeat/settings`): quiet hours (default 22:00 to
+  07:00), at most 3 alerts a day with a gap between them, a daily run budget, a time zone, an on/off switch and a
+  "pause until". The agent's token can read them but not change them, so it cannot raise its own cap. If GACA cannot
+  supply them (an older server, or a token minted before the `heartbeat` scope existed: `gaca-api hermes connect
+  --rotate` fixes that) the skill uses local defaults and still works.
+- **The quiet log.** Each run ends by saying what it looked at and what it passed over and why. GACA's existing
+  automation run history (`GET /api/crew/{name}/automations/{job_id}/runs`) already carries that as the run's summary,
+  so there is no separate log to manage.
+- **Schedule.** Set `GACA_HEARTBEAT_SCHEDULE` in the server's `.env` (a cron expression; empty means do not create
+  the job) and re-run `gaca-api hermes connect`; an existing job is never overwritten, so to change one that exists
+  edit or remove it with `hermes cron`.
 
 ## Day to day: the `gaca-api` command
 

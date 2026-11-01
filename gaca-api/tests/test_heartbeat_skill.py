@@ -20,6 +20,8 @@ HELPER = Path(__file__).resolve().parents[2] / "skills" / "gaca-heartbeat" / "sc
 class Fake(BaseHTTPRequestHandler):
     alerts: list = []
     posted: list = []
+    settings = None        # the app's heartbeat settings; None = this GACA has no such endpoint (404)
+    settings_status = 200  # or 403: a token without the scope
 
     def _send(self, payload):
         self.send_response(200)
@@ -28,6 +30,12 @@ class Fake(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps(payload).encode())
 
     def do_GET(self):
+        if self.path == "/api/heartbeat/settings":
+            if Fake.settings is None or Fake.settings_status != 200:
+                self.send_response(Fake.settings_status if Fake.settings_status != 200 else 404)
+                self.end_headers()
+                return
+            return self._send(Fake.settings)
         self._send({"alerts": Fake.alerts})
 
     def do_POST(self):
@@ -41,7 +49,7 @@ class Fake(BaseHTTPRequestHandler):
 
 @pytest.fixture
 def beat(tmp_path):
-    Fake.alerts, Fake.posted = [], []
+    Fake.alerts, Fake.posted, Fake.settings, Fake.settings_status = [], [], None, 200
     server = HTTPServer(("127.0.0.1", 0), Fake)
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
@@ -176,3 +184,63 @@ def test_config_changes_stick_and_bad_ones_are_refused(beat):
     assert beat("config", "--set", "nonsense=1", check=False).returncode != 0
     assert beat("config", "--set", "quiet_start_hour=30", check=False).returncode != 0
     assert beat("config", "--set", "max_runs_per_day=lots", check=False).returncode != 0
+
+
+# ── the limits come from the app ─────────────────────────────────────
+
+def app(**changes):
+    Fake.settings = {"enabled": True, "paused_until": None, "timezone": None, "quiet_start_hour": 22, "quiet_end_hour": 7,
+                     "max_alerts_per_day": 3, "min_minutes_between_alerts": 60, "max_runs_per_day": 30, **changes}
+
+
+def test_the_apps_quiet_hours_replace_the_local_ones(beat):
+    app(quiet_start_hour=11, quiet_end_hour=13)  # the user wants noon to be quiet
+    verdict = gate(beat, at="2026-10-31T12:00:00+00:00")
+    assert verdict["run"] is False and "quiet hours (11:00-13:00)" in verdict["reason"] and verdict["settings_from"] == "app"
+
+
+def test_without_app_settings_it_says_the_limits_are_local(beat):
+    assert gate(beat)["settings_from"] == "local"
+
+
+@pytest.mark.parametrize("status", [403, 404])
+def test_a_gaca_that_cannot_supply_settings_means_the_local_limits(beat, status):
+    Fake.settings, Fake.settings_status = {"max_runs_per_day": 0}, status  # 403 = a token without the scope
+    beat("config", "--set", "max_runs_per_day=1")
+    verdict = gate(beat)
+    assert verdict["run"] is True and verdict["settings_from"] == "local"
+    assert gate(beat)["run"] is False  # the local budget of 1 held
+
+
+def test_when_gaca_does_not_answer_at_all_it_still_runs_on_the_local_limits(beat, tmp_path):
+    import subprocess as sp
+    env = {"PATH": os.environ["PATH"], "HOME": str(tmp_path), "HERMES_HOME": str(tmp_path / "h"),
+           "GACA_BASE_URL": "http://127.0.0.1:9", "GACA_API_TOKEN": "tok", "GACA_HEARTBEAT_NOW": "2026-10-31T12:00:00+00:00"}
+    out = sp.run([sys.executable, str(HELPER), "gate"], capture_output=True, text=True, env=env, timeout=60)
+    assert out.returncode == 0 and json.loads(out.stdout)["run"] is True
+
+
+def test_the_switch_in_the_app_stops_it(beat):
+    app(enabled=False)
+    verdict = gate(beat)
+    assert verdict["run"] is False and "switched off in the app" in verdict["reason"]
+
+
+def test_a_pause_in_the_app_holds_until_it_ends(beat):
+    app(paused_until="2026-10-31T15:00:00Z")
+    assert gate(beat, at="2026-10-31T13:00:00+00:00")["run"] is False
+    assert gate(beat, at="2026-10-31T16:00:00+00:00")["run"] is True
+
+
+def test_the_apps_alert_cap_wins_over_a_looser_local_one(beat):
+    beat("config", "--set", "max_alerts_per_day=10", "--set", "min_minutes_between_alerts=0")
+    app(max_alerts_per_day=1, min_minutes_between_alerts=0)
+    beat("alert", stdin=ALERT)
+    held = beat("alert", stdin=json.dumps({"kind": "x", "title": "other", "dedupe_key": "other"}), check=False)
+    assert held.returncode == 3 and len(Fake.posted) == 1
+
+
+def test_a_zero_cap_in_the_app_silences_it_except_for_urgent(beat):
+    app(max_alerts_per_day=0)
+    assert beat("alert", stdin=ALERT, check=False).returncode == 3
+    assert beat("alert", stdin=json.dumps({"kind": "fire", "title": "now", "severity": "urgent", "dedupe_key": "f"})).returncode == 0
