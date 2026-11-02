@@ -236,7 +236,11 @@ async def remove_crew_member(user: UserDoc, name: str) -> UserDoc:
     if provisioner is not None:
         if name == "default":
             raise InvalidRequest("the default Hermes profile cannot be deleted")
-        await provisioner.delete_profile(name)
+        try:
+            await provisioner.delete_profile(name)
+        except ProvisioningError as error:
+            logger.warning("removing crew member %r failed on the Hermes box: %s", name, error)
+            raise
         await token_service.revoke_all_with_name(user, f"hermes-{name}")
 
     updated = user.model_copy(

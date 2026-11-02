@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import logging
 import os
 import re
 import shutil
@@ -54,6 +55,9 @@ import httpx
 from . import cron_runs, skill_sync
 from .base import ProvisioningError
 from .envfile import has_gaca_token, upsert_env
+
+
+logger = logging.getLogger(__name__)
 
 
 class LocalError(ProvisioningError):
@@ -568,12 +572,22 @@ class LocalHermes:
             raise LocalError(f"not a profile that can be deleted: {name!r}")
         if await asyncio.to_thread(self._profile_dir, name) is None:
             return False
-        code, _, err = await self._hermes("profile", "delete", name, "-y", timeout=120)
+        code, out, err = await self._hermes("profile", "delete", name, "-y", timeout=120)
         if code != 0:
-            raise LocalError(f"deleting profile {name!r} failed: {err.strip() or 'hermes exited with an error'}")
+            raise self._delete_failed(name, f"hermes exited with code {code}", out, err)
         if await asyncio.to_thread(self._profile_dir, name) is not None:
-            raise LocalError(f"deleting profile {name!r} failed: it is still on the box")
+            raise self._delete_failed(name, "hermes said it was done but the profile is still on the box", out, err)
         return True
+
+    @staticmethod
+    def _delete_failed(name: str, why: str, out: str, err: str) -> "LocalError":
+        """Hermes prints most of its reasons ("Could not remove ...") on stdout, not stderr, so
+        both are kept: the tail of each goes in the message (the app shows it) and in the log."""
+        tail = lambda text: " | ".join(line.strip() for line in text.strip().splitlines()[-6:])[-600:]
+        parts = [f"{label}: {tail(text)}" for label, text in (("stderr", err), ("stdout", out)) if text.strip()]
+        message = f"deleting profile {name!r} failed: {why}" + (f" ({'; '.join(parts)})" if parts else "")
+        logger.warning("%s", message)
+        return LocalError(message)
 
     async def _create_profile(
         self, name: str, api_key: str, extra_env: dict[str, str] | None = None

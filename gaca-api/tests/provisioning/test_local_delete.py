@@ -83,3 +83,18 @@ def test_the_default_profile_and_odd_names_are_refused_before_anything_runs(tmp_
     with pytest.raises(LocalError):
         asyncio.run(hermes.delete_profile(name))
     assert _calls(tmp_path) == []
+
+
+def test_a_failed_delete_says_what_hermes_said_on_either_stream_and_logs_it(tmp_path, caplog):
+    """Hermes reports most reasons on stdout; the 502 used to say only "exited with an error"."""
+    home = tmp_path / "hermes"
+    (home / "profiles" / "david").mkdir(parents=True)
+    stub = tmp_path / "hermes-stub"
+    stub.write_text(f'#!{sys.executable}\nimport sys\nprint("⚠ Could not remove /x/david: Directory not empty")\n'
+                    'print("boom", file=sys.stderr); sys.exit(1)\n')
+    stub.chmod(0o755)
+    with caplog.at_level("WARNING"), pytest.raises(LocalError) as failure:
+        asyncio.run(LocalHermes(home, str(stub)).delete_profile("david"))
+    message = str(failure.value)
+    assert "code 1" in message and "boom" in message and "Directory not empty" in message
+    assert "Directory not empty" in caplog.text
