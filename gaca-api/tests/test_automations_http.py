@@ -34,6 +34,7 @@ class Gateway:
         }
         self.calls = []
         self.down = False
+        self.no_jobs_api = False
         self.refuse_run = False
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
@@ -41,7 +42,7 @@ class Gateway:
         if self.down:
             return httpx.Response(500)
         parts = request.url.path.strip("/").split("/")  # api / jobs / [id / [action]]
-        if parts[:2] != ["api", "jobs"]:
+        if self.no_jobs_api or parts[:2] != ["api", "jobs"]:
             return httpx.Response(404)
         if len(parts) == 2:
             wanted = request.url.params.get("include_disabled") == "true"
@@ -175,3 +176,11 @@ def test_errors_are_plain(world):
     assert refused.status_code == 422 and "terminal" in refused.json()["detail"]
     gateway.down = True
     assert http.post(f"/api/crew/default/automations/{SCOUT}/run").status_code == 502
+
+
+def test_an_engine_without_a_jobs_api_is_named_unavailable_not_a_500(world):
+    http, gateway, box = world
+    gateway.no_jobs_api = True
+    res = http.get("/api/automations")
+    assert res.status_code == 200
+    assert res.json() == {"automations": [], "unavailable": ["default"]}

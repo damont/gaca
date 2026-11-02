@@ -52,7 +52,8 @@ async def list_all(user: UserDoc, crew: str | None = None, include_done: bool = 
     )
     out = AutomationList()
     for member, result in zip(members, results):
-        if isinstance(result, (EngineUnavailable, asyncio.TimeoutError)):
+        # A 404 on the list itself means that member's engine has no jobs API (or no profile): same as unreachable.
+        if isinstance(result, (EngineUnavailable, AutomationNotFound, asyncio.TimeoutError)):
             out.unavailable.append(member.name)
         elif isinstance(result, BaseException):
             raise result
