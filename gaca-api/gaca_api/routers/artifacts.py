@@ -4,16 +4,34 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Depends, Path, Query, Request
 from fastapi.responses import HTMLResponse
 
 from ..models.user import UserDoc
 from ..schemas import artifact as s
-from ..services import artifact_page
+from ..schemas import cloud as cloud_schemas
+from ..services import artifact_page, cloud_forward, cloud_list
 from ..services import artifacts as svc
-from ..utils.auth import get_current_user
+from ..utils.auth import Caller, get_caller, get_current_user
 
-router = APIRouter(prefix="/artifacts", tags=["artifacts"])
+_PREFIX = "/artifacts"
+
+
+async def forward_if_pointer(request: Request, caller: Caller = Depends(get_caller)) -> None:
+    """For an artifact id that is a pointer to a gacabit in the cloud, answer from the cloud
+    (services/cloud_forward.py) instead of the local handlers below; any other id falls through.
+    Runs before the handler, so the cloud, not a local model, judges the body."""
+    artifact_id = request.path_params.get("artifact_id")
+    if artifact_id is None:
+        return
+    tail = request.scope["path"].split(f"{_PREFIX}/{artifact_id}", 1)[1].strip("/")
+    await cloud_forward.forward_if_pointer(caller.user.id, artifact_id, cloud_forward.Inbound(
+        method=request.method, tail=tail, query=dict(request.query_params), body=await request.body(),
+        headers=dict(request.headers), request_id=cloud_forward.clean_request_id(request.headers.get("x-request-id")),
+    ), cloud=caller.cloud, is_agent=caller.is_agent)
+
+
+router = APIRouter(prefix=_PREFIX, tags=["artifacts"], dependencies=[Depends(forward_if_pointer)])
 
 _COLLECTION = Path(pattern=s.NAME_PATTERN, description="Collection name, e.g. 'items'")
 _DOC_ID = Path(pattern=s.DOC_ID_PATTERN)
@@ -34,18 +52,23 @@ async def list_artifacts(
     alert_id: str | None = Query(default=None, description="Only artifacts made for this alert"),
     q: str | None = Query(default=None, description="Match against title / description"),
     limit: int = Query(default=100, ge=1, le=500),
-    user: UserDoc = Depends(get_current_user),
-) -> s.ArtifactList:
+    caller: Caller = Depends(get_caller),
+) -> cloud_schemas.ArtifactListMerged:
     """Your artifacts in your own order (see PUT /order). Pages you haven't placed yet come
-    first, most recently changed first."""
-    return await svc.list_for_user(user.id, include_archived, session_id, alert_id, q, limit)
+    first, most recently changed first. If this server is linked to a cloud account, gacabits
+    that live there (yours, or shared with you) are in the list too: `home` says which, `role`
+    is your role, `shared_by` the owner's handle when it is not you. `stale` is true when the
+    cloud could not be asked and those rows are from the last time it could."""
+    return await cloud_list.merged(caller.user.id, include_archived, session_id, alert_id, q, limit, caller.cloud)
 
 
 @router.put("/order")
-async def reorder_artifacts(body: s.ArtifactOrder, user: UserDoc = Depends(get_current_user)) -> s.ArtifactList:
+async def reorder_artifacts(
+    body: s.ArtifactOrder, caller: Caller = Depends(get_caller)
+) -> cloud_schemas.ArtifactListMerged:
     """Save the order the owner dragged their artifacts into. Listed ids come first, in the
     order given; the rest follow in their existing order. Returns the (non-archived) list."""
-    return await svc.reorder(user.id, body.ids)
+    return await cloud_list.reorder(caller.user.id, body.ids, caller.cloud)
 
 
 @router.get("/{artifact_id}")

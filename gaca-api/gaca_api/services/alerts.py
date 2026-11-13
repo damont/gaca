@@ -13,6 +13,7 @@ from ..models.user import UserDoc
 from ..schemas.alert import AlertCreate, AlertOut
 from ..schemas.event import GacaEvent, RunCompleted, RunFailed
 from . import artifact_refs
+from ..db import cloud as cloud_db
 from . import auth as auth_service
 from . import push as push_service
 from . import runs as run_service
@@ -43,7 +44,7 @@ def effective_status(alert: AlertDoc, now: datetime | None = None) -> str:
     return alert.status
 
 
-async def create(user_id: str, payload: AlertCreate) -> tuple[AlertDoc, bool]:
+async def create(user_id: str, payload: AlertCreate, allow_cloud: bool = True) -> tuple[AlertDoc, bool]:
     """Create an alert, or fold it onto the one it dedupes with.
 
     Returns (alert, created) so the route can answer 201 or 200.
@@ -75,7 +76,9 @@ async def create(user_id: str, payload: AlertCreate) -> tuple[AlertDoc, bool]:
     on history, which makes a noisy poster much harder to debug.
     """
     if payload.artifact_id and await artifacts_db.find(user_id, payload.artifact_id) is None:
-        raise NotFound("artifact", payload.artifact_id)
+        # A cloud gacabit the caller can see (a pointer) is a valid thing to attach too.
+        if not (allow_cloud and await cloud_db.get_pointer(user_id, payload.artifact_id)):
+            raise NotFound("artifact", payload.artifact_id)
     if payload.dedupe_key:
         existing = await alerts_db.find_by_dedupe_key(user_id, payload.dedupe_key)
         if existing is not None:

@@ -97,11 +97,14 @@ def _parser() -> argparse.ArgumentParser:
     token = sub.add_parser("token", help="manage API tokens (what Hermes skills use)").add_subparsers(dest="token_command", required=True)
     create = token.add_parser("create", help="mint a token; the secret is printed once")
     create.add_argument("--name", required=True)
-    create.add_argument("--scopes", default=",".join(token_utils.SCOPES), help="comma-separated: " + ", ".join(token_utils.SCOPES))
+    create.add_argument("--scopes", default=",".join(token_utils.DEFAULT_SCOPES), help="comma-separated: " + ", ".join(token_utils.SCOPES) + " (default: all but the opt-in " + ", ".join(token_utils.OPT_IN_SCOPES) + ")")
     create.add_argument("--expires-days", type=int, default=None, help="default: never expires")
     token.add_parser("list", help="list tokens (never shows secrets)")
     revoke = token.add_parser("revoke", help="revoke a token by id")
     revoke.add_argument("token_id")
+
+    cloud = sub.add_parser("cloud", help="the GACA Cloud link").add_subparsers(dest="cloud_command", required=True)
+    cloud.add_parser("rotate-key", help="start encrypting the stored cloud token under a new key (see services/cloud_crypto.py)")
 
     hermes = sub.add_parser("hermes", help="wire Hermes to this server").add_subparsers(dest="hermes_command", required=True)
     connect = hermes.add_parser("connect", help="mint a token per Hermes profile and write it into the profile's .env")
@@ -276,6 +279,20 @@ async def _hermes_connect(hermes_home: str | None, base_url: str | None, rotate:
     return 0
 
 
+async def _cloud_rotate_key() -> int:
+    from .services import cloud_crypto, cloud_link
+
+    try:
+        if not settings.cloud_key.strip():
+            cloud_crypto.new_primary_key()
+        changed = await cloud_link.reencrypt_all()
+    except cloud_crypto.CryptoError as e:
+        print(f"Could not rotate the key: {e}", file=sys.stderr)
+        return 1
+    print(f"Re-encrypted {changed} stored cloud link(s) under the newest key. Old keys stay valid until you remove them.")
+    return 0
+
+
 async def _with_database(coro_factory) -> int:
     # The owner tools act on the real server's database, never on a new one: with the wrong
     # (or unset) GACA_DB_PATH, connect() would quietly create an empty file and these commands
@@ -383,6 +400,8 @@ def main(argv: list[str] | None = None) -> int:
             "revoke": lambda: _token_revoke(args.token_id),
         }
         return asyncio.run(_with_database(handlers[args.token_command]))
+    if args.command == "cloud":
+        return asyncio.run(_with_database(_cloud_rotate_key))
     if args.command == "hermes":
         return asyncio.run(_with_database(lambda: _hermes_connect(args.hermes_home, args.base_url, args.rotate)))
     return 2

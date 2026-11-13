@@ -12,7 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from .agent import runtime as agent_runtime
 from .agent.base import EngineUnavailable
@@ -21,11 +21,13 @@ from .db import client
 from .provisioning.base import ProvisioningError
 from .config import settings
 from .security import BodyLimitMiddleware, SecurityHeadersMiddleware, cors_origins
-from .routers import agent, alerts, artifacts, auth, automations, briefings, crew, devices, heartbeat, push, sessions, setup, tokens
-from .services import automation_watch
+from .routers import agent, alerts, artifacts, auth, automations, briefings, cloud, crew, devices, heartbeat, push, sessions, setup, tokens
+from .services import automation_watch, cloud_client
 from .services import push as push_service
 from .services.exceptions import (
     BadRequest,
+    CloudError,
+    CloudReply,
     Conflict,
     CrewNotConfigured,
     InvalidRequest,
@@ -59,7 +61,7 @@ async def lifespan(app: FastAPI):
     await automation_watch.stop(watcher)
     # Shutdown, reverse order. Every step is attempted even if an earlier one fails: not being
     # able to close Firebase must not skip closing the database.
-    for step in (push_service.aclose, agent_runtime.close, event_bus.aclose, client.close):
+    for step in (cloud_client.aclose_all, push_service.aclose, agent_runtime.close, event_bus.aclose, client.close):
         try:
             await step()
         except Exception:
@@ -139,6 +141,20 @@ async def handle_payload_too_large(request: Request, exc: PayloadTooLarge) -> JS
     return JSONResponse(status_code=413, content={"detail": str(exc)})
 
 
+@app.exception_handler(CloudError)
+async def handle_cloud_error(request: Request, exc: CloudError) -> JSONResponse:
+    """The cloud could not be reached, or this server's link to it is not usable. The message never
+    names the cloud's address or the token."""
+    return JSONResponse(
+        status_code=exc.status, content={"code": exc.code, "message": exc.message, "detail": exc.message})
+
+
+@app.exception_handler(CloudReply)
+async def handle_cloud_reply(request: Request, exc: CloudReply) -> Response:
+    """The cloud's own answer to a forwarded call, handed on as it came (services/cloud_forward.py)."""
+    return Response(content=exc.body, status_code=exc.status, headers=exc.headers)
+
+
 @app.exception_handler(CrewNotConfigured)
 async def handle_crew_not_configured(
     request: Request, exc: CrewNotConfigured
@@ -197,6 +213,7 @@ app.include_router(sessions.router, prefix="/api")
 app.include_router(automations.router, prefix="/api")
 app.include_router(briefings.router, prefix="/api")
 app.include_router(artifacts.router, prefix="/api")
+app.include_router(cloud.router, prefix="/api")
 app.include_router(heartbeat.router, prefix="/api")
 
 

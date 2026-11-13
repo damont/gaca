@@ -17,6 +17,8 @@ dependencies = [
     "firebase-admin>=6.5",
     "asyncssh>=2.24.0",
     "segno>=1.6.6",
+    # Encrypts the stored cloud token (services/cloud_crypto.py). Already installed via pyjwt[crypto].
+    "cryptography>=42",
 ]
 
 # Console entry point. `gaca-api` on PATH starts the server (via cli.main -> main.run) and

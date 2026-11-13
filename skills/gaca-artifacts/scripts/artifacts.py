@@ -86,12 +86,19 @@ def api(method: str, path: str, payload: object | None = None, raw: bool = False
                 return json.loads(data) if data else None
         except urllib.error.HTTPError as error:
             detail = error.read().decode("utf-8", "replace")
+            code = None
             try:
-                detail = json.loads(detail).get("detail", detail)
+                body_json = json.loads(detail)
+                code = body_json.get("code")
+                detail = body_json.get("message") or body_json.get("detail", detail)
             except (ValueError, AttributeError):
                 pass
-            if error.code in (401, 403):
+            if error.code == 401 or (error.code == 403 and not code):
                 die("GACA rejected the token (401/403) — the user needs to mint a new GACA_API_TOKEN")
+            if error.code == 403:
+                # The server answered and said why (forbidden_role, read_only, paired_device_required...):
+                # the token is fine, so do not tell anyone to mint a new one.
+                die(f"NOT ALLOWED ({method} {path}): {code}: {str(detail)[:300]}")
             if error.code == 409:
                 die(f"CONFLICT ({method} {path}): {str(detail)[:300]}")
             if error.code < 500 or attempt == 2:
@@ -160,6 +167,9 @@ def describe(a: dict) -> str:
         bits.append(a["crew"])
     if a.get("archived"):
         bits.append("archived")
+    if a.get("home") == "cloud":
+        bits.append("cloud" + (f", {a['role']}" if a.get("role") else "")
+                    + (f", shared by {a['shared_by']}" if a.get("shared_by") else ""))
     line = f"{a['id']}  {a['title']}  [{', '.join(bits)}]"
     return line + (f"\n    {a['description']}" if a.get("description") else "")
 

@@ -8,6 +8,7 @@ to the owner, and an id that isn't theirs (deleted, a bad id, someone else's) co
 from __future__ import annotations
 
 from ..db import artifacts as artifacts_db
+from ..db import cloud as cloud_db
 from ..schemas.artifact import ArtifactRefOut
 
 
@@ -18,9 +19,16 @@ async def resolve(user_id: str, wanted: dict[str, str | None]) -> dict[str, Arti
     refs: dict[str, ArtifactRefOut] = {}
     for artifact_id, label in wanted.items():
         doc = owned.get(artifact_id)
-        refs[artifact_id] = (
-            ArtifactRefOut(id=doc.id, title=doc.title, description=doc.description, crew=doc.crew)
-            if doc is not None
-            else ArtifactRefOut(id=artifact_id, title=label or "Page", missing=True)
-        )
+        if doc is not None:
+            refs[artifact_id] = ArtifactRefOut(id=doc.id, title=doc.title, description=doc.description, crew=doc.crew)
+            continue
+        # A cloud gacabit this server points at: its title comes from the pointer's cache, never
+        # from a call to the cloud (this runs for every chat transcript and alert list).
+        pointer = await cloud_db.get_pointer(user_id, artifact_id)
+        if pointer is not None:
+            description = pointer.meta.get("description")
+            refs[artifact_id] = ArtifactRefOut(
+                id=pointer.id, title=pointer.title, description=description if isinstance(description, str) else None)
+        else:
+            refs[artifact_id] = ArtifactRefOut(id=artifact_id, title=label or "Page", missing=True)
     return refs

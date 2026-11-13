@@ -91,7 +91,7 @@ def test_a_crew_member_created_in_the_app_is_wired_in_the_same_write(box):
     assert values["GACA_BASE_URL"] == "http://127.0.0.1:41700"
     assert values["API_SERVER_ENABLED"] == "true" and len(values["API_SERVER_KEY"]) == 64  # its own settings, same file
     assert mode == 0o600
-    assert found is not None and sorted(found[1].scopes) == sorted(token_utils.SCOPES) and found[1].name == "hermes-fresh"
+    assert found is not None and sorted(found[1].scopes) == sorted(token_utils.DEFAULT_SCOPES) and "cloud" not in found[1].scopes and found[1].name == "hermes-fresh"
     assert len(listed) == 1
 
 

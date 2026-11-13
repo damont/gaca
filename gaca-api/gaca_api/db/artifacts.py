@@ -129,6 +129,17 @@ async def set_positions(user_id: str, ordered_ids: list[str]) -> None:
     await conn.commit()
 
 
+async def set_positions_at(user_id: str, pairs: list[tuple[str, int]]) -> None:
+    """Give each (artifact id, position) pair that position. Used when the list also holds cloud
+    pointers, so positions are numbered over the whole merged list."""
+    conn = connection()
+    await conn.executemany(
+        "UPDATE artifacts SET position = ? WHERE id = ? AND user_id = ?",
+        [(pos, artifact_id, user_id) for artifact_id, pos in pairs],
+    )
+    await conn.commit()
+
+
 async def update_meta(
     doc: ArtifactDoc, archived: bool, updated_at: datetime, html: str | None = None,
     version: int | None = None,

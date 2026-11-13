@@ -100,3 +100,53 @@ class RequestInvalid(Exception):
     def __init__(self, error: ValidationError) -> None:
         super().__init__(str(error))
         self.errors = error.errors(include_url=False)
+
+
+# ── the cloud link (services/cloud_*.py) ─────────────────────────────────────
+class CloudError(Exception):
+    """Something about reaching or using the GACA Cloud went wrong in a way this server can
+    name. Carries its own HTTP status and a stable `code`; the message never contains the
+    cloud's address or the server token. Mapped by one handler in main.py."""
+
+    status = 502
+    code = "cloud_error"
+
+    def __init__(self, message: str, *, status: int | None = None, code: str | None = None) -> None:
+        super().__init__(message)
+        self.message = message
+        if status is not None:
+            self.status = status
+        if code is not None:
+            self.code = code
+
+
+class CloudUnavailable(CloudError):
+    """The cloud could not be reached, timed out, or answered with a server error: 502."""
+
+    status = 502
+    code = "cloud_unavailable"
+
+    def __init__(self, message: str = "The cloud could not be reached right now. Try again in a moment.") -> None:
+        super().__init__(message)
+
+
+class CloudNotLinked(CloudError):
+    """This server has no (working) cloud link. 409."""
+
+    status = 409
+    code = "cloud_not_linked"
+
+    def __init__(self, message: str = "This server is not linked to a cloud account.") -> None:
+        super().__init__(message)
+
+
+class CloudReply(Exception):
+    """The cloud's own answer, to be handed to the client as it is (status, body, a few
+    headers). Raised for every forwarded answer, errors and successes alike, so a route can
+    leave early; main.py turns it into the response."""
+
+    def __init__(self, status: int, body: bytes = b"", headers: dict[str, str] | None = None) -> None:
+        super().__init__(f"cloud answered {status}")
+        self.status = status
+        self.body = body
+        self.headers = headers or {}

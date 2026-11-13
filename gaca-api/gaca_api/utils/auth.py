@@ -7,6 +7,8 @@ There are no passwords and no sessions to sign.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 
@@ -73,3 +75,26 @@ async def get_session_user(token: str = Depends(oauth2_scheme), request: Request
     """Like get_current_user but for owner-only actions an API token must never perform
     (managing tokens and devices): a paired device is required."""
     return await _resolve(request, token, allow_api_token=False)
+
+
+@dataclass
+class Caller:
+    """Who is calling. `is_agent`: software holding an API token (Hermes, a script) rather than the
+    person's own paired app. `cloud`: may see and use cloud-homed gacabits: always for the app, for
+    a token only if it carries the opt-in `cloud` scope."""
+    user: UserDoc
+    is_agent: bool
+    cloud: bool = True
+
+
+_optional_scheme = OAuth2PasswordBearer(tokenUrl="/api/devices/pair", auto_error=False)
+
+
+async def get_caller(user: UserDoc = Depends(get_current_user), token: str | None = Depends(_optional_scheme)) -> Caller:
+    """The owner plus what kind of credential reached us. Builds on get_current_user (so the same
+    checks and the same test overrides apply)."""
+    if not token or token_utils.looks_like_device(token):
+        return Caller(user=user, is_agent=False, cloud=True)
+    found = await token_service.authenticate(token)
+    scopes = found[1].scopes if found else []
+    return Caller(user=user, is_agent=True, cloud="cloud" in scopes)
