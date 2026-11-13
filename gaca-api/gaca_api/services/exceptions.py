@@ -111,13 +111,23 @@ class CloudError(Exception):
     status = 502
     code = "cloud_error"
 
-    def __init__(self, message: str, *, status: int | None = None, code: str | None = None) -> None:
+    detail: object = None  # a structured explanation (a dict); when None the handler repeats the message
+    headers: dict[str, str] | None = None
+
+    def __init__(
+        self, message: str, *, status: int | None = None, code: str | None = None, detail: object = None,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         super().__init__(message)
         self.message = message
         if status is not None:
             self.status = status
         if code is not None:
             self.code = code
+        if detail is not None:
+            self.detail = detail
+        if headers:
+            self.headers = headers
 
 
 class CloudUnavailable(CloudError):
@@ -138,6 +148,15 @@ class CloudNotLinked(CloudError):
 
     def __init__(self, message: str = "This server is not linked to a cloud account.") -> None:
         super().__init__(message)
+
+
+class ArtifactMoving(Exception):
+    """The artifact is being moved to the cloud right now and is read-only until that finishes or
+    fails (writes would be lost in the move). Mapped to HTTP 423 `artifact_moving`."""
+
+    def __init__(self, artifact_id: str) -> None:
+        self.artifact_id = artifact_id
+        super().__init__(f"artifact {artifact_id!r} is being moved to the cloud")
 
 
 class CloudReply(Exception):

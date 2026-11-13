@@ -115,7 +115,7 @@ def test_cloud_decisions_come_back_faithfully(linked, cloud, status, code):
     cloud.on("PUT", "/gacabits/g1/state", status=status, json=body, headers={"retry-after": "7"})
     r = linked.put(A + "/state", headers=hdr(linked), json={"state": {}})
     assert r.status_code == status
-    assert r.json()["code"] == code and r.json()["message"] == "because" and r.json()["detail"] == {"required_role": "editor"}
+    assert r.json()["code"] == code and r.json()["message"] == "because" and r.json()["detail"] == "because" and r.json()["info"] == {"required_role": "editor"}  # detail is always a string (8b)
     assert r.headers["retry-after"] == "7"
 
 

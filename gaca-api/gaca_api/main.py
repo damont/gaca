@@ -21,10 +21,11 @@ from .db import client
 from .provisioning.base import ProvisioningError
 from .config import settings
 from .security import BodyLimitMiddleware, SecurityHeadersMiddleware, cors_origins
-from .routers import agent, alerts, artifacts, auth, automations, briefings, cloud, crew, devices, heartbeat, push, sessions, setup, tokens
-from .services import automation_watch, cloud_client
+from .routers import agent, alerts, artifacts, auth, automations, briefings, cloud, cloud_gacabits, crew, devices, heartbeat, push, sessions, setup, tokens
+from .services import automation_watch, cloud_client, cloud_move
 from .services import push as push_service
 from .services.exceptions import (
+    ArtifactMoving,
     BadRequest,
     CloudError,
     CloudReply,
@@ -57,8 +58,10 @@ async def lifespan(app: FastAPI):
             await client.close()
         raise
     watcher = automation_watch.start()
+    cloud_maintenance = cloud_move.start_maintenance()
     yield
     await automation_watch.stop(watcher)
+    await cloud_move.stop_maintenance(cloud_maintenance)
     # Shutdown, reverse order. Every step is attempted even if an earlier one fails: not being
     # able to close Firebase must not skip closing the database.
     for step in (cloud_client.aclose_all, push_service.aclose, agent_runtime.close, event_bus.aclose, client.close):
@@ -141,12 +144,31 @@ async def handle_payload_too_large(request: Request, exc: PayloadTooLarge) -> JS
     return JSONResponse(status_code=413, content={"detail": str(exc)})
 
 
+def _error_body(code: str, message: str, info: object = None) -> dict:
+    """The one error shape of this API: `detail` is ALWAYS a string (what FastAPI sends and what the Android and
+    iOS apps decode); structured explanation goes in `info`, and `phase` / `local_data_changed` are lifted to
+    the top level so a client can read them without digging."""
+    body: dict = {"code": code, "message": message, "detail": message}
+    if isinstance(info, dict) and info:
+        body["info"] = info
+        for key in ("phase", "local_data_changed"):
+            if key in info:
+                body[key] = info[key]
+    return body
+
+
 @app.exception_handler(CloudError)
 async def handle_cloud_error(request: Request, exc: CloudError) -> JSONResponse:
     """The cloud could not be reached, or this server's link to it is not usable. The message never
     names the cloud's address or the token."""
-    return JSONResponse(
-        status_code=exc.status, content={"code": exc.code, "message": exc.message, "detail": exc.message})
+    return JSONResponse(status_code=exc.status, headers=exc.headers, content=_error_body(exc.code, exc.message, exc.detail))
+
+
+@app.exception_handler(ArtifactMoving)
+async def handle_artifact_moving(request: Request, exc: ArtifactMoving) -> JSONResponse:
+    message = "This page is being moved to the cloud; it is read-only until that finishes. Try again in a moment."
+    return JSONResponse(status_code=423, content=_error_body(
+        "artifact_moving", message, {"artifact_id": exc.artifact_id, "phase": "moving"}))
 
 
 @app.exception_handler(CloudReply)
@@ -214,6 +236,7 @@ app.include_router(automations.router, prefix="/api")
 app.include_router(briefings.router, prefix="/api")
 app.include_router(artifacts.router, prefix="/api")
 app.include_router(cloud.router, prefix="/api")
+app.include_router(cloud_gacabits.router, prefix="/api")
 app.include_router(heartbeat.router, prefix="/api")
 
 

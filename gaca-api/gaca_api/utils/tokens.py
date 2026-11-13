@@ -35,6 +35,7 @@ SCOPE_RULES: dict[str, list[tuple[str, str]]] = {
     # template gallery, and sees/uses cloud-homed gacabits through /api/artifacts (their pointers are
     # invisible to a token without it). Even with it a token can NEVER link, unlink, redeem an invite
     # or install a template: those are the paired app's alone (the "Trust and add" tap is the consent).
+    # The same goes for everything in Part 8b: move to the cloud, bring home, members, invite links, publish.
     "cloud": [
         ("GET", r"/api/cloud/link"),
         ("GET", r"/api/cloud/templates"),

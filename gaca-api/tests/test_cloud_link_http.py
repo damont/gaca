@@ -300,7 +300,7 @@ def test_unlink_removes_the_cloud_gacabits_from_the_list_but_not_local_ones(http
     http.post("/api/artifacts", headers=http.session, json={"title": "Mine", "html": "<p>x</p>"})
     assert len(http.get("/api/artifacts", headers=http.session).json()["artifacts"]) == 2
     cloud.on("DELETE", "/me/servers/srv1", status=204)
-    http.delete("/api/cloud/link", headers=http.session)
+    http.delete("/api/cloud/link?force=true", headers=http.session)  # a cloud page is present: force is required (8b)
     assert [a["title"] for a in http.get("/api/artifacts", headers=http.session).json()["artifacts"]] == ["Mine"]
 
 

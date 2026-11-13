@@ -170,6 +170,10 @@ def describe(a: dict) -> str:
     if a.get("home") == "cloud":
         bits.append("cloud" + (f", {a['role']}" if a.get("role") else "")
                     + (f", shared by {a['shared_by']}" if a.get("shared_by") else ""))
+    if a.get("moving"):
+        bits.append("being moved to the cloud: read-only for now")
+    elif a.get("cloud_status") and a["cloud_status"] != "active":
+        bits.append(f"cloud status: {a['cloud_status']}")
     line = f"{a['id']}  {a['title']}  [{', '.join(bits)}]"
     return line + (f"\n    {a['description']}" if a.get("description") else "")
 
