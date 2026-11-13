@@ -166,6 +166,43 @@ CREATE TABLE IF NOT EXISTS artifact_events (
     payload     TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_artifact_events ON artifact_events (artifact_id, seq);
+-- The link from this server to ONE GACA Cloud account (Part 8a). The server token is Fernet
+-- encrypted (services/cloud_crypto.py); so is the device code of a link in progress.
+-- `status`: pending (waiting for the user to approve), linked, invalid (the cloud rejected the token).
+CREATE TABLE IF NOT EXISTS cloud_link (
+    user_id             TEXT PRIMARY KEY,
+    cloud_url           TEXT NOT NULL,
+    status              TEXT NOT NULL,
+    scope               TEXT NOT NULL,
+    server_name         TEXT NOT NULL,
+    account_id          TEXT,
+    handle              TEXT,
+    server_id           TEXT,
+    token_enc           TEXT,
+    linked_at           TEXT,
+    pending_device_enc  TEXT,
+    pending_expires_at  TEXT,
+    pending_interval    INTEGER,
+    pending_next_poll   TEXT,
+    created_at          TEXT NOT NULL
+);
+-- A gacabit that lives in the cloud, as this server sees it: the same id as in the cloud, the
+-- caller's role, who shared it, and the last metadata seen (so lists still work while the cloud
+-- is down). There is no data here: reads and writes are forwarded.
+CREATE TABLE IF NOT EXISTS cloud_pointers (
+    id           TEXT NOT NULL,
+    user_id      TEXT NOT NULL,
+    cloud_id     TEXT NOT NULL,
+    account_id   TEXT NOT NULL,
+    role         TEXT NOT NULL,
+    shared_by    TEXT,
+    title        TEXT NOT NULL,
+    member_count INTEGER NOT NULL DEFAULT 1,
+    position     INTEGER,
+    last_seen    TEXT NOT NULL,
+    meta         TEXT NOT NULL,
+    PRIMARY KEY (user_id, id)
+);
 CREATE TABLE IF NOT EXISTS briefings (
     user_id       TEXT NOT NULL,
     briefing_date TEXT NOT NULL,

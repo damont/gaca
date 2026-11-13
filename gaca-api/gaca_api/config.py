@@ -110,5 +110,23 @@ class Settings(BaseSettings):
     # The iOS app's bundle id. APNs rejects a token sent under any other topic.
     apns_topic: str = "dev.monts.gaca"
 
+    # --- GACA Cloud link (services/cloud_*.py) ---------------------------
+    # The cloud's API address. The ONLY place it comes from: it is copied into the link record
+    # when linking starts, and never taken from a request. Must be https unless the dev flag is on.
+    cloud_url: str = "https://goodandcheapagent.com/api/v1"
+    cloud_allow_insecure_dev: bool = False
+    # What this server calls itself on the cloud's "Linked servers" list. Empty = the hostname.
+    cloud_server_name: str = ""
+    # Fernet key(s) for the stored cloud token, comma-separated, newest first. Empty = a key file
+    # next to the database (created 0600 on first use). See services/cloud_crypto.py.
+    cloud_key: str = ""
+    # Seconds to wait for the cloud on one call, and to connect. Must stay above the cloud's ~8 s
+    # long-poll; a call that asks to wait gets `wait + 10`, up to cloud_max_wait + 10.
+    cloud_timeout_seconds: float = 20.0
+    cloud_connect_timeout_seconds: float = 5.0
+    cloud_max_wait_seconds: int = 25
+    # How long a fetched list of cloud gacabits is trusted before asking again.
+    cloud_list_ttl_seconds: float = 15.0
+
 
 settings = Settings()
