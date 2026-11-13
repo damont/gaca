@@ -4,15 +4,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Path, Query, Request
+from fastapi import APIRouter, Depends, Header, Path, Query, Request
 from fastapi.responses import HTMLResponse
 
 from ..models.user import UserDoc
 from ..schemas import artifact as s
 from ..schemas import cloud as cloud_schemas
-from ..services import artifact_page, cloud_forward, cloud_list
+from ..services import artifact_page, cloud_forward, cloud_list, cloud_move
 from ..services import artifacts as svc
-from ..utils.auth import Caller, get_caller, get_current_user
+from ..utils.auth import Caller, get_caller, get_current_user, get_session_user
 
 _PREFIX = "/artifacts"
 
@@ -72,8 +72,42 @@ async def reorder_artifacts(
 
 
 @router.get("/{artifact_id}")
-async def get_artifact(artifact_id: str, user: UserDoc = Depends(get_current_user)) -> s.ArtifactOut:
-    return await svc.get(user.id, artifact_id)
+async def get_artifact(artifact_id: str, user: UserDoc = Depends(get_current_user)) -> cloud_schemas.ArtifactListItem:
+    """The artifact. `home` says where it lives; `moving` / `cloud_status` say where it is in a move to the
+    cloud or a bring-home (see docs/cloud-link.md)."""
+    return await cloud_list.local_item(user.id, await svc.get(user.id, artifact_id))
+
+
+# ── moving between this server and the cloud (paired device only: the tap IS the confirmation) ──
+@router.post("/{artifact_id}/move-to-cloud")
+async def move_to_cloud(
+    artifact_id: str, user: UserDoc = Depends(get_session_user), x_request_id: str | None = Header(default=None),
+) -> cloud_schemas.MoveResult:
+    """Move this page, with its data, to your GACA Cloud account. It keeps its id. The cloud copy is checked
+    against what was sent before this page is switched to it, and a sealed backup of the local copy is kept
+    for 30 days. Any failure leaves the page here exactly as it was. Safe to retry. Blocks until done."""
+    return cloud_schemas.MoveResult(**await cloud_move.move_to_cloud(
+        user.id, artifact_id, cloud_forward.clean_request_id(x_request_id)))
+
+
+@router.post("/{artifact_id}/bring-home")
+async def bring_home(
+    artifact_id: str, user: UserDoc = Depends(get_session_user), x_request_id: str | None = Header(default=None),
+) -> cloud_schemas.BringHomeResult:
+    """Bring a cloud page (that you own) back to this server. The cloud keeps its copy for 7 days (undo)
+    and is only told to delete it after the page has arrived here. Safe to retry."""
+    return cloud_schemas.BringHomeResult(**await cloud_move.bring_home(
+        user.id, artifact_id, cloud_forward.clean_request_id(x_request_id)))
+
+
+@router.post("/{artifact_id}/undo-bring-home")
+async def undo_bring_home(
+    artifact_id: str, user: UserDoc = Depends(get_session_user), x_request_id: str | None = Header(default=None),
+) -> cloud_schemas.UndoResult:
+    """Cancel a bring-home while the cloud still has its copy (7 days). Refused (409) if the page was edited
+    here since it came home."""
+    return cloud_schemas.UndoResult(**await cloud_move.undo_bring_home(
+        user.id, artifact_id, cloud_forward.clean_request_id(x_request_id)))
 
 
 @router.get("/{artifact_id}/html", response_class=HTMLResponse)

@@ -12,7 +12,7 @@ server calls the cloud with its own stored token (which no response ever contain
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, Depends, Header, Query, Request
 
 from ..models.user import UserDoc
 from ..schemas import artifact as artifact_schemas
@@ -50,11 +50,15 @@ async def link_status(user: UserDoc = Depends(get_current_user)) -> s.LinkStatus
 
 
 @router.delete("/link")
-async def unlink(user: UserDoc = Depends(get_session_user)) -> s.Unlinked:
+async def unlink(
+    force: bool = Query(default=False, description="Unlink even though pages live in the cloud"),
+    user: UserDoc = Depends(get_session_user),
+) -> s.Unlinked:
     """Revoke this server's token on the cloud, then forget the link here (cloud-hosted gacabits
     disappear from this server's list; they are not deleted in the cloud). If the cloud cannot be
-    reached the local link is removed anyway and `cloud_revoked` is false."""
-    return s.Unlinked(**await cloud_link.unlink(user.id))
+    reached the local link is removed anyway and `cloud_revoked` is false. While any page lives in the cloud
+    this is refused (`409 cloud_artifacts_present`, with counts) unless `force=true`: bring them home first."""
+    return s.Unlinked(**await cloud_link.unlink(user.id, force))
 
 
 @router.post("/invites/preview")

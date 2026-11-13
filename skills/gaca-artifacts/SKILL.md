@@ -45,6 +45,7 @@ Titles are short and nicely cased (`Costco`, `Denver trip`), one page per purpos
 
 - **Change the data the user would expect you to change** ("add paper towels to the Costco page"): `add <ref> items --json '{"text":"Paper towels","done":false}'`, `patch`, `remove`. Check the page's shape first with `show <ref>` (it prints `data notes` and what's stored) and `docs <ref> items`; match the existing document shape exactly, or the page won't render the new entry properly.
 - **Change the page itself:** `html <ref> --out /tmp/x.html`, edit the file, then `update <ref> --html-file /tmp/x.html --note "added aisle grouping"`. The stored data is untouched, so **the new page must keep reading the same data shape**. If the shape has to change, migrate the stored data first (`patch`/`state-patch`), then update `--data-notes`. Old versions are kept: `versions`, `restore`.
+- A page marked `cloud` in `list` lives in the user's cloud account (its `role` says what you may do). Moving a page to the cloud or back, sharing it, inviting people and publishing it are the user's own decisions, made in the app: you cannot do them and there is no command for them, so if asked, tell the user to tap it in the app. A page "being moved to the cloud" is read-only for a moment; wait and retry.
 - Don't delete a page unless the user asks. `archive` tidies it away; `delete` removes it **and its data** (the helper asks you to confirm with the user first).
 
 ## Hearing back from the page

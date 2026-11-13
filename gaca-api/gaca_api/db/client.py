@@ -203,6 +203,40 @@ CREATE TABLE IF NOT EXISTS cloud_pointers (
     meta         TEXT NOT NULL,
     PRIMARY KEY (user_id, id)
 );
+-- Part 8b. The last move-to-cloud attempt that failed for this artifact (cleared on success), so
+-- the app can show "move failed: <why>" and a retry; nothing here is data.
+CREATE TABLE IF NOT EXISTS artifact_moves (
+    artifact_id TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    phase       TEXT NOT NULL,
+    code        TEXT NOT NULL,
+    message     TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+-- Part 8b. The sealed copy of an artifact's local rows, taken in the same transaction that turns it
+-- into a cloud pointer. It is how a cloud failure is recovered from (`gaca-api cloud restore-backup`).
+-- `snapshot` is gzip'd JSON; `sha256` is of the gzip bytes. Rows are deleted after `expires_at`.
+CREATE TABLE IF NOT EXISTS artifact_cloud_backups (
+    id          TEXT PRIMARY KEY,
+    artifact_id TEXT NOT NULL,
+    user_id     TEXT NOT NULL,
+    snapshot    BLOB NOT NULL,
+    sha256      TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    expires_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_artifact_cloud_backups_artifact ON artifact_cloud_backups (artifact_id);
+-- Part 8b. An artifact that came home from the cloud: its content fingerprint when it was restored
+-- (so an undo can tell whether it was edited since), whether the cloud has been told it arrived
+-- (`confirmed`; until then the cloud never deletes its copy), and when the cloud's undo window ends.
+CREATE TABLE IF NOT EXISTS artifact_bring_homes (
+    artifact_id TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    confirmed   INTEGER NOT NULL DEFAULT 0,
+    undo_until  TEXT,
+    created_at  TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS briefings (
     user_id       TEXT NOT NULL,
     briefing_date TEXT NOT NULL,

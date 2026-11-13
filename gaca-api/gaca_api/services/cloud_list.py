@@ -23,12 +23,13 @@ import httpx
 from ..config import settings
 from ..db import artifacts as artifacts_db
 from ..db import cloud as db
+from ..db import cloud_move as move_db
 from ..models.base import utcnow
 from ..models.cloud import CloudPointer
 from ..schemas import artifact as s
 from ..schemas import cloud as cs
 from . import artifacts as svc
-from . import cloud_link
+from . import artifact_locks, cloud_link
 from .exceptions import CloudError, CloudReply, NotFound
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,8 @@ def adapt(g: dict, *, position: int | None = None) -> dict:
     out["home"] = "cloud"
     out["shared_by"] = shared_by(g)
     out.setdefault("member_count", 1)
+    out["moving"] = False
+    out["cloud_status"] = g.get("status") if isinstance(g.get("status"), str) else None
     return out
 
 
@@ -176,6 +179,30 @@ async def pointers_for_list(user_id: str) -> tuple[list[CloudPointer], bool]:
         return await db.list_pointers(user_id), False
 
 
+# ── local rows, with where they are in a cloud transfer ──────────────────────
+async def _transfer_states(user_id: str) -> tuple[dict[str, dict], set[str]]:
+    """(failed move attempts by artifact id, ids that came home and are waiting for the cloud to be told)."""
+    failed = await move_db.failures(user_id)
+    waiting = {r["artifact_id"] for r in await move_db.list_bring_homes(user_id) if not r["confirmed"]}
+    return failed, waiting
+
+
+def _mark(item: cs.ArtifactListItem, failed: dict[str, dict], waiting: set[str]) -> cs.ArtifactListItem:
+    if item.id in artifact_locks.MOVING:
+        item.moving, item.cloud_status = True, "moving"
+    elif item.id in failed:
+        item.cloud_status = "move_failed"
+    elif item.id in waiting:
+        item.cloud_status = "bring_home_unconfirmed"
+    return item
+
+
+async def local_item(user_id: str, out: s.ArtifactOut) -> cs.ArtifactListItem:
+    """One local artifact as a list item, with its transfer state (used by GET /artifacts/{id})."""
+    failed, waiting = await _transfer_states(user_id)
+    return _mark(cs.ArtifactListItem.model_validate(out.model_dump()), failed, waiting)
+
+
 # ── the merged list ──────────────────────────────────────────────────────────
 def _item(p: CloudPointer) -> cs.ArtifactListItem:
     g = adapt(p.meta, position=p.position)
@@ -210,7 +237,8 @@ async def merged(
         pointers, stale = await pointers_for_list(user_id)
     # With nothing to merge the local query can stop at `limit`; with pointers it must see them all.
     local = await svc.list_for_user(user_id, include_archived, session_id, alert_id, q, 1000 if pointers else limit)
-    items = [cs.ArtifactListItem.model_validate(a.model_dump()) for a in local.artifacts]
+    failed, waiting = await _transfer_states(user_id)
+    items = [_mark(cs.ArtifactListItem.model_validate(a.model_dump()), failed, waiting) for a in local.artifacts]
     if pointers:
         needle = q.lower() if q else None
         for p in pointers:

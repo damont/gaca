@@ -105,6 +105,10 @@ def _parser() -> argparse.ArgumentParser:
 
     cloud = sub.add_parser("cloud", help="the GACA Cloud link").add_subparsers(dest="cloud_command", required=True)
     cloud.add_parser("rotate-key", help="start encrypting the stored cloud token under a new key (see services/cloud_crypto.py)")
+    cloud.add_parser("list-backups", help="the sealed local copies kept when pages were moved to the cloud")
+    restore = cloud.add_parser(
+        "restore-backup", help="put a page back on this server from its sealed backup (after a cloud failure)")
+    restore.add_argument("backup", help="the backup id, or the page's id (its newest backup)")
 
     hermes = sub.add_parser("hermes", help="wire Hermes to this server").add_subparsers(dest="hermes_command", required=True)
     connect = hermes.add_parser("connect", help="mint a token per Hermes profile and write it into the profile's .env")
@@ -293,6 +297,37 @@ async def _cloud_rotate_key() -> int:
     return 0
 
 
+async def _cloud_list_backups() -> int:
+    from .db import cloud_move as move_db
+
+    rows = await move_db.list_backups()
+    if not rows:
+        print("No backups. (One is kept for 30 days after each page is moved to the cloud.)")
+        return 0
+    for r in rows:
+        print(f"{r['id']}  page {r['artifact_id']}  made {r['created_at'][:16]}  expires {r['expires_at'][:10]}  {r['size']} bytes")
+    return 0
+
+
+async def _cloud_restore_backup(ref: str) -> int:
+    from .services import cloud_move
+    from .services.exceptions import CloudError, NotFound
+
+    try:
+        done = await cloud_move.restore_backup(ref)
+    except NotFound:
+        print(f"No backup matches {ref!r}. Run `gaca-api cloud list-backups`.", file=sys.stderr)
+        return 1
+    except CloudError as e:
+        print(f"Not restored: {e.message}", file=sys.stderr)
+        return 1
+    print(f"Restored page {done['artifact_id']} ({done['title']}): {done['documents']} document(s), "
+          f"{done['versions']} page version(s), {done['events']} event(s).")
+    print("The cloud was not touched. If a copy of this page is still there, it may hold newer changes: "
+          "check it on the website before deleting it.")
+    return 0
+
+
 async def _with_database(coro_factory) -> int:
     # The owner tools act on the real server's database, never on a new one: with the wrong
     # (or unset) GACA_DB_PATH, connect() would quietly create an empty file and these commands
@@ -401,7 +436,12 @@ def main(argv: list[str] | None = None) -> int:
         }
         return asyncio.run(_with_database(handlers[args.token_command]))
     if args.command == "cloud":
-        return asyncio.run(_with_database(_cloud_rotate_key))
+        handlers = {
+            "rotate-key": _cloud_rotate_key,
+            "list-backups": _cloud_list_backups,
+            "restore-backup": lambda: _cloud_restore_backup(args.backup),
+        }
+        return asyncio.run(_with_database(handlers[args.cloud_command]))
     if args.command == "hermes":
         return asyncio.run(_with_database(lambda: _hermes_connect(args.hermes_home, args.base_url, args.rotate)))
     return 2

@@ -72,9 +72,37 @@ class ArtifactListItem(s.ArtifactOut):
     role: str = "owner"
     shared_by: str | None = None
     member_count: int = 1
+    # True while this page is being moved to the cloud (it is read-only until that ends).
+    moving: bool = False
+    # Where it is in a cloud transfer. A cloud page: the cloud's own status (active, read_only,
+    # brought_home ...). A local page: null, or `moving`, `move_failed` (the last move did not finish;
+    # nothing was lost) or `bring_home_unconfirmed` (it came home but the cloud has not been told yet).
+    cloud_status: str | None = None
 
 
 class ArtifactListMerged(BaseModel):
     artifacts: list[ArtifactListItem] = []
     # True when the cloud could not be asked and the cloud rows come from this server's last look.
     stale: bool = False
+
+
+class MoveResult(BaseModel):
+    """What a finished move to the cloud answers: the page as a cloud page, and that it was checked."""
+    artifact: ArtifactListItem
+    verified: bool
+    resumed: bool = False  # a copy from an earlier try was found in the cloud, checked and used
+    backup_expires_at: datetime
+
+
+class BringHomeResult(BaseModel):
+    artifact: ArtifactListItem
+    # False when the page is home but the cloud has not been told yet (it is told again later).
+    confirmed: bool
+    undo_until: str | None = None
+    warning: str | None = None
+
+
+class UndoResult(BaseModel):
+    home: Literal["local", "cloud"]
+    undone: bool
+    artifact: dict[str, Any]

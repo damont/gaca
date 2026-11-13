@@ -32,7 +32,9 @@ async def invite_preview(user_id: str, token: str, request_id: str) -> None:
 
 
 async def invite_redeem(user_id: str, token: str, *, request_id: str) -> None:
-    content, headers = _body({"token": token})
+    # The cloud wants `user_confirmed` from a server token when joining. The router is paired-device only,
+    # so the person's "Trust and add" tap is that confirmation.
+    content, headers = _body({"token": token, "user_confirmed": True})
     resp = await cloud_link.call(user_id, "POST", "/invites/redeem", content=content, headers=headers,
                                  request_id=request_id)
     reply = cloud_link.reply_from(resp)

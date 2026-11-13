@@ -135,6 +135,19 @@ class Settings(BaseSettings):
     cloud_list_connect_timeout_seconds: float = 3.0
     # The most the cached page HTML (for opening a page while the cloud is down) may take in memory.
     cloud_page_cache_bytes: int = 64 * 1024 * 1024
+    # Moving a gacabit to the cloud and bringing it home (services/cloud_move.py). The caps are the
+    # cloud's own (bundle-format.md): 12 MiB inflated, 16 MiB gzip. Checked here first so a too-big
+    # artifact is told what to trim BEFORE anything is uploaded; the cloud still has the last word.
+    cloud_max_bundle_bytes: int = 12 * 1024 * 1024
+    cloud_max_transfer_bytes: int = 16 * 1024 * 1024
+    # One bundle transfer (the PUT to / GET from S3). Separate from cloud_timeout_seconds, which is for API calls.
+    cloud_transfer_timeout_seconds: float = 120.0
+    # How many times a 503 / lost answer on the import is retried (same upload id), and how long to wait
+    # between tries when the cloud gives no Retry-After.
+    cloud_import_attempts: int = 4
+    cloud_retry_pause_seconds: float = 2.0
+    # How long the sealed copy of an artifact kept at move time stays restorable.
+    cloud_backup_days: int = 30
 
 
 settings = Settings()

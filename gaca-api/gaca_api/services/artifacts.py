@@ -22,9 +22,9 @@ from ..db import artifacts as db
 from ..models.artifact import ArtifactDoc
 from ..models.base import utcnow
 from ..schemas import artifact as s
-from . import artifact_schema
+from . import artifact_locks, artifact_schema
 from . import sessions as session_service
-from .exceptions import Conflict, NotFound, PayloadTooLarge
+from .exceptions import ArtifactMoving, Conflict, NotFound, PayloadTooLarge
 
 _write_lock = asyncio.Lock()
 
@@ -71,6 +71,14 @@ async def _owned(user_id: str, artifact_id: str, with_html: bool = False) -> db.
     row = await db.find(user_id, artifact_id, with_html)
     if row is None:
         raise NotFound("artifact", artifact_id)
+    return row
+
+
+async def _owned_w(user_id: str, artifact_id: str, with_html: bool = False) -> db.ArtifactRow:
+    """`_owned` for a WRITE: refused (423) while the artifact is being moved to the cloud."""
+    row = await _owned(user_id, artifact_id, with_html)
+    if artifact_id in artifact_locks.MOVING:
+        raise ArtifactMoving(artifact_id)
     return row
 
 
@@ -154,7 +162,7 @@ async def get_html(user_id: str, artifact_id: str, version: int | None = None) -
 
 async def patch(user_id: str, artifact_id: str, body: s.ArtifactPatch) -> s.ArtifactOut:
     async with _write_lock:
-        row = await _owned(user_id, artifact_id)
+        row = await _owned_w(user_id, artifact_id)
         changes = body.model_dump(exclude_unset=True)
         update: dict[str, Any] = {}
         for key in ("title", "description", "data_notes"):
@@ -214,8 +222,10 @@ async def mark_opened(user_id: str, artifact_id: str) -> None:
 
 
 async def delete(user_id: str, artifact_id: str) -> None:
-    if not await db.delete(user_id, artifact_id):
-        raise NotFound("artifact", artifact_id)
+    async with _write_lock:
+        await _owned_w(user_id, artifact_id)
+        if not await db.delete(user_id, artifact_id):
+            raise NotFound("artifact", artifact_id)
 
 
 # ── state ────────────────────────────────────────────────────────────────────
@@ -237,12 +247,12 @@ async def _write_state(row: db.ArtifactRow, new_state: dict, expected: int | Non
 
 async def put_state(user_id: str, artifact_id: str, body: s.StatePut) -> s.StateOut:
     async with _write_lock:
-        return await _write_state(await _owned(user_id, artifact_id), body.state, body.expected_version)
+        return await _write_state(await _owned_w(user_id, artifact_id), body.state, body.expected_version)
 
 
 async def patch_state(user_id: str, artifact_id: str, body: s.StatePatch) -> s.StateOut:
     async with _write_lock:
-        row = await _owned(user_id, artifact_id)
+        row = await _owned_w(user_id, artifact_id)
         return await _write_state(row, merge_patch(row.state, body.patch), body.expected_version)
 
 
@@ -306,7 +316,7 @@ async def _set_doc(
 async def put_doc(user_id: str, artifact_id: str, collection: str, doc_id: str, body: s.DocPut) -> s.DocOut:
     s.check_name(collection)
     async with _write_lock:
-        row = await _owned(user_id, artifact_id)
+        row = await _owned_w(user_id, artifact_id)
         return _doc_out(await _set_doc(
             artifact_id, collection, doc_id, body.data, body.expected_version, schema=_schema_of(row, collection)))
 
@@ -314,7 +324,7 @@ async def put_doc(user_id: str, artifact_id: str, collection: str, doc_id: str, 
 async def add_doc(user_id: str, artifact_id: str, collection: str, body: s.DocCreate) -> s.DocOut:
     s.check_name(collection)
     async with _write_lock:
-        row = await _owned(user_id, artifact_id)
+        row = await _owned_w(user_id, artifact_id)
         doc_id = body.id or uuid.uuid4().hex[:12]
         return _doc_out(await _set_doc(
             artifact_id, collection, doc_id, body.data, None, schema=_schema_of(row, collection), create_only=True))
@@ -323,7 +333,7 @@ async def add_doc(user_id: str, artifact_id: str, collection: str, body: s.DocCr
 async def patch_doc(user_id: str, artifact_id: str, collection: str, doc_id: str, body: s.DocPatch) -> s.DocOut:
     s.check_name(collection)
     async with _write_lock:
-        row = await _owned(user_id, artifact_id)
+        row = await _owned_w(user_id, artifact_id)
         existing = await db.get_doc(artifact_id, collection, doc_id)
         if existing is None:
             raise NotFound("document", f"{collection}/{doc_id}")
@@ -334,21 +344,21 @@ async def patch_doc(user_id: str, artifact_id: str, collection: str, doc_id: str
 
 async def delete_doc(user_id: str, artifact_id: str, collection: str, doc_id: str) -> None:
     async with _write_lock:
-        await _owned(user_id, artifact_id)
+        await _owned_w(user_id, artifact_id)
         if not await db.delete_docs(artifact_id, collection, doc_id, utcnow()):
             raise NotFound("document", f"{collection}/{doc_id}")
 
 
 async def clear_collection(user_id: str, artifact_id: str, collection: str) -> int:
     async with _write_lock:
-        await _owned(user_id, artifact_id)
+        await _owned_w(user_id, artifact_id)
         return await db.delete_docs(artifact_id, collection, None, utcnow())
 
 
 async def batch(user_id: str, artifact_id: str, body: s.Batch) -> s.BatchResult:
     """All-or-nothing: if any op fails, none of them are applied."""
     async with _write_lock:
-        owned = await _owned(user_id, artifact_id)
+        owned = await _owned_w(user_id, artifact_id)
         try:
             for op in body.ops:
                 if op.op == "set":
@@ -375,11 +385,12 @@ async def batch(user_id: str, artifact_id: str, body: s.Batch) -> s.BatchResult:
 
 # ── events ───────────────────────────────────────────────────────────────────
 async def add_event(user_id: str, artifact_id: str, body: s.EventIn) -> s.EventOut:
-    await _owned(user_id, artifact_id)
     if _json_size(body.payload) > s.MAX_DOC_BYTES:
         raise PayloadTooLarge("event payload is too large")
-    now = utcnow()
-    seq = await db.add_event(artifact_id, user_id, body.name, body.payload, now)
+    async with _write_lock:
+        await _owned_w(user_id, artifact_id)
+        now = utcnow()
+        seq = await db.add_event(artifact_id, user_id, body.name, body.payload, now)
     return s.EventOut(seq=seq, name=body.name, created_at=now, handled=False, payload=body.payload)
 
 
@@ -391,7 +402,8 @@ async def list_events(
 
 
 async def mark_events_handled(user_id: str, artifact_id: str, upto: int) -> s.HandledResult:
-    await _owned(user_id, artifact_id)
-    return s.HandledResult(handled=await db.mark_events_handled(artifact_id, upto))
+    async with _write_lock:
+        await _owned_w(user_id, artifact_id)
+        return s.HandledResult(handled=await db.mark_events_handled(artifact_id, upto))
 
 

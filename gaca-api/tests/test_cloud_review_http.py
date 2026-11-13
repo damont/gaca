@@ -403,7 +403,7 @@ def test_with_no_link_the_limit_reaches_the_local_query(http, monkeypatch):
 
 def test_unlink_clears_every_pointer(linked, cloud):
     cloud.on("DELETE", "/me/servers/srv1", status=204)
-    linked.delete("/api/cloud/link", headers=hdr(linked))
+    linked.delete("/api/cloud/link?force=true", headers=hdr(linked))  # a cloud page is present: force (8b)
     con = sqlite3.connect(linked.db)
     assert con.execute("SELECT count(*) FROM cloud_pointers").fetchone() == (0,)
     con.close()

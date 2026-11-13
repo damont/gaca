@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://goodandcheapagent.com/schemas/gacabit-bundle-1.json",
+  "title": "Gacabit bundle",
+  "description": "Neutral, storage-independent snapshot of one gacabit. Moves server->cloud (move-to-cloud), cloud->server (bring home), and is the basis of published templates (state/collections/events omitted).",
+  "type": "object",
+  "required": ["bundle_version", "kind", "meta", "html"],
+  "additionalProperties": false,
+  "properties": {
+    "bundle_version": {"const": 1, "description": "Bump on any breaking change to this format."},
+    "kind": {"enum": ["full", "template"], "description": "full = with data (move/bring-home). template = HTML+schemas only (publish/get)."},
+    "exported_at": {"type": "string", "format": "date-time"},
+    "meta": {
+      "type": "object",
+      "required": ["title"],
+      "additionalProperties": false,
+      "properties": {
+        "title": {"type": "string", "minLength": 1, "maxLength": 120},
+        "description": {"type": ["string", "null"], "maxLength": 500},
+        "data_notes": {"type": ["string", "null"], "maxLength": 2000},
+        "crew": {"type": ["string", "null"], "maxLength": 100, "description": "Advisory; server-local concept, dropped on publish."},
+        "archived": {"type": "boolean", "default": false},
+        "created_at": {"type": "string", "format": "date-time"},
+        "origin_id": {"type": ["string", "null"], "description": "Id the gacabit had on the exporting side. Preserved as the cloud id when it is free; if another account holds it the import is refused 409 id_conflict (the id is the gacabit's identity across a server and the cloud). Never trusted for anything else."},
+        "forked_from": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["template_id", "template_version"],
+          "properties": {
+            "template_id": {"type": "string"},
+            "template_version": {"type": "integer", "minimum": 1},
+            "author_handle": {"type": "string"}
+          }
+        }
+      }
+    },
+    "html": {"type": "string", "minLength": 1, "maxLength": 1000000, "description": "Current page. Max 1,000,000 UTF-8 bytes (MAX_HTML_BYTES)."},
+    "html_versions": {
+      "type": "array",
+      "maxItems": 20,
+      "description": "Optional history, oldest first, excluding the current html. A local server keeps up to 20 (MAX_VERSIONS_KEPT); the cloud keeps the most recent 5 and trims older ones on import. Omitted for templates.",
+      "items": {
+        "type": "object",
+        "required": ["version", "created_at", "html"],
+        "additionalProperties": false,
+        "properties": {
+          "version": {"type": "integer", "minimum": 1},
+          "created_at": {"type": "string", "format": "date-time"},
+          "note": {"type": ["string", "null"], "maxLength": 200},
+          "author": {"type": ["string", "null"], "description": "Cloud-only: account handle of the editor (maintainer attribution)."},
+          "html": {"type": "string", "maxLength": 1000000}
+        }
+      }
+    },
+    "html_version": {"type": "integer", "minimum": 1, "description": "Version number of `html`."},
+    "schemas": {
+      "type": "object",
+      "description": "collection name -> CollectionSchema (same as gaca-api schemas/artifact.py).",
+      "propertyNames": {"pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"},
+      "additionalProperties": {"$ref": "#/$defs/CollectionSchema"}
+    },
+    "state": {"type": "object", "description": "Omitted for templates. <= 1,000,000 bytes JSON (MAX_STATE_BYTES)."},
+    "state_version": {"type": "integer", "minimum": 0},
+    "collections": {
+      "type": "object",
+      "description": "Omitted for templates. collection name -> doc id -> {data, created_at, updated_at?} (data <= 200,000 bytes each, <= 5000 docs per collection). Whole bundle must fit the 12 MB cloud cap uncompressed.",
+      "propertyNames": {"pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"},
+      "additionalProperties": {
+        "type": "object",
+        "propertyNames": {"pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"},
+        "maxProperties": 5000,
+        "additionalProperties": {
+          "type": "object",
+          "required": ["data", "created_at"],
+          "additionalProperties": false,
+          "properties": {
+            "data": {"type": "object", "description": "The document body (<= 200,000 bytes)."},
+            "created_at": {"type": "string", "format": "date-time", "description": "Preserved so log-style collections keep their order and timestamps across a move. Ordering is created_at, then doc id."},
+            "updated_at": {"type": "string", "format": "date-time"}
+          }
+        }
+      }
+    },
+    "events": {
+      "type": "array",
+      "description": "Optional (full bundles only): unhandled page->agent events, so pending interactions survive a move. Handled events are never exported.",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "required": ["name", "created_at"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {"type": "string", "minLength": 1, "maxLength": 64},
+          "created_at": {"type": "string", "format": "date-time"},
+          "payload": {"type": "object"}
+        }
+      }
+    }
+  },
+  "allOf": [
+    {"if": {"properties": {"kind": {"const": "template"}}}, "then": {"not": {"anyOf": [{"required": ["state"]}, {"required": ["collections"]}, {"required": ["events"]}, {"required": ["html_versions"]}]}}}
+  ],
+  "$defs": {
+    "FieldSpec": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {"enum": ["string", "number", "integer", "boolean", "date", "datetime", "array", "object", "any"]},
+        "required": {"type": "boolean", "default": false},
+        "enum": {"type": "array", "maxItems": 100, "items": {"type": ["string", "number", "boolean"]}},
+        "min": {"type": "number"},
+        "max": {"type": "number"},
+        "max_length": {"type": "integer", "minimum": 1, "maximum": 100000}
+      }
+    },
+    "CollectionSchema": {
+      "type": "object",
+      "required": ["fields"],
+      "additionalProperties": false,
+      "properties": {
+        "fields": {"type": "object", "maxProperties": 100, "propertyNames": {"pattern": "^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$"}, "additionalProperties": {"$ref": "#/$defs/FieldSpec"}},
+        "strict": {"type": "boolean", "default": false}
+      }
+    }
+  }
+}
