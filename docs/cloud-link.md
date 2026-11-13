@@ -20,12 +20,30 @@ layer is a dumb pass-through: the cloud decides roles, caps and validation.
   validations, publish, and the account's own templates. The person's tap ("Trust and add") is the confirmation; there is no `user_confirmed` flag an agent
   could set for itself.
 - **Hermes (API tokens)** gets nothing cloud-related by default: `cloud` is an opt-in scope, not in `hermes connect`
-  or `gaca-api token create` defaults. Grant it deliberately: `gaca-api token create --name hermes-x --scopes
+  or `gaca-api token create` defaults, and the installer knows nothing about the cloud. See "Agent access" below
+  for the normal way to grant it. Or deliberately by hand: `gaca-api token create --name hermes-x --scopes
   alerts,briefings,artifacts,heartbeat,cloud` (or mint a token with `cloud` in the app's token screen). With it a
   token sees cloud gacabits in `GET /artifacts` (flagged `home: cloud`, `role`), reads/writes their data through
   `/artifacts/{id}/...` (the cloud still decides by role), reads the link status and browses templates. Without it the
   token sees only local artifacts and a cloud id is a plain 404. Even with it: no link/unlink, no invites, no template
   install, no leave.
+
+## Agent access (Part 8c): Hermes and the cloud
+
+Setup puts nothing cloud-related in Hermes. The skill is the same on every box and asks the server at run time
+(`artifacts.py cloud-status`, which calls `GET /api/cloud/link`).
+
+- **Any API token may call `GET /api/cloud/link`.** One without the `cloud` scope gets only `{linked, state,
+  agent_access, cloud_access: false}` (no handle, account or scope), so an agent can tell "not connected" from "connected but
+  I'm not allowed" without seeing anything else. `cloud_access` says whether the asking credential may use the cloud (the
+  app: always; a token: it has `cloud`). `agent_access` is the owner's setting.
+- **Off by default.** After linking in the app, the owner chooses "let my agent use the cloud": `PUT
+  /api/cloud/agent-access {enabled}` (paired device only; turning it on without a link is `409 not_linked`). It adds the
+  `cloud` scope **in place** to the owner's live `hermes-<profile>` tokens (the secret is unchanged, so no `.env` is rewritten)
+  and turning it off removes it. Tokens made another way (`gaca-api token create`) are never touched.
+- `hermes connect` / `hermes` setup mint new tokens with `cloud` only if the setting is on.
+- **Unlinking** clears the setting and removes `cloud` from the Hermes tokens; a new link starts off again.
+- Why opt in: shared pages hold other people's data and events, which the skill tells Hermes to treat as untrusted input.
 
 ## Routes
 
@@ -33,7 +51,8 @@ layer is a dumb pass-through: the cloud decides roles, caps and validation.
 |---|---|
 | `POST /api/cloud/link/start` `{scope?}` | calls the cloud's `/auth/device/start`; returns `{user_code, verification_uri, expires_in, interval}` |
 | `POST /api/cloud/link/poll` | one step of `/auth/device/token`: `{status: pending\|linked\|expired\|denied}`; call every `interval` s |
-| `GET /api/cloud/link` | `{linked, state, handle, account_id, linked_at, scope}`; never the token |
+| `GET /api/cloud/link` | `{linked, state, handle, account_id, linked_at, scope, agent_access, cloud_access}`; never the token; trimmed for a token without `cloud` |
+| `PUT /api/cloud/agent-access` `{enabled}` | paired device only; lets Hermes tokens use the cloud (above) |
 | `DELETE /api/cloud/link[?force=true]` | refused `409 cloud_artifacts_present` (counts) while any page lives in the cloud, unless `force=true`; then revokes on the cloud (`DELETE /me/server`, falling back to `/me/servers/{id}` on 404/405), then deletes locally; if the cloud is unreachable it still deletes and says `cloud_revoked: false` |
 | `POST /api/cloud/invites/preview`, `/redeem` (paired device only) | pass-through; redeem creates the pointer |
 | `GET /api/cloud/templates`, `/templates/{id}`, `POST /templates/{id}/get` | pass-through (target `server_bundle` only) |

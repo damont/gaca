@@ -10,7 +10,7 @@ from .client import connection
 
 _LINK_COLS = (
     "user_id, cloud_url, status, scope, server_name, account_id, handle, server_id, token_enc, linked_at, "
-    "pending_device_enc, pending_expires_at, pending_interval, pending_next_poll, created_at"
+    "pending_device_enc, pending_expires_at, pending_interval, pending_next_poll, created_at, agent_access"
 )
 _DT = ("linked_at", "pending_expires_at", "pending_next_poll", "created_at")
 
@@ -31,6 +31,7 @@ async def get_link(user_id: str) -> CloudLink | None:
 async def save_link(link: CloudLink) -> None:
     conn = connection()
     values = link.model_dump()
+    values["agent_access"] = int(link.agent_access)
     for key in _DT:
         values[key] = values[key].isoformat() if values[key] else None
     cols = _LINK_COLS.split(", ")

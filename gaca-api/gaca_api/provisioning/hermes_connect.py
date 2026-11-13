@@ -31,9 +31,20 @@ def gaca_base_url() -> str:
     return f"http://127.0.0.1:{settings.api_port}"
 
 
+async def _default_scopes(owner: UserDoc) -> list[str]:
+    """The default scopes, plus `cloud` only if the owner switched on agent access to the cloud in the
+    app (so a re-minted token does not silently lose, or gain, it)."""
+    from ..services import cloud_link
+
+    scopes = list(token_utils.DEFAULT_SCOPES)
+    if await cloud_link.agent_access_wanted(owner.id):
+        scopes.append("cloud")
+    return scopes
+
+
 async def mint_profile_env(owner: UserDoc, profile: str) -> tuple[ApiTokenDoc, dict[str, str]]:
     """A fresh scoped token for `profile` and the two env lines that hand it to that profile's skills."""
-    doc, secret = await token_service.create(owner, f"hermes-{profile}", list(token_utils.DEFAULT_SCOPES))
+    doc, secret = await token_service.create(owner, f"hermes-{profile}", await _default_scopes(owner))
     return doc, {"GACA_BASE_URL": gaca_base_url(), "GACA_API_TOKEN": secret}
 
 
@@ -63,7 +74,7 @@ async def connect_profiles(
     Safe to re-run: a profile that already holds a GACA API token is left alone unless `rotate`
     (old agent JWTs don't count, so they get replaced). With `rotate`, the profile's previous
     token is revoked after the new one is written."""
-    scopes = scopes or list(token_utils.DEFAULT_SCOPES)
+    scopes = scopes or await _default_scopes(owner)
     results = []
     for profile, env_path in profile_env_paths(home).items():
         name = f"hermes-{profile}"

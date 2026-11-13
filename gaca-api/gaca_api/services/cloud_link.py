@@ -32,9 +32,12 @@ import httpx
 
 from ..config import settings
 from ..db import cloud as db
+from ..db import users as users_db
 from ..models.base import utcnow
 from ..models.cloud import CloudLink
+from ..models.user import UserDoc
 from . import cloud_client, cloud_crypto
+from . import tokens as token_service
 from .exceptions import CloudError, CloudNotLinked, CloudReply, CloudUnavailable
 
 logger = logging.getLogger(__name__)
@@ -186,7 +189,26 @@ async def status(user_id: str) -> dict[str, Any]:
     return {
         "linked": link.status == "linked", "state": link.status, "handle": link.handle,
         "account_id": link.account_id, "linked_at": link.linked_at, "scope": link.scope,
+        "agent_access": link.agent_access,
     }
+
+
+async def agent_access_wanted(user_id: str) -> bool:
+    """Whether new Hermes tokens should carry the `cloud` scope (the owner switched it on)."""
+    link = await db.get_link(user_id)
+    return bool(link and link.status == "linked" and link.agent_access)
+
+
+async def set_agent_access(user: UserDoc, enabled: bool) -> dict[str, Any]:
+    """The owner's switch: may Hermes use the cloud? Turning it on needs a working link. Either way
+    the existing Hermes tokens are updated in place (see tokens.set_hermes_cloud_scope)."""
+    link = await db.get_link(user.id)
+    if enabled and not (link and link.status == "linked"):
+        raise CloudError("Link this server to your cloud account first.", status=409, code="not_linked")
+    if link and link.agent_access != enabled:
+        await db.save_link(link.model_copy(update={"agent_access": enabled}))
+    await token_service.set_hermes_cloud_scope(user, enabled)
+    return await status(user.id)
 
 
 # ── linking ──────────────────────────────────────────────────────────────────
@@ -382,6 +404,9 @@ async def unlink(user_id: str, force: bool = False) -> dict[str, Any]:
         message = "Unlinked here. Remove this server under Linked servers on the website to revoke it there."
     await db.delete_link(user_id)
     await db.delete_pointers(user_id)
+    owner = await users_db.find(user_id)
+    if owner is not None:
+        await token_service.set_hermes_cloud_scope(owner, False)  # unlinked means cloud-free again
     from . import cloud_forward, cloud_list
 
     cloud_list.forget(user_id)

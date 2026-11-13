@@ -75,6 +75,22 @@ async def revoke_all_with_name(user: UserDoc, name: str) -> int:
     return await tokens_db.revoke_active_by_name(user.id, name, utcnow(), keep_id=None)
 
 
+async def set_hermes_cloud_scope(user: UserDoc, enabled: bool) -> int:
+    """Add or remove the opt-in `cloud` scope on this owner's live Hermes tokens (`hermes-<profile>`),
+    in place: the secret does not change, so nothing needs rewriting in a profile's .env. Tokens made
+    some other way (`gaca-api token create`) are never touched. Returns how many changed."""
+    changed = 0
+    for t in await tokens_db.list_for_user(user.id):
+        if is_device(t) or t.revoked_at is not None or not t.name.startswith("hermes-"):
+            continue
+        scopes = set(t.scopes)
+        wanted = scopes | {"cloud"} if enabled else scopes - {"cloud"}
+        if wanted != scopes:
+            await tokens_db.set_scopes(t.id, sorted(wanted))
+            changed += 1
+    return changed
+
+
 async def authenticate(plaintext: str) -> tuple[UserDoc, ApiTokenDoc] | None:
     """The owner and token record for a presented API token, or None if it is unknown,
     revoked, expired, or its user is gone/disabled."""

@@ -272,6 +272,8 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("sessions", "user_id", "TEXT"),
     # The owner's own drag-and-drop order of their artifacts; NULL = never placed (sorts first).
     ("artifacts", "position", "INTEGER"),
+    # Whether the owner let their agents (Hermes tokens) use the cloud; off until they say so in the app.
+    ("cloud_link", "agent_access", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 # Indexes that depend on a column from _ADDED_COLUMNS, so they can only be
