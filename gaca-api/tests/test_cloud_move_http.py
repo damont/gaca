@@ -870,3 +870,34 @@ def test_an_api_token_can_call_none_of_them_even_with_the_cloud_scope(linked, cl
 def test_no_credential_is_401_not_a_cloud_call(linked, cloud, method, path, body):
     r = linked.request(method, path, json=body)
     assert r.status_code == 401 and cloud.requests == []
+
+
+@pytest.mark.parametrize("host", [
+    "s3" + "-a" * 2500 + "!.amazonaws.com", "s3" + "-a" * 28 + "!.amazonaws.com", "s3" + ".a-" * 1000 + ".amazonaws.com",
+    "a" * 5000 + ".s3.amazonaws.com", "s3." + "a." * 2000 + "amazonaws.com", "-" * 5000 + ".amazonaws.com",
+    ("a-" * 30 + "a.") * 100 + "s3.amazonaws.com",
+])
+def test_the_host_check_cannot_be_made_to_burn_cpu(host):
+    """A hostile address must be refused in microseconds: the check runs on the event loop."""
+    import time
+
+    url = f"https://{host}/k"
+    started = time.perf_counter()
+    for _ in range(5):
+        with pytest.raises(Exception):
+            cloud_transfer.check_url(url)
+        assert not cloud_transfer.s3_host(host)
+    assert (time.perf_counter() - started) / 10 < 0.005
+
+
+def test_no_regex_in_the_cloud_modules_has_a_nested_quantifier():
+    """The class of bug behind the host check: `(a+)+`, `(?:x[...]*)*` and friends."""
+    import pathlib
+    import re
+
+    bad = re.compile(r"\((?:\?:)?[^()]*[+*][^()]*\)[+*{]")
+    root = pathlib.Path(cloud_transfer.__file__).parent
+    for path in sorted(root.glob("cloud_*.py")):
+        for n, line in enumerate(path.read_text().splitlines(), 1):
+            if "re.compile" in line or "re.fullmatch" in line or "re.match" in line:
+                assert not bad.search(line), f"{path.name}:{n}: {line.strip()}"

@@ -36,9 +36,39 @@ logger = logging.getLogger(__name__)
 # Tests point this at a fake S3 (an httpx.MockTransport); production leaves it None.
 transport_override: httpx.AsyncBaseTransport | None = None
 
-# `bucket.s3.amazonaws.com`, `bucket.s3.eu-west-1.amazonaws.com`, `bucket.s3-eu-west-1.amazonaws.com`,
-# `bucket.s3.dualstack.eu-west-1.amazonaws.com`, and path style `s3.eu-west-1.amazonaws.com`.
-_HOST = re.compile(r"^(?:[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?\.)?s3(?:[.-][a-z0-9]+(?:-[a-z0-9]+)*)*\.amazonaws\.com$")
+# Host rule, written WITHOUT a regex over the whole host: a pattern with nested quantifiers backtracks
+# exponentially on a crafted host ("s3" + "-a" * 30 + "!.amazonaws.com" took minutes) and this check runs
+# on the event loop. Instead: length cap, split on dots, and each label is tested on its own with a
+# single character class (linear), then the labels are matched structurally.
+_LABEL = re.compile(r"[a-z0-9-]{1,63}")
+_MAX_HOST = 255
+
+
+def _label_ok(label: str) -> bool:
+    return bool(_LABEL.fullmatch(label)) and label[0] != "-" and label[-1] != "-"
+
+
+def s3_host(host: str) -> bool:
+    """`<bucket>.s3.amazonaws.com`, `<bucket>.s3.<region>.amazonaws.com`, `<bucket>.s3-<region>.amazonaws.com`,
+    `<bucket>.s3.dualstack.<region>.amazonaws.com`, and the path-style hosts without `<bucket>.`."""
+    if not host or len(host) > _MAX_HOST or host != host.lower():
+        return False
+    labels = host.split(".")
+    if labels[-2:] != ["amazonaws", "com"] or len(labels) < 3 or not all(_label_ok(x) for x in labels):
+        return False
+    rest = labels[:-2]
+    for i, label in enumerate(rest):  # the s3 label: the bucket (if any) is before it, the region after it
+        if label != "s3" and not label.startswith("s3-"):
+            continue
+        tail = rest[i + 1:]
+        if label == "s3":
+            if len(tail) <= 1 or (len(tail) == 2 and tail[0] == "dualstack"):
+                return True
+        elif tail == []:
+            return True
+    return False
+
+
 _SAFE_URL = re.compile(r"^[\x21-\x7e]+$")  # printable ASCII, no space
 _PUT_HEADERS = re.compile(r"^(content-type|content-encoding|x-amz-[a-z0-9-]+)$")
 
@@ -69,7 +99,7 @@ def check_url(url: object) -> str:
         raise _rejected("it carries a user name")
     if port not in (None, 443):
         raise _rejected("unexpected port")
-    if not _HOST.match(host) or ".." in host:
+    if not s3_host(host):
         raise _rejected("not an S3 address")
     if parts.fragment:
         raise _rejected("unexpected fragment")

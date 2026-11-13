@@ -35,3 +35,7 @@ result-*
 .DS_Store
 .idea/
 .vscode/
+
+# Fernet key for the stored cloud token (written next to the database)
+cloud_link.key
+*.key
