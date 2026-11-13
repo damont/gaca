@@ -155,15 +155,21 @@ def _reject_constant(name: str):
 def unpack(data: bytes, cap: int | None = None) -> dict[str, Any]:
     """gunzip with a ceiling that holds WHILE inflating, then strict JSON. Raises BundleInvalid."""
     cap = settings.cloud_max_bundle_bytes if cap is None else cap
-    inflater = zlib.decompressobj(wbits=16 + zlib.MAX_WBITS)
-    try:
-        raw = inflater.decompress(data, cap + 1)
-    except zlib.error:
-        raise BundleInvalid("The cloud's download is not a gzip file.") from None
-    if len(raw) > cap or inflater.unconsumed_tail:
-        raise BundleInvalid("The cloud's download is larger than this server accepts.", {"max_bytes": cap})
-    if not inflater.eof:
-        raise BundleInvalid("The cloud's download is cut short.")
+    if data[:2] != b"\x1f\x8b" and data.lstrip()[:1] == b"{":
+        # Plain JSON: a transport that already undid `Content-Encoding: gzip`. Same ceiling, no inflating.
+        raw = data
+        if len(raw) > cap:
+            raise BundleInvalid("The cloud's download is larger than this server accepts.", {"max_bytes": cap})
+    else:
+        inflater = zlib.decompressobj(wbits=16 + zlib.MAX_WBITS)
+        try:
+            raw = inflater.decompress(data, cap + 1)
+        except zlib.error:
+            raise BundleInvalid("The cloud's download is not a gzip file.") from None
+        if len(raw) > cap or inflater.unconsumed_tail:
+            raise BundleInvalid("The cloud's download is larger than this server accepts.", {"max_bytes": cap})
+        if not inflater.eof:
+            raise BundleInvalid("The cloud's download is cut short.")
     try:
         bundle = json.loads(raw, parse_constant=_reject_constant)
     except (ValueError, RecursionError, UnicodeDecodeError):

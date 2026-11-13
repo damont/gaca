@@ -135,6 +135,12 @@ async def move_to_cloud(user_id: str, artifact_id: str, request_id: str | None =
             err = e
         except cloud_bundle.BundleInvalid as e:
             err = CloudError(str(e), status=422, code="bundle_invalid", detail=e.detail)
+        except NotFound:
+            raise
+        except Exception:  # noqa: BLE001 - a bug or a disk problem: still a clear answer, and nothing was changed
+            logger.exception("move to the cloud failed unexpectedly")
+            err = CloudError("Moving the page failed unexpectedly. It was not changed here; try again.",
+                             status=500, code="move_failed")
         # Only a refusal gets here. Say which phase, and remember it so the app can show a retry.
         if not isinstance(err.detail, dict):
             err.detail = {}

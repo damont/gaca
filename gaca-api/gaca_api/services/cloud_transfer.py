@@ -140,11 +140,17 @@ async def get(url: str) -> bytes:
                     logger.warning("bundle download refused (HTTP %s)", resp.status_code)
                     raise _failed("download", resp.status_code)
                 body = bytearray()
-                async for chunk in resp.aiter_raw():
-                    body += chunk
+                try:
+                    async for chunk in resp.aiter_raw():  # wire bytes: S3 labels the gzip file Content-Encoding: gzip
+                        body += chunk
+                        if len(body) > cap:
+                            raise CloudError("The cloud's download is larger than this server accepts.",
+                                             status=502, code="bundle_invalid", detail={"max_bytes": cap})
+                except httpx.StreamConsumed:  # a test transport hands over a response that is already in memory
+                    body = bytearray(resp.content[: cap + 1])
                     if len(body) > cap:
                         raise CloudError("The cloud's download is larger than this server accepts.",
-                                         status=502, code="bundle_invalid", detail={"max_bytes": cap})
+                                         status=502, code="bundle_invalid", detail={"max_bytes": cap}) from None
     except httpx.HTTPError as e:
         logger.warning("bundle download failed (%s)", type(e).__name__)
         raise _failed("download") from None

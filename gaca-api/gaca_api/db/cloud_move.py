@@ -92,7 +92,8 @@ def fingerprint(snapshot: dict[str, Any]) -> str:
     doc = dict(art["doc"])
     doc.pop("last_opened_at", None)
     art["doc"] = doc
-    blob = json.dumps({"a": art, "v": snapshot["versions"], "d": snapshot["docs"], "e": snapshot["events"]},
+    events = [{k: v for k, v in e.items() if k != "seq"} for e in snapshot["events"]]  # seq is assigned on insert
+    blob = json.dumps({"a": art, "v": snapshot["versions"], "d": snapshot["docs"], "e": events},
                       sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(blob.encode()).hexdigest()
 
