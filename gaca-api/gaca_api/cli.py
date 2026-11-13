@@ -97,7 +97,7 @@ def _parser() -> argparse.ArgumentParser:
     token = sub.add_parser("token", help="manage API tokens (what Hermes skills use)").add_subparsers(dest="token_command", required=True)
     create = token.add_parser("create", help="mint a token; the secret is printed once")
     create.add_argument("--name", required=True)
-    create.add_argument("--scopes", default=",".join(token_utils.SCOPES), help="comma-separated: " + ", ".join(token_utils.SCOPES))
+    create.add_argument("--scopes", default=",".join(token_utils.DEFAULT_SCOPES), help="comma-separated: " + ", ".join(token_utils.SCOPES) + " (default: all but the opt-in " + ", ".join(token_utils.OPT_IN_SCOPES) + ")")
     create.add_argument("--expires-days", type=int, default=None, help="default: never expires")
     token.add_parser("list", help="list tokens (never shows secrets)")
     revoke = token.add_parser("revoke", help="revoke a token by id")

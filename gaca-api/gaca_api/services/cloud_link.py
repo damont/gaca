@@ -21,10 +21,12 @@ time with no timing.
 from __future__ import annotations
 
 import json
+import asyncio
 import logging
 import socket
 from datetime import timedelta
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -42,6 +44,22 @@ SCOPES = ("read", "manage")
 # that could name the cloud).
 PASS_RESPONSE_HEADERS = ("content-type", "etag", "last-modified", "retry-after", "x-request-id")
 _SLOW_DOWN_STEP = 5
+_poll_locks: dict[str, asyncio.Lock] = {}
+
+
+def _verification_ok(uri: Any, base_url: str) -> bool:
+    """The page the app is told to open must be on the cloud's own site: same scheme as the pinned
+    address, and the pinned cloud host or its parent domain (api.example.com -> example.com)."""
+    if not isinstance(uri, str):
+        return False
+    try:
+        parts, cloud = urlsplit(uri), urlsplit(base_url)
+        host, cloud_host = (parts.hostname or "").lower(), (cloud.hostname or "").lower()
+    except ValueError:
+        return False
+    if parts.scheme != cloud.scheme or parts.username or parts.password or not host:
+        return False
+    return host == cloud_host or ("." in host and cloud_host.endswith("." + host))
 
 
 # ── helpers shared by every cloud call ───────────────────────────────────────
@@ -123,7 +141,8 @@ async def call(
     content: bytes | None = None,
     headers: dict[str, str] | None = None,
     request_id: str | None = None,
-    timeout: float | None = None,
+    timeout: float | httpx.Timeout | None = None,
+    long_poll: bool = False,
 ) -> httpx.Response:
     """One authenticated call to the cloud as this user's linked server. Returns the response
     on success; raises CloudReply / CloudError / CloudUnavailable otherwise (see `check`)."""
@@ -138,7 +157,7 @@ async def call(
     client = cloud_client.client_for(link.cloud_url)
     resp = await client.request(
         method, path, token=token, params=params, content=content, headers=headers,
-        request_id=request_id, timeout=timeout,
+        request_id=request_id, timeout=timeout, long_poll=long_poll,
     )
     return await check(user_id, resp)
 
@@ -175,6 +194,9 @@ def _server_name() -> str:
 async def start(user_id: str, scope: str) -> dict[str, Any]:
     if scope not in SCOPES:
         raise CloudError("scope must be 'read' or 'manage'.", status=422, code="request_invalid")
+    if not settings.cloud_url.strip():
+        raise CloudError("The cloud is not set up on this server (GACA_CLOUD_URL is empty).",
+                         status=409, code="cloud_not_configured")
     existing = await db.get_link(user_id)
     if existing and existing.status == "linked":
         raise CloudError("This server is already linked. Unlink it first to link another account.",
@@ -197,6 +219,8 @@ async def start(user_id: str, scope: str) -> dict[str, Any]:
         verification_uri, expires_in, interval = data["verification_uri"], int(data["expires_in"]), int(data["interval"])
     except (TypeError, KeyError, ValueError):
         raise CloudUnavailable("The cloud answered in a way this server did not understand.") from None
+    if not _verification_ok(verification_uri, client.base_url):
+        raise CloudUnavailable("The cloud answered in a way this server did not understand.")
     now = utcnow()
     await db.save_link(CloudLink(
         user_id=user_id, cloud_url=cloud_client.validate_base_url(base_url), status="pending", scope=scope,
@@ -208,6 +232,23 @@ async def start(user_id: str, scope: str) -> dict[str, Any]:
 
 
 async def poll(user_id: str) -> dict[str, Any]:
+    """One step of the device-code exchange, one at a time per user (two polls at once must not
+    both spend the device code). See `_poll`."""
+    async with _poll_locks.setdefault(user_id, asyncio.Lock()):
+        return await _poll(user_id)
+
+
+async def _end_attempt(user_id: str, result: dict[str, Any]) -> dict[str, Any]:
+    """The attempt is over (expired / denied): forget it, unless the link has been completed in
+    the meantime, which must never be wiped."""
+    link = await db.get_link(user_id)
+    if link is not None and link.status != "pending":
+        return {"status": "linked", **{k: v for k, v in (await status(user_id)).items() if k != "linked"}}
+    await db.delete_link(user_id)
+    return result
+
+
+async def _poll(user_id: str) -> dict[str, Any]:
     """One step of the device-code exchange. Answers `{status, ...}`: pending | linked | expired |
     denied. Called too soon it answers pending without bothering the cloud."""
     link = await db.get_link(user_id)
@@ -218,8 +259,7 @@ async def poll(user_id: str) -> dict[str, Any]:
     now = utcnow()
     interval = link.pending_interval or 5
     if link.pending_expires_at and now >= link.pending_expires_at:
-        await db.delete_link(user_id)
-        return {"status": "expired"}
+        return await _end_attempt(user_id, {"status": "expired"})
     if link.pending_next_poll and now < link.pending_next_poll:
         return {"status": "pending", "interval": interval,
                 "retry_in": max(1, int((link.pending_next_poll - now).total_seconds() + 0.999))}
@@ -246,11 +286,9 @@ async def poll(user_id: str) -> dict[str, Any]:
             "pending_interval": interval, "pending_next_poll": now + timedelta(seconds=interval)}))
         return {"status": "pending", "interval": interval}
     if resp.status_code == 400 and code == "expired_token":
-        await db.delete_link(user_id)
-        return {"status": "expired"}
+        return await _end_attempt(user_id, {"status": "expired"})
     if resp.status_code == 400 and code == "access_denied":
-        await db.delete_link(user_id)
-        return {"status": "denied"}
+        return await _end_attempt(user_id, {"status": "denied"})
     if resp.status_code == 429:
         return {"status": "pending", "interval": interval + _SLOW_DOWN_STEP}
     raise CloudUnavailable()

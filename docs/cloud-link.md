@@ -10,10 +10,21 @@ layer is a dumb pass-through: the cloud decides roles, caps and validation.
   shared by, cached metadata); the data stays in the cloud.
 - The token is stored encrypted (`cloud_link.token_enc`, Fernet) and never leaves the server: not in any
   response, error or log line.
-- The cloud address comes only from `GACA_CLOUD_URL` (copied into the link record when linking starts). It must
-  be https unless `GACA_CLOUD_ALLOW_INSECURE_DEV=1`. No request field can change it. Redirects are not followed.
-- Linking, polling and unlinking need a paired device (an API token cannot). Hermes needs the `cloud` scope for
-  the read/invite/template routes; redeeming an invite from an API token needs `user_confirmed: true`.
+- **Off by default.** `GACA_CLOUD_URL` is empty until you set it (e.g. `https://goodandcheapagent.com/api/v1`). While
+  empty, `POST /api/cloud/link/start` answers `409 cloud_not_configured`, nothing is ever called, and the artifact
+  list is the local list. The address is copied into the link record when linking starts. It must be https unless
+  `GACA_CLOUD_ALLOW_INSECURE_DEV=1`. No request field can change it. Redirects are not followed. The page the app is
+  told to open (`verification_uri`) must be on the cloud's own host (or its parent domain), else 502.
+- **Paired device only** (the app): link, poll, unlink, preview/redeem an invite, get/install a template, leave a
+  shared gacabit. The person's tap ("Trust and add") is the confirmation; there is no `user_confirmed` flag an agent
+  could set for itself.
+- **Hermes (API tokens)** gets nothing cloud-related by default: `cloud` is an opt-in scope, not in `hermes connect`
+  or `gaca-api token create` defaults. Grant it deliberately: `gaca-api token create --name hermes-x --scopes
+  alerts,briefings,artifacts,heartbeat,cloud` (or mint a token with `cloud` in the app's token screen). With it a
+  token sees cloud gacabits in `GET /artifacts` (flagged `home: cloud`, `role`), reads/writes their data through
+  `/artifacts/{id}/...` (the cloud still decides by role), reads the link status and browses templates. Without it the
+  token sees only local artifacts and a cloud id is a plain 404. Even with it: no link/unlink, no invites, no template
+  install, no leave.
 
 ## Routes
 
@@ -23,13 +34,20 @@ layer is a dumb pass-through: the cloud decides roles, caps and validation.
 | `POST /api/cloud/link/poll` | one step of `/auth/device/token`: `{status: pending\|linked\|expired\|denied}`; call every `interval` s |
 | `GET /api/cloud/link` | `{linked, state, handle, account_id, linked_at, scope}`; never the token |
 | `DELETE /api/cloud/link` | revokes on the cloud (`/me/servers/{id}`), then deletes locally; if the cloud is unreachable it still deletes and says `cloud_revoked: false` |
-| `POST /api/cloud/invites/preview`, `/redeem` | pass-through; redeem creates the pointer |
+| `POST /api/cloud/invites/preview`, `/redeem` (paired device only) | pass-through; redeem creates the pointer |
 | `GET /api/cloud/templates`, `/templates/{id}`, `POST /templates/{id}/get` | pass-through (target `server_bundle` only) |
 | `POST /api/cloud/templates/{id}/install` | get the bundle and create the local artifact from it |
 
 `/api/artifacts/{id}/...` for a pointer id is forwarded to `/gacabits/{id}/...`. `GET /api/artifacts` lists local
 artifacts and cloud pointers (`home`, `role`, `shared_by`, `member_count`, `stale`). `DELETE` on a pointer means
 leave (the owner gets the cloud's `409 owner_cannot_leave`).
+
+## The list when the cloud is down
+
+The cloud listing is cached 15 s. If it cannot be reached, the list answers from the last known pointers with
+`stale: true` and does not try again for 45 s (so an outage does not slow every list); only one sync runs at a time;
+its connect timeout is 3 s. A partial listing (more than 10 pages) never removes pointers. Long-polls (`wait`) use
+their own connection pool so open pages cannot starve writes.
 
 ## Errors
 

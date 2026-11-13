@@ -23,7 +23,7 @@ from ..schemas.alert import (
     TakeToChatOut,
 )
 from ..services import alerts as alert_service
-from ..utils.auth import get_current_user
+from ..utils.auth import Caller, get_caller, get_current_user
 
 router = APIRouter(prefix="/alerts", tags=["alerts"])
 
@@ -38,14 +38,14 @@ async def _out(alert: AlertDoc) -> AlertOut:
 async def create_alert(
     body: AlertCreate,
     response: Response,
-    user: UserDoc = Depends(get_current_user),
+    caller: Caller = Depends(get_caller),
 ):
     """Post an alert. This is what an agent calls.
 
     201 when a new alert was created, 200 when it deduped onto an existing one —
     so a caller can tell whether it actually told the user something new.
     """
-    alert, created = await alert_service.create(user.id, body)
+    alert, created = await alert_service.create(caller.user.id, body, caller.cloud)
     response.status_code = 201 if created else 200
     return await _out(alert)
 

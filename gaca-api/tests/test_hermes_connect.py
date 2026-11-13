@@ -119,7 +119,7 @@ def test_connect_gives_every_profile_its_own_scoped_token(server, hermes_home, c
         return [(u.email, sorted(d.scopes), d.name) for u, d in found]
     checked = run(check)
     assert {name for _, _, name in checked} == {"hermes-default", "hermes-toolshed", "hermes-trading"}
-    assert all(email == "o@example.com" and scopes == sorted(token_utils.SCOPES) for email, scopes, _ in checked)
+    assert all(email == "o@example.com" and scopes == sorted(token_utils.DEFAULT_SCOPES) for email, scopes, _ in checked)
 
 
 def test_connect_again_rotates_instead_of_piling_up_valid_tokens(server, hermes_home):

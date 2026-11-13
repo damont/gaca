@@ -31,20 +31,23 @@ SCOPE_RULES: dict[str, list[tuple[str, str]]] = {
     ],
     "briefings": [("*", r"/api/briefings(/.*)?")],
     "artifacts": [("*", r"/api/artifacts(/.*)?")],
-    # The cloud link, for Hermes: see the link status, preview/redeem an invite (the latter needs
-    # `user_confirmed`, see services/cloud_proxy.py), browse and install templates. Linking and
-    # unlinking are never here: they need a paired device.
+    # OPT-IN, never in DEFAULT_SCOPES. With it a token (Hermes) can see the link status, browse the
+    # template gallery, and sees/uses cloud-homed gacabits through /api/artifacts (their pointers are
+    # invisible to a token without it). Even with it a token can NEVER link, unlink, redeem an invite
+    # or install a template: those are the paired app's alone (the "Trust and add" tap is the consent).
     "cloud": [
         ("GET", r"/api/cloud/link"),
-        ("POST", r"/api/cloud/invites/(preview|redeem)"),
         ("GET", r"/api/cloud/templates"),
         ("GET", r"/api/cloud/templates/[^/]+"),
-        ("POST", r"/api/cloud/templates/[^/]+/(get|install)"),
     ],
     # Read-only on purpose: the heartbeat may learn its limits but never change them.
     "heartbeat": [("GET", r"/api/heartbeat/settings")],
 }
 SCOPES = tuple(SCOPE_RULES)
+# What a token gets when nobody says otherwise (`gaca-api token create`, `hermes connect`): every
+# scope except the opt-in ones. Grant `cloud` deliberately: `gaca-api token create --name X --scopes ...,cloud`.
+OPT_IN_SCOPES = ("cloud",)
+DEFAULT_SCOPES = tuple(s for s in SCOPES if s not in OPT_IN_SCOPES)
 # Allowed with any scope: lets a client check "is my token good, and whose is it".
 ALWAYS = [("GET", r"/api/auth/me")]
 

@@ -111,9 +111,11 @@ class Settings(BaseSettings):
     apns_topic: str = "dev.monts.gaca"
 
     # --- GACA Cloud link (services/cloud_*.py) ---------------------------
-    # The cloud's API address. The ONLY place it comes from: it is copied into the link record
-    # when linking starts, and never taken from a request. Must be https unless the dev flag is on.
-    cloud_url: str = "https://goodandcheapagent.com/api/v1"
+    # The cloud's API address, e.g. https://goodandcheapagent.com/api/v1. EMPTY (the default) = the
+    # cloud feature is off: linking answers 409 cloud_not_configured and nothing is ever called. The ONLY
+    # place the address comes from: it is copied into the link record when linking starts, and never
+    # taken from a request. Must be https unless the dev flag is on.
+    cloud_url: str = ""
     cloud_allow_insecure_dev: bool = False
     # What this server calls itself on the cloud's "Linked servers" list. Empty = the hostname.
     cloud_server_name: str = ""
@@ -127,6 +129,12 @@ class Settings(BaseSettings):
     cloud_max_wait_seconds: int = 25
     # How long a fetched list of cloud gacabits is trusted before asking again.
     cloud_list_ttl_seconds: float = 15.0
+    # When the cloud cannot be reached, lists stop asking for this long (and serve the last known
+    # rows, marked stale); the list's own calls never wait longer than this to connect.
+    cloud_list_backoff_seconds: float = 45.0
+    cloud_list_connect_timeout_seconds: float = 3.0
+    # The most the cached page HTML (for opening a page while the cloud is down) may take in memory.
+    cloud_page_cache_bytes: int = 64 * 1024 * 1024
 
 
 settings = Settings()

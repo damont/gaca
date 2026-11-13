@@ -12,10 +12,13 @@ what the local list always did.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
 from typing import Any
+
+import httpx
 
 from ..config import settings
 from ..db import artifacts as artifacts_db
@@ -34,11 +37,14 @@ _ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _PAGE_LIMIT = 500
 _MAX_PAGES = 10
 _synced: dict[str, float] = {}  # user_id -> time.monotonic() of the last good sync
+_failed: dict[str, float] = {}  # user_id -> time.monotonic() of the last failed sync
+_locks: dict[str, asyncio.Lock] = {}  # one sync at a time per user
 
 
 def forget(user_id: str) -> None:
-    """Drop the 'recently synced' memory so the next list asks the cloud again."""
+    """Drop the 'recently synced / failed' memory so the next list asks the cloud again."""
     _synced.pop(user_id, None)
+    _failed.pop(user_id, None)
 
 
 # ── gacabit JSON <-> pointer ─────────────────────────────────────────────────
@@ -95,56 +101,79 @@ async def remember(user_id: str, g: Any) -> CloudPointer | None:
 
 
 # ── sync ─────────────────────────────────────────────────────────────────────
-async def _fetch_all(user_id: str) -> list[dict]:
+async def _fetch_all(user_id: str) -> tuple[list[dict], bool]:
+    """(gacabits, complete). `complete` is False when the cloud had more pages than we are willing to read."""
     items: list[dict] = []
     cursor: str | None = None
+    timeout = httpx.Timeout(settings.cloud_timeout_seconds, connect=settings.cloud_list_connect_timeout_seconds)
     for _ in range(_MAX_PAGES):
         params: dict = {"scope": "all", "include_archived": "true", "limit": _PAGE_LIMIT}
         if cursor:
             params["cursor"] = cursor
-        resp = await cloud_link.call(user_id, "GET", "/gacabits", params=params)
+        resp = await cloud_link.call(user_id, "GET", "/gacabits", params=params, timeout=timeout)
         data = cloud_link._json(resp)
         if not isinstance(data, dict) or not isinstance(data.get("gacabits"), list):
             raise CloudError("The cloud answered in a way this server did not understand.", code="cloud_unavailable")
         items += [g for g in data["gacabits"] if isinstance(g, dict)]
         cursor = data.get("next_cursor")
         if not cursor:
-            return items
-    return items  # more than _MAX_PAGES * _PAGE_LIMIT: use what we have, never prune on a partial list
+            return items, True
+    return items, False
+
+
+def _fresh(user_id: str) -> bool:
+    return time.monotonic() - _synced.get(user_id, -1e9) < settings.cloud_list_ttl_seconds
+
+
+def _backing_off(user_id: str) -> bool:
+    return time.monotonic() - _failed.get(user_id, -1e9) < settings.cloud_list_backoff_seconds
 
 
 async def pointers_for_list(user_id: str) -> tuple[list[CloudPointer], bool]:
-    """(pointers, stale). Asks the cloud at most every `cloud_list_ttl_seconds`; if it cannot be
-    asked, answers from what this server last saw, marked stale."""
+    """(pointers, stale). Asks the cloud at most every `cloud_list_ttl_seconds`, one request at a
+    time however many lists are asked for at once; if it cannot be asked, answers from what this
+    server last saw, marked stale, and does not try again for `cloud_list_backoff_seconds` (so a
+    cloud outage does not make every list wait out a timeout)."""
     link = await db.get_link(user_id)
     if link is None or link.status == "pending":
         return [], False
     if link.status == "invalid":
         return await db.list_pointers(user_id), True
-    now = time.monotonic()
-    if now - _synced.get(user_id, -1e9) < settings.cloud_list_ttl_seconds:
+    if _fresh(user_id):
         return await db.list_pointers(user_id), False
-    try:
-        items = await _fetch_all(user_id)
-    except (CloudError, CloudReply) as e:
-        logger.info("cloud list unavailable, serving the last known list (%s)", getattr(e, "code", "reply"))
+    if _backing_off(user_id):
         return await db.list_pointers(user_id), True
-    existing = {p.id: p for p in await db.list_pointers(user_id)}
-    seen: set[str] = set()
-    for g in items:
-        p = pointer_from(user_id, link.account_id or "", g)
-        if p is None or await artifacts_db.find(user_id, p.id) is not None:
-            continue
-        old = existing.get(p.id)
-        if old:
-            p.position = old.position
-        await db.upsert_pointer(p, commit=False)
-        seen.add(p.id)
-    for gone in set(existing) - seen:
-        await db.delete_pointer(user_id, gone, commit=False)
-    await db.commit()
-    _synced[user_id] = now
-    return await db.list_pointers(user_id), False
+    async with _locks.setdefault(user_id, asyncio.Lock()):
+        # Whoever held the lock before us may have done the work (or learnt the cloud is down).
+        if _fresh(user_id):
+            return await db.list_pointers(user_id), False
+        if _backing_off(user_id):
+            return await db.list_pointers(user_id), True
+        try:
+            items, complete = await _fetch_all(user_id)
+        except (CloudError, CloudReply) as e:
+            _failed[user_id] = time.monotonic()
+            logger.info("cloud list unavailable, serving the last known list (%s)", getattr(e, "code", "reply"))
+            return await db.list_pointers(user_id), True
+        started = time.monotonic()
+        existing = {p.id: p for p in await db.list_pointers(user_id)}
+        seen: set[str] = set()
+        for g in items:
+            p = pointer_from(user_id, link.account_id or "", g)
+            if p is None or await artifacts_db.find(user_id, p.id) is not None:
+                continue
+            old = existing.get(p.id)
+            if old:
+                p.position = old.position
+            await db.upsert_pointer(p, commit=False)
+            seen.add(p.id)
+        if complete:  # never prune on a partial list: a gacabit on a page we did not read is not gone
+            for gone in set(existing) - seen:
+                await db.delete_pointer(user_id, gone, commit=False)
+        await db.commit()
+        _synced[user_id] = started
+        _failed.pop(user_id, None)
+        return await db.list_pointers(user_id), False
 
 
 # ── the merged list ──────────────────────────────────────────────────────────
@@ -172,11 +201,16 @@ def _order(items: list[cs.ArtifactListItem]) -> list[cs.ArtifactListItem]:
 
 async def merged(
     user_id: str, include_archived: bool = False, session_id: str | None = None, alert_id: str | None = None,
-    q: str | None = None, limit: int = 100,
+    q: str | None = None, limit: int = 100, include_cloud: bool = True,
 ) -> cs.ArtifactListMerged:
-    local = await svc.list_for_user(user_id, include_archived, session_id, alert_id, q, 1000)
+    """`include_cloud` False (an API token without the `cloud` scope): local artifacts only, exactly
+    as before the cloud existed."""
+    pointers, stale = ([], False)
+    if include_cloud and not (session_id or alert_id):
+        pointers, stale = await pointers_for_list(user_id)
+    # With nothing to merge the local query can stop at `limit`; with pointers it must see them all.
+    local = await svc.list_for_user(user_id, include_archived, session_id, alert_id, q, 1000 if pointers else limit)
     items = [cs.ArtifactListItem.model_validate(a.model_dump()) for a in local.artifacts]
-    pointers, stale = ([], False) if (session_id or alert_id) else await pointers_for_list(user_id)
     if pointers:
         needle = q.lower() if q else None
         for p in pointers:
@@ -189,12 +223,12 @@ async def merged(
     return cs.ArtifactListMerged(artifacts=items[:limit], stale=stale)
 
 
-async def reorder(user_id: str, ids: list[str]) -> cs.ArtifactListMerged:
+async def reorder(user_id: str, ids: list[str], include_cloud: bool = True) -> cs.ArtifactListMerged:
     """PUT /order over both kinds. Without any pointer this is exactly the local reorder."""
-    pointers = await db.list_pointers(user_id)
+    pointers = await db.list_pointers(user_id) if include_cloud else []
     if not pointers:
         await svc.reorder(user_id, ids)
-        return await merged(user_id)
+        return await merged(user_id, include_cloud=include_cloud)
     local = await svc.list_for_user(user_id, True, None, None, None, 100000)
     everything = _order(
         [cs.ArtifactListItem.model_validate(a.model_dump()) for a in local.artifacts] + [_item(p) for p in pointers])
@@ -207,4 +241,4 @@ async def reorder(user_id: str, ids: list[str]) -> cs.ArtifactListMerged:
     pointer_ids = {p.id for p in pointers}
     await db.set_positions(user_id, [(i, n) for n, i in enumerate(order) if i in pointer_ids])
     await artifacts_db.set_positions_at(user_id, [(i, n) for n, i in enumerate(order) if i not in pointer_ids])
-    return await merged(user_id)
+    return await merged(user_id, include_cloud=include_cloud)

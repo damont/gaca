@@ -116,28 +116,44 @@ def _match(method: str, tail: str):
 # ── page cache (html by version, so a page still opens when the cloud is down) ──
 _PAGES: OrderedDict[tuple[str, str, int], str] = OrderedDict()
 _LATEST: dict[tuple[str, str], int] = {}
-_PAGES_MAX = 32
+_pages_bytes = 0
 
 
 def forget_pages() -> None:
+    global _pages_bytes
     _PAGES.clear()
     _LATEST.clear()
+    _pages_bytes = 0
 
 
 def _remember_page(user_id: str, gid: str, version: int, html: str) -> None:
-    _PAGES[(user_id, gid, version)] = html
-    _PAGES.move_to_end((user_id, gid, version))
+    """Keep this page, oldest out first, so the cache never holds more than `cloud_page_cache_bytes`."""
+    global _pages_bytes
+    key = (user_id, gid, version)
+    if key in _PAGES:
+        _pages_bytes -= len(_PAGES.pop(key).encode())
+    _PAGES[key] = html
+    _pages_bytes += len(html.encode())
     _LATEST[(user_id, gid)] = version
-    while len(_PAGES) > _PAGES_MAX:
-        (u, g, v), _ = _PAGES.popitem(last=False)
+    while _pages_bytes > settings.cloud_page_cache_bytes and len(_PAGES) > 1:
+        (u, g, v), old = _PAGES.popitem(last=False)
+        _pages_bytes -= len(old.encode())
         if _LATEST.get((u, g)) == v:
             _LATEST.pop((u, g), None)
 
 
 # ── entry point ──────────────────────────────────────────────────────────────
-async def forward_if_pointer(user_id: str, artifact_id: str, inbound: Inbound) -> None:
+async def forward_if_pointer(
+    user_id: str, artifact_id: str, inbound: Inbound, *, cloud: bool = True, is_agent: bool = False
+) -> None:
     """If `artifact_id` is a cloud pointer and the route is one we forward, answer it (by raising
-    CloudReply, which carries the answer); otherwise return and let the local code run."""
+    CloudReply, which carries the answer); otherwise return and let the local code run.
+
+    `cloud` False (an API token without the opt-in `cloud` scope): pointers do not exist for this
+    caller, so the id falls through to the local code and is a plain 404. `is_agent`: software may
+    read and write the data but may not leave a shared gacabit (that is the person's decision)."""
+    if not cloud:
+        return
     pointer = await db.get_pointer(user_id, artifact_id)
     if pointer is None:
         return
@@ -152,6 +168,9 @@ async def forward_if_pointer(user_id: str, artifact_id: str, inbound: Inbound) -
             case "meta":
                 await _meta(user_id, pointer, suffix, inbound)
             case "leave":
+                if is_agent:
+                    raise CloudError("Leaving a shared gacabit is for the person to do, in the app.",
+                                     status=403, code="paired_device_required")
                 await _leave(user_id, pointer, inbound)
             case "page":
                 await _page(user_id, pointer, inbound)
@@ -187,7 +206,7 @@ async def _plain(user_id: str, gid: str, suffix: str, allowed: tuple[str, ...], 
     params, timeout = _query(inbound, allowed)
     resp = await cloud_link.call(
         user_id, inbound.method, _path(gid, suffix), params=params or None, content=inbound.body or None,
-        headers=inbound.headers, request_id=inbound.request_id, timeout=timeout,
+        headers=inbound.headers, request_id=inbound.request_id, timeout=timeout, long_poll=timeout is not None,
     )
     reply = cloud_link.reply_from(resp)
     if inbound.tail == "html":
@@ -342,6 +361,7 @@ async def _call(user_id: str, pointer, inbound: Inbound) -> None:
         user_id, http_method, _path(pointer.id, suffix), params=query,
         content=None if payload is None else json.dumps(payload).encode(),
         headers=_JSON if payload is not None else None, request_id=inbound.request_id, timeout=timeout,
+        long_poll=timeout is not None,
     )
     # The local /call answers 200 with the endpoint's JSON, or `null` where that endpoint sends 204.
     raise CloudReply(200, resp.content if resp.content.strip() else b"null", {"content-type": "application/json"})

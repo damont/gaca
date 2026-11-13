@@ -219,7 +219,7 @@ def test_bad_wait_is_refused_locally(linked, cloud):
 
 
 def test_hermes_with_an_artifacts_token_uses_the_same_forwarded_routes(linked, cloud):
-    hermes = mint(linked, scopes=("artifacts",))
+    hermes = mint(linked, scopes=("artifacts", "cloud"))
     cloud.on("POST", "/gacabits/g1/collections/items", status=201, json={"id": "d1", "version": 1, "data": {}})
     r = linked.post(A + "/collections/items", headers=hermes, json={"data": {"t": 1}})
     assert r.status_code == 201
@@ -446,8 +446,12 @@ def test_stale_while_error_serves_the_last_known_rows_with_a_marker(linked, clou
     got = linked.get("/api/artifacts", headers=hdr(linked)).json()
     assert got["stale"] is True and [a["id"] for a in got["artifacts"]] == ["g1"]
     assert got["artifacts"][0]["home"] == "cloud" and got["artifacts"][0]["shared_by"] == "alice"
+    seen = len(cloud.requests)
+    assert linked.get("/api/artifacts", headers=hdr(linked)).json()["stale"] is True  # backing off: no new attempt
+    assert len(cloud.requests) == seen
     cloud.down = False
     cloud.on("GET", "/gacabits", json={"gacabits": [gacabit()]})
+    monkeypatch.setattr(settings, "cloud_list_backoff_seconds", 0)
     assert linked.get("/api/artifacts", headers=hdr(linked)).json()["stale"] is False
 
 
@@ -562,17 +566,13 @@ def test_redeem_makes_the_pointer_even_before_a_list_is_fetched(linked, cloud):
     con.close()
 
 
-def test_agent_redeem_needs_user_confirmed_the_app_does_not(linked, cloud):
+def test_agents_can_never_redeem_even_with_cloud_scope_and_a_user_confirmed_flag(linked, cloud):
     cloud.on("POST", "/invites/redeem", json=gacabit("g9", "Via hermes"))
     hermes = mint(linked, scopes=("artifacts", "cloud"))
-    r = linked.post("/api/cloud/invites/redeem", headers=hermes, json={"token": "tok"})
-    assert r.status_code == 403 and r.json()["code"] == "user_confirmation_required"
-    r = linked.post("/api/cloud/invites/redeem", headers=hermes, json={"token": "tok", "user_confirmed": False})
-    assert r.status_code == 403
-    assert cloud.seen("POST", "/invites/redeem") == []  # nothing reached the cloud
-    r = linked.post("/api/cloud/invites/redeem", headers=hermes, json={"token": "tok", "user_confirmed": True})
-    assert r.status_code == 200 and r.json()["id"] == "g9"
-    cloud.on("POST", "/invites/redeem", json=gacabit("g10", "Via app"))
+    for body in ({"token": "tok"}, {"token": "tok", "user_confirmed": True}):
+        assert linked.post("/api/cloud/invites/redeem", headers=hermes, json=body).status_code == 403
+        assert linked.post("/api/cloud/invites/preview", headers=hermes, json=body).status_code == 403
+    assert cloud.seen("POST", "/invites/redeem") == [] and cloud.seen("POST", "/invites/preview") == []
     assert linked.post("/api/cloud/invites/redeem", headers=hdr(linked), json={"token": "tok"}).status_code == 200
 
 
@@ -641,6 +641,14 @@ def test_a_bad_bundle_is_refused_with_bundle_invalid(linked, cloud, bundle):
     assert r.status_code == 422 and r.json()["code"] == "bundle_invalid"
     assert linked.get("/api/artifacts", headers=hdr(linked)).json()["artifacts"][0]["home"] == "cloud"  # nothing local was made
     assert len(linked.get("/api/artifacts", headers=hdr(linked)).json()["artifacts"]) == 1
+
+
+def test_agents_cannot_get_or_install_templates_even_with_cloud_scope(linked, cloud):
+    cloud.on("POST", "/templates/t1/get", json={"bundle": BUNDLE})
+    hermes = mint(linked, scopes=("artifacts", "cloud"))
+    assert linked.post("/api/cloud/templates/t1/install", headers=hermes).status_code == 403
+    assert linked.post("/api/cloud/templates/t1/get", headers=hermes, json={}).status_code == 403
+    assert cloud.seen("POST") == []
 
 
 def test_template_routes_for_hermes_need_the_cloud_scope(linked, cloud):

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import os
+import secrets
 import stat
 from pathlib import Path
 
@@ -64,14 +65,23 @@ def _read_keys() -> list[str]:
 
 
 def _create_key_file(path: Path) -> None:
+    """Make the key file so that a reader can never see it half-written: write a temp file (0600
+    from the first byte), fsync it, then hard-link it into place, which fails if somebody got there
+    first (exactly one creator wins) and otherwise shows the complete file at once."""
     path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
-        # O_EXCL: if two processes race, exactly one creates it; mode 0600 from the first byte.
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:
-        return
-    with os.fdopen(fd, "w") as f:
-        f.write(Fernet.generate_key().decode() + "\n")
+        with os.fdopen(fd, "w") as f:
+            f.write(Fernet.generate_key().decode() + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        try:
+            os.link(tmp, path)
+        except FileExistsError:
+            pass
+    finally:
+        os.unlink(tmp)
 
 
 def _fernet() -> MultiFernet:
@@ -107,4 +117,6 @@ def new_primary_key() -> None:
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
         f.write(Fernet.generate_key().decode() + "\n" + old)
+        f.flush()
+        os.fsync(f.fileno())
     os.replace(tmp, path)

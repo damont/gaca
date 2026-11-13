@@ -2,11 +2,9 @@
 gallery. Pass-throughs: the cloud decides everything; this server adds the stored token, keeps the
 local pointer list in step, and (for a template) does the one local thing, creating the artifact.
 
-`user_confirmed`: Hermes calls this server with an API token (`gaca_pat_...`), the app with a
-paired-device token (`gaca_dev_...`). Joining a gacabit adds someone else's page to the owner's
-list, so when the caller is an API token the request must say `user_confirmed: true`, which Hermes
-sets only after the person said yes; without it: 403 `user_confirmation_required` (the same code
-the cloud uses for the same idea). The app IS the person tapping "Trust and add", so it is not asked.
+Who may call: joining a gacabit and installing a template are the paired app's alone (the router
+requires a paired device). The person tapping "Trust and add" is the confirmation; there is
+deliberately no "user_confirmed" flag an agent could set for itself.
 """
 from __future__ import annotations
 
@@ -33,11 +31,7 @@ async def invite_preview(user_id: str, token: str, request_id: str) -> None:
     raise cloud_link.reply_from(resp)
 
 
-async def invite_redeem(user_id: str, token: str, *, by_agent: bool, user_confirmed: bool, request_id: str) -> None:
-    if by_agent and not user_confirmed:
-        raise CloudError(
-            "Joining a shared gacabit needs the person's go-ahead: ask them, then send user_confirmed: true.",
-            status=403, code="user_confirmation_required")
+async def invite_redeem(user_id: str, token: str, *, request_id: str) -> None:
     content, headers = _body({"token": token})
     resp = await cloud_link.call(user_id, "POST", "/invites/redeem", content=content, headers=headers,
                                  request_id=request_id)

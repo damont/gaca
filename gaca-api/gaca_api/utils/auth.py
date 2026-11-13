@@ -79,12 +79,22 @@ async def get_session_user(token: str = Depends(oauth2_scheme), request: Request
 
 @dataclass
 class Caller:
-    """Who is calling, and whether it is software (an API token: Hermes, a script) rather than the
-    person's own app. Used where an action needs the person's explicit go-ahead from software."""
+    """Who is calling. `is_agent`: software holding an API token (Hermes, a script) rather than the
+    person's own paired app. `cloud`: may see and use cloud-homed gacabits: always for the app, for
+    a token only if it carries the opt-in `cloud` scope."""
     user: UserDoc
     is_agent: bool
+    cloud: bool = True
 
 
-async def get_caller(token: str = Depends(oauth2_scheme), request: Request = None) -> Caller:
-    user = await _resolve(request, token, allow_api_token=True)
-    return Caller(user=user, is_agent=not token_utils.looks_like_device(token))
+_optional_scheme = OAuth2PasswordBearer(tokenUrl="/api/devices/pair", auto_error=False)
+
+
+async def get_caller(user: UserDoc = Depends(get_current_user), token: str | None = Depends(_optional_scheme)) -> Caller:
+    """The owner plus what kind of credential reached us. Builds on get_current_user (so the same
+    checks and the same test overrides apply)."""
+    if not token or token_utils.looks_like_device(token):
+        return Caller(user=user, is_agent=False, cloud=True)
+    found = await token_service.authenticate(token)
+    scopes = found[1].scopes if found else []
+    return Caller(user=user, is_agent=True, cloud="cloud" in scopes)

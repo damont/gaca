@@ -33,7 +33,7 @@ def gaca_base_url() -> str:
 
 async def mint_profile_env(owner: UserDoc, profile: str) -> tuple[ApiTokenDoc, dict[str, str]]:
     """A fresh scoped token for `profile` and the two env lines that hand it to that profile's skills."""
-    doc, secret = await token_service.create(owner, f"hermes-{profile}", list(token_utils.SCOPES))
+    doc, secret = await token_service.create(owner, f"hermes-{profile}", list(token_utils.DEFAULT_SCOPES))
     return doc, {"GACA_BASE_URL": gaca_base_url(), "GACA_API_TOKEN": secret}
 
 
@@ -63,7 +63,7 @@ async def connect_profiles(
     Safe to re-run: a profile that already holds a GACA API token is left alone unless `rotate`
     (old agent JWTs don't count, so they get replaced). With `rotate`, the profile's previous
     token is revoked after the new one is written."""
-    scopes = scopes or list(token_utils.SCOPES)
+    scopes = scopes or list(token_utils.DEFAULT_SCOPES)
     results = []
     for profile, env_path in profile_env_paths(home).items():
         name = f"hermes-{profile}"

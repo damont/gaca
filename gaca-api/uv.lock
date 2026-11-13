@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -408,6 +408,7 @@ source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
     { name = "asyncssh" },
+    { name = "cryptography" },
     { name = "fastapi" },
     { name = "firebase-admin" },
     { name = "httpx", extra = ["http2"] },
@@ -427,6 +428,7 @@ dev = [
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20" },
     { name = "asyncssh", specifier = ">=2.24.0" },
+    { name = "cryptography", specifier = ">=42" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "firebase-admin", specifier = ">=6.5" },
     { name = "httpx", extras = ["http2"], specifier = ">=0.27" },

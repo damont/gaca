@@ -59,12 +59,6 @@ class InviteToken(BaseModel):
     token: str = Field(min_length=1, max_length=512, description="The secret part of an invite link.")
 
 
-class InviteRedeem(InviteToken):
-    user_confirmed: bool = Field(
-        default=False,
-        description="Hermes (an API token) must send true, and only after the person said yes. The app is the person, so it need not.")
-
-
 class TemplateGet(BaseModel):
     model_config = ConfigDict(extra="ignore")
     target: Literal["server_bundle"] = "server_bundle"

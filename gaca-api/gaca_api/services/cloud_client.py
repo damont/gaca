@@ -31,10 +31,25 @@ from .exceptions import CloudError, CloudUnavailable
 
 logger = logging.getLogger(__name__)
 
-# httpx logs every request line (with the full URL) at INFO. The cloud's address is not a secret,
-# but this server promises not to scribble it into logs.
+
+
+class _HideCloudAddress(logging.Filter):
+    """httpx logs every request line (with the full URL) at INFO. The cloud's address is not a
+    secret, but this server promises not to scribble it into logs: drop exactly those records
+    (and nothing else the process logs through httpx)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.needles: set[str] = set()
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        text = record.getMessage()
+        return not any(n in text for n in self.needles)
+
+
+_hide = _HideCloudAddress()
 for _name in ("httpx", "httpcore"):
-    logging.getLogger(_name).setLevel(logging.WARNING)
+    logging.getLogger(_name).addFilter(_hide)
 
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024  # 12 MB is the biggest gacabit; this is a ceiling, not a rule
 transport_override: httpx.AsyncBaseTransport | None = None
@@ -69,14 +84,23 @@ class CloudClient:
         except ValueError as e:
             raise CloudError(f"Cloud linking is not set up correctly on this server ({e}).", status=500,
                              code="cloud_misconfigured") from None
-        self._http = httpx.AsyncClient(
-            transport=transport_override,
-            timeout=httpx.Timeout(settings.cloud_timeout_seconds, connect=settings.cloud_connect_timeout_seconds),
-            follow_redirects=False,
-            verify=True,
-            trust_env=False,  # an environment proxy must not see the token
-            limits=httpx.Limits(max_connections=20, max_keepalive_connections=5),
-        )
+        host = urlsplit(self.base_url).hostname or ""
+        _hide.needles.add(host)
+
+        def make(max_connections: int) -> httpx.AsyncClient:
+            return httpx.AsyncClient(
+                transport=transport_override,
+                timeout=httpx.Timeout(settings.cloud_timeout_seconds, connect=settings.cloud_connect_timeout_seconds),
+                follow_redirects=False,
+                verify=True,
+                trust_env=False,  # an environment proxy must not see the token
+                limits=httpx.Limits(max_connections=max_connections, max_keepalive_connections=5),
+            )
+
+        # Long-polls (up to ~25 s each, one per open page) get their own pool so a screenful of
+        # open pages cannot starve ordinary calls, writes and lists.
+        self._http = make(20)
+        self._poll = make(40)
 
     async def request(
         self,
@@ -88,7 +112,8 @@ class CloudClient:
         content: bytes | None = None,
         headers: dict[str, str] | None = None,
         request_id: str | None = None,
-        timeout: float | None = None,
+        timeout: float | httpx.Timeout | None = None,
+        long_poll: bool = False,
     ) -> httpx.Response:
         if not path.startswith("/") or "://" in path or "?" in path or "#" in path:
             raise CloudError("Bad cloud path.", status=500, code="cloud_misconfigured")
@@ -97,7 +122,7 @@ class CloudClient:
         if token:
             send["Authorization"] = f"Bearer {token}"
         try:
-            async with self._http.stream(
+            async with (self._poll if long_poll else self._http).stream(
                 method, self.base_url + path, params=params, content=content, headers=send,
                 timeout=timeout if timeout is not None else settings.cloud_timeout_seconds,
             ) as response:
@@ -106,8 +131,12 @@ class CloudClient:
                     body += chunk
                     if len(body) > MAX_RESPONSE_BYTES:
                         raise CloudUnavailable("The cloud sent an answer that was too large.")
-                # Rebuild a plain, fully-read response so callers can use .content/.json().
-                return httpx.Response(response.status_code, headers=response.headers, content=bytes(body))
+                # Rebuild a plain, fully-read response so callers can use .content/.json(). The bytes are
+                # already decoded (gzip etc.), so the headers that describe the wire encoding must go,
+                # or httpx would try to decode them a second time.
+                kept = [(k, v) for k, v in response.headers.multi_items()
+                        if k.lower() not in ("content-encoding", "content-length", "transfer-encoding")]
+                return httpx.Response(response.status_code, headers=kept, content=bytes(body))
         except CloudUnavailable:
             raise
         except httpx.TimeoutException:
@@ -120,6 +149,7 @@ class CloudClient:
 
     async def aclose(self) -> None:
         await self._http.aclose()
+        await self._poll.aclose()
 
 
 _clients: dict[str, CloudClient] = {}
