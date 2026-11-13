@@ -304,8 +304,13 @@ async def _cloud_list_backups() -> int:
     if not rows:
         print("No backups. (One is kept for 30 days after each page is moved to the cloud.)")
         return 0
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
     for r in rows:
-        print(f"{r['id']}  page {r['artifact_id']}  made {r['created_at'][:16]}  expires {r['expires_at'][:10]}  {r['size']} bytes")
+        left = (datetime.fromisoformat(r["expires_at"]) - now).days
+        when = f"{left} day(s) left" if left > 0 else "past its 30 days; kept until the cloud copy is verified healthy"
+        print(f"{r['id']}  page {r['artifact_id']}  made {r['created_at'][:16]}  {when}  {r['size']} bytes")
     return 0
 
 

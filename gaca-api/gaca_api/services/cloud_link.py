@@ -78,8 +78,12 @@ def reply_from(resp: httpx.Response) -> CloudReply:
     headers = {k: v for k, v in resp.headers.items() if k.lower() in PASS_RESPONSE_HEADERS}
     if resp.status_code >= 400:
         data = _json(resp)
-        if isinstance(data, dict) and "detail" not in data and isinstance(data.get("message"), str):
-            body = json.dumps({**data, "detail": data["message"]}).encode()
+        if isinstance(data, dict) and isinstance(data.get("message"), str) and not isinstance(data.get("detail"), str):
+            # `detail` is always a string in this API (the apps decode it as one). The cloud's structured detail
+            # (validation findings, undo_until ...) is kept, under `info`.
+            extra = {"info": data["detail"]} if "detail" in data and "info" not in data else {}
+            kept = {k: v for k, v in data.items() if k != "detail"}
+            body = json.dumps({**kept, "detail": data["message"], **extra}).encode()
             headers["content-type"] = "application/json"
     return CloudReply(resp.status_code, body, headers)
 
@@ -327,18 +331,32 @@ async def unlink(user_id: str, force: bool = False) -> dict[str, Any]:
 
     Refused (409 `cloud_artifacts_present`) while any page lives in the cloud, unless `force`: unlinking
     drops this server's access to them (they stay safe in the cloud, but the app could no longer open
-    them). Bring them home first, or unlink with force=true if that is what the person wants."""
+    them. Bring them home first, or unlink with force=true if that is what the person wants.
+
+    What `force` does: the pointers are deleted (the pages stay in the cloud, safe, but this server and the app can
+    no longer open them until the account is linked again, which brings the pointers back); sealed backups are KEPT
+    (they are the only local copy of a moved page); a bring-home that was never confirmed stays unconfirmed, so the
+    cloud keeps its copy (it never purges an unconfirmed one) and the confirm is sent after the next link."""
     link = await db.get_link(user_id)
     if link is None:
         return {"unlinked": False, "cloud_revoked": False, "message": "This server was not linked."}
     pointers = await db.list_pointers(user_id)
-    if pointers and not force:
+    from ..db import cloud_move as move_db
+    from . import artifact_locks
+
+    # A page that came home but whose arrival the cloud has not been told of (its cloud copy is still locked and
+    # NOT yet on the purge clock), and transfers running right now, count too: unlinking would strand them.
+    unconfirmed = [r["artifact_id"] for r in await move_db.list_bring_homes(user_id) if not r["confirmed"]]
+    running = len(artifact_locks.BUSY)
+    if (pointers or unconfirmed or running) and not force:
         owned = sum(1 for p in pointers if p.role == "owner")
         raise CloudError(
-            "Some pages live in the cloud. Unlinking would cut this server off from them. Bring them home first, "
-            "or unlink anyway.", status=409, code="cloud_artifacts_present",
+            "Some pages live in the cloud, or a move or bring-home is not finished. Unlinking would cut this "
+            "server off from them. Finish or bring them home first, or unlink anyway.",
+            status=409, code="cloud_artifacts_present",
             detail={"owned": owned, "shared": len(pointers) - owned, "total": len(pointers),
-                    "hint": "bring them home, or repeat with force=true"})
+                    "unconfirmed_bring_homes": len(unconfirmed), "in_progress": running,
+                    "hint": "bring them home and let it finish, or repeat with force=true"})
     cloud_revoked, message = False, "Unlinked."
     if link.status == "linked" and link.token_enc:
         try:

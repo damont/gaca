@@ -98,8 +98,8 @@ def make_page(http, *, versions=6, events=4, handled=1, title="Costco run", **ex
     return aid
 
 
-def move(http, aid, **kw):
-    return http.post(f"/api/artifacts/{aid}/move-to-cloud", headers=hdr(http, **kw))
+def move(http, aid, ack=True, **kw):
+    return http.post(f"/api/artifacts/{aid}/move-to-cloud", headers=hdr(http, **kw), json={"acknowledge_not_carried": ack})
 
 
 def bring(http, aid):
@@ -204,8 +204,8 @@ def test_too_big_for_the_cloud_is_refused_before_anything_is_sent(linked, cloud)
     r = move(linked, aid)
     assert r.status_code == 413
     body = r.json()
-    assert body["code"] == "too_large_for_cloud" and body["detail"]["phase"] == "preflight"
-    whole = next(p for p in body["detail"]["problems"] if p["item"] == "the whole gacabit")
+    assert body["code"] == "too_large_for_cloud" and body["info"]["phase"] == "preflight"
+    whole = next(p for p in body["info"]["problems"] if p["item"] == "the whole gacabit")
     assert whole["size"] > whole["limit"] == 12 * 1024 * 1024
     assert whole["biggest"][0]["item"] == "collection 'big'"
     assert cloud.requests == [] and cloud.s3_requests == []  # NOTHING was sent, not even a ping
@@ -218,7 +218,7 @@ def test_too_many_unhandled_events_are_listed(linked, cloud):
         linked.post(f"/api/artifacts/{aid}/events", headers=linked.session, json={"name": "e", "payload": {"n": n}})
     r = move(linked, aid)
     assert r.status_code == 413
-    assert {"item": "unhandled events (mark some handled)", "size": 201, "limit": 200, "unit": "events"} in r.json()["detail"]["problems"]
+    assert {"item": "unhandled events (mark some handled)", "size": 201, "limit": 200, "unit": "events"} in r.json()["info"]["problems"]
     assert cloud.requests == []
 
 
@@ -283,8 +283,8 @@ def test_a_failed_move_changes_nothing_here(linked, cloud, name, setup, status, 
     r = move(linked, aid)
     assert r.status_code == status, r.text
     body = r.json()
-    assert body["code"] == code and isinstance(body["message"], str) and isinstance(body["detail"], dict)
-    assert body["detail"]["phase"] == phase and body["detail"]["local_data_changed"] is False
+    assert body["code"] == code and isinstance(body["message"], str) and isinstance(body["detail"], str) and isinstance(body["info"], dict)
+    assert body["info"]["phase"] == phase and body["info"]["local_data_changed"] is False
     assert snapshot(linked, aid) == before  # every row, byte for byte
     assert count(linked, "cloud_pointers") == 0 and count(linked, "artifact_cloud_backups") == 0
     # the app is told, and the page is writable again
@@ -341,7 +341,7 @@ def test_a_crash_between_import_and_conversion_is_continued_on_retry(linked, clo
 
     monkeypatch.setattr(move_db, "_upsert_pointer", boom)
     r = move(linked, aid)
-    assert r.status_code == 500 and r.json()["code"] == "move_failed" and r.json()["detail"]["phase"] == "converting"
+    assert r.status_code == 500 and r.json()["code"] == "move_failed" and r.json()["info"]["phase"] == "converting"
     # the transaction rolled back as a whole: no backup row, no pointer, every local row intact
     assert snapshot(linked, aid) == before
     assert count(linked, "artifact_cloud_backups") == 0 and count(linked, "cloud_pointers") == 0
@@ -367,7 +367,7 @@ def test_a_cloud_copy_that_differs_is_never_adopted(linked, cloud, monkeypatch):
     before = snapshot(linked, aid)
     r = move(linked, aid)
     assert r.status_code == 409 and r.json()["code"] == "cloud_copy_differs"
-    assert "state" in r.json()["detail"]["mismatches"]
+    assert "state" in r.json()["info"]["mismatches"]
     assert snapshot(linked, aid) == before and count(linked, "cloud_pointers") == 0
 
 
@@ -541,7 +541,7 @@ def test_a_failed_bring_home_leaves_the_pointer_and_puts_the_cloud_copy_back(lin
     r = bring(linked, aid)
     assert r.status_code >= 400, r.text
     body = r.json()
-    assert set(body) == {"code", "message", "detail"} and body["detail"]["cloud_state"] == "restored"
+    assert {"code", "message", "detail", "info"} <= set(body) and isinstance(body["detail"], str) and body["info"]["cloud_state"] == "restored"
     if code:
         assert body["code"] == code
     assert pointer_intact(linked, aid)
@@ -656,7 +656,7 @@ def test_an_unfinished_earlier_bring_home_is_undone_and_redone(linked, cloud):
     cloud.faults["bring_home"] = ["corrupt"]
     cloud.faults["undo_closed"] = [1]  # the automatic undo is refused: the cloud copy stays locked
     r = bring(linked, aid)
-    assert r.status_code == 502 and r.json()["detail"]["cloud_state"] == "brought_home"
+    assert r.status_code == 502 and r.json()["info"]["cloud_state"] == "brought_home"
     assert cloud.gacabits[aid]["status"] == "brought_home" and pointer_intact(linked, aid)
     cloud.faults.clear()
     r = bring(linked, aid)  # the cloud now answers "already brought home": undo it, then go again
@@ -751,7 +751,9 @@ def test_a_backup_is_kept_for_30_days_then_cleaned_up(linked, cloud):
     portal = linked.portal
     assert portal.call(cloud_move.maintenance, utcnow() + timedelta(days=29))["backups_removed"] == 0
     assert count(linked, "artifact_cloud_backups") == 1
-    assert portal.call(cloud_move.maintenance, utcnow() + timedelta(days=31))["backups_removed"] == 1
+    # day 31: past its 30 days, but the newest backup of a page that still has a pointer is kept for 90 (8b review)
+    assert portal.call(cloud_move.maintenance, utcnow() + timedelta(days=31))["backups_removed"] == 0
+    assert portal.call(cloud_move.maintenance, utcnow() + timedelta(days=91))["backups_removed"] == 1
     assert count(linked, "artifact_cloud_backups") == 0
     assert count(linked, "cloud_pointers", "id = ?", (aid,)) == 1  # the pointer is not the backup's business
 
@@ -800,7 +802,7 @@ def test_unlink_is_refused_while_pages_live_in_the_cloud(linked, cloud):
     aid = moved(linked, cloud)
     r = linked.delete("/api/cloud/link", headers=linked.session)
     assert r.status_code == 409 and r.json()["code"] == "cloud_artifacts_present"
-    assert r.json()["detail"]["owned"] == 1 and r.json()["detail"]["shared"] == 0 and r.json()["detail"]["total"] == 1
+    assert r.json()["info"]["owned"] == 1 and r.json()["info"]["shared"] == 0 and r.json()["info"]["total"] == 1
     assert count(linked, "cloud_link") == 1 and count(linked, "cloud_pointers") == 1
     assert cloud.seen("DELETE", "/me/server") == []  # nothing was revoked
     # bring it home: unlink is allowed

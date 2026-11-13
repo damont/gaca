@@ -103,7 +103,7 @@ to the app once, exactly as the cloud sends it (`Cache-Control: no-store`); this
 3. **importing**: `POST /gacabits/import {upload_id}`. A `503` is retried with the same upload id. If the answer is lost
    (timeout, reset, 5xx) the cloud is asked (`GET /gacabits/{id}`): if the gacabit is there the import worked and we continue.
    `409 conflict` (already in your cloud) is treated the same. `409 id_conflict`, `402`, `413`, `422 validation_blocked` (the
-   cloud's findings are in `detail.cloud`) and `429` (with `Retry-After`) are passed on.
+   cloud's findings are in `info.cloud`) and `429` (with `Retry-After`) are passed on.
 4. **verifying**: the cloud's copy is read back (page, version, title, schemas, state, state version, every document's data,
    unhandled events) and compared with what was sent. Any difference: nothing changes here (`502 verify_failed`).
 5. **converting**: ONE local transaction: the sealed backup row, delete the local rows, create the pointer. The local rows are
@@ -114,7 +114,10 @@ The bundle carries meta (title, description, data_notes, crew, archived, created
 `created_at`/`updated_at`, and the **unhandled** events. Not carried (local or regenerated): user, chat and alert links,
 position, last_opened_at, rev, per-document versions (they restart at 1). The cloud stores times to the millisecond.
 
-Errors are always `{code, message, detail}`; `detail.phase` says where it stopped and `detail.local_data_changed` is `false`. A
+Errors are always `{code, message, detail, info?, phase?, local_data_changed?}`: `detail` is ALWAYS a string (the same text as
+`message`: the Android and iOS apps decode `detail` as a string, like every FastAPI error), and the structured explanation is in
+`info` (an object), with `phase` (where it stopped) and `local_data_changed` (`false` for every failed move) lifted to the top
+level. A cloud error passed through keeps its own object `detail` under `info` too. A
 failed move is remembered (`cloud_status: "move_failed"` in the list/get) and is **always safe to retry**: a cloud copy left by
 an earlier try is found, checked against the page as it is now, and used (`resumed: true`), or refused
 (`409 cloud_copy_differs`) if the page was edited since.
@@ -129,7 +132,7 @@ exists, is a fallback only: it supplies crew, chat/alert links and last-opened (
 the current page version when that page is unchanged; nothing the cloud sent is overridden.
 
 If anything fails before the local restore, the cloud's bring-home is undone, the pointer stays, and the error says so
-(`detail.cloud_state: "restored"`; `"brought_home"` plus the undo deadline if even the undo failed, in which case the next try
+(`info.cloud_state: "restored"`; `"brought_home"` plus the undo deadline if even the undo failed, in which case the next try
 undoes and redoes it). If only the confirm fails the page IS home (`confirmed: false`, `cloud_status:
 "bring_home_unconfirmed"`): the cloud keeps its copy until it hears, and the confirm is repeated on the next call and by the
 housekeeping loop. `undo-bring-home` on a page that came home restores the cloud copy and turns the page back into a cloud
@@ -145,6 +148,35 @@ request-id header (only the `content-type`, `content-encoding` and `x-amz-*` hea
 timeouts, and the URL (its query is a signature) is never in an error or a log. Any S3 bucket matches the host rule; the cloud
 is trusted to name its own bucket.
 
+### What a move does not carry, and the acknowledgement
+
+`GET /api/artifacts/{id}/move-preview` (paired device) says, without sending anything: whether it fits (sizes and caps), and
+`not_carried`: `versions_dropped` (page versions beyond the 5 the cloud keeps), `handled_events_dropped`, `crew`,
+`chat_alert_links`, `doc_versions_reset` (documents restart at version 1), `last_opened`. If any of it is non-empty,
+`move-to-cloud` needs `{"acknowledge_not_carried": true}` in its body, else `409 confirmation_required` with the same summary
+in `info.not_carried` and nothing is sent. The result repeats `not_carried`. `member_impact` is `none`: a page that is not in
+the cloud has no members. Numbers the cloud cannot store (whole numbers beyond 64 bits, NaN, Infinity) are refused first with
+`422 unsupported_number` and the JSON paths in `info.paths`.
+
+After a bring-home the cloud keeps its copy (status `brought_home`) for 7 days, so the same page cannot be moved to the cloud
+again until the cloud has purged it or the bring-home is undone (`409 cloud_copy_not_usable`).
+
+Bringing home a page other people share cuts every member off, so when the cloud reports more than one member it needs
+`{"acknowledge_members": true}` (else `409 members_will_lose_access`, `info.member_count`); the result says how many lost access.
+
+### Verification
+
+After the import every part of the cloud's copy is read back and compared TYPE-STRICT (canonical JSON, so `true` is not `1`,
+`1.0` is not `1`, NFC is not NFD): title, description, data notes, archived, schemas, page and page version, state and its
+version, every document's data and created/updated times (to the millisecond), the older page versions (their html, note and
+time) and the unhandled events with their times. Any difference refuses the move.
+
+### Responsiveness
+
+The CPU-heavy parts (building, compressing and validating the bundle, the comparison, the backup's gzip, parsing a download) run
+in worker threads; only the SQLite swap itself runs on the connection thread, as one transaction. Every transfer has a total
+wall-clock limit (`GACA_CLOUD_TRANSFER_TOTAL_SECONDS`, 120 s) as well as per-read timeouts.
+
 ### Fields
 
 `GET /api/artifacts` and `GET /api/artifacts/{id}` carry `home` (`local` or `cloud`), `moving` (true while a move runs) and
@@ -155,10 +187,14 @@ is trusted to name its own bucket.
 
 When a page becomes a cloud page, its complete local content (page, every kept version, state, documents, all events, handled
 included) is written to `artifact_cloud_backups` (gzip JSON + sha256) **in the same transaction** that deletes the local rows,
-expiring after 30 days (`GACA_CLOUD_BACKUP_DAYS`). A housekeeping loop (first run a minute after start, then hourly) deletes
-expired backups. After that the only copy is the cloud's.
+`expires_at` = 30 days (`GACA_CLOUD_BACKUP_DAYS`). A housekeeping loop (first run a minute after start, then hourly) deletes a
+backup only when it is past that AND it can no longer be needed: the page is local again, or the cloud copy was just checked
+(`GET /gacabits/{id}` is 200 with status `active`; checked at most daily per backup). The newest backup of a page that still has a
+pointer is kept at least 90 days. A copy that is missing, not active or unreachable keeps the backup, with a warning in the log,
+checked again the next day. Nothing is kept past one year. The loop also repeats unsent bring-home confirms, and never while a
+transfer of that page is running.
 
-- `gaca-api cloud list-backups`: id, page, dates, size.
+- `gaca-api cloud list-backups`: id, page, days left (or "past its 30 days; kept until the cloud copy is verified healthy"), size.
 - `gaca-api cloud restore-backup <backup id or page id>`: puts the page back exactly as it was (event numbers and document
   versions included), removes the pointer, refuses if a local page with that id exists. **The cloud is not touched**: a copy
   there may hold newer changes, which are not in the backup. Check it before deleting it.
@@ -174,14 +210,15 @@ expired backups. After that the only copy is the cloud's.
 | upload address not S3, or odd headers | 502 `transfer_url_rejected` | unchanged | untouched | retry; report if it persists |
 | import 402 / 413 / 429 | passed on (`billing_required`, `too_large_for_cloud`, `rate_limited`) | unchanged | nothing imported | set up billing / trim / wait |
 | import 409 `id_conflict` | 409 `id_conflict` | unchanged | another account holds the id | contact support: the id cannot change |
-| import 422 `validation_blocked` | 422 with `detail.cloud.findings` | unchanged | nothing imported | fix what the findings name |
+| import 422 `validation_blocked` | 422 with `info.cloud.findings` | unchanged | nothing imported | fix what the findings name |
 | import 503 / answer lost | retried with the same upload; if the gacabit is there, continues | unchanged | imported once | none; if it still fails, retry the move |
-| verify mismatch | 502 `verify_failed`, `detail.mismatches` | unchanged | a copy exists (not deleted) | retry (re-verified); report if it persists |
+| verify mismatch | 502 `verify_failed`, `info.mismatches` | unchanged | a copy exists (not deleted) | retry (re-verified); report if it persists |
 | a copy from an earlier try differs from the page now | 409 `cloud_copy_differs` | unchanged | the stale copy stays | remove it on the website or bring it home, then retry |
 | page edited during the move | 409 `changed_during_move` | the edit is kept | a copy exists | retry |
 | crash or disk error while converting | 500 `move_failed` (transaction rolled back) | unchanged, no backup row | a verified copy exists | retry: continues without uploading |
 | cloud lost or damaged a page after a successful move | n/a | pointer only | the problem | within 30 days: `gaca-api cloud restore-backup` |
-| bring home: download or validation fails | 502 `bundle_invalid` / `transfer_failed` / `transfer_url_rejected`, `detail.cloud_state` | pointer stays | undone (`restored`) | retry |
+| bring home: download or validation fails | 502 `bundle_invalid` / `transfer_failed` / `transfer_url_rejected`, `info.cloud_state` | pointer stays | undone (`restored`) | retry |
 | bring home: that undo also fails | same, `cloud_state: "brought_home"`, `undo_until` | pointer stays | locked read-only, not deleted | retry (undoes and redoes) or undo on the website |
 | bring home: confirm fails | 200 `confirmed: false` | page is home | keeps its copy until told | repeat the call; housekeeping repeats it |
-| unlink with pages in the cloud | 409 `cloud_artifacts_present` | unchanged | untouched | bring them home, or `?force=true` |
+| unlink with pages in the cloud, an unconfirmed bring-home, or a transfer running | 409 `cloud_artifacts_present` (`info`: owned, shared, unconfirmed_bring_homes, in_progress) | unchanged | untouched | finish / bring them home, or `?force=true` |
+| `force=true` | pointers deleted (the pages stay in the cloud but this server and the app can no longer open them until it is linked again, which brings the pointers back); sealed backups kept; an unconfirmed bring-home stays unconfirmed so the cloud keeps its copy | | | |

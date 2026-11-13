@@ -21,6 +21,7 @@ before any connection is made and again by the client itself:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from urllib.parse import urlsplit
@@ -148,8 +149,11 @@ async def put(url: str, headers: dict[str, str], data: bytes) -> None:
     if len(data) > settings.cloud_max_transfer_bytes:
         raise CloudError("The bundle is larger than the cloud accepts.", status=413, code="too_large_for_cloud")
     try:
-        async with _client() as client:
+        async with asyncio.timeout(settings.cloud_transfer_total_seconds), _client() as client:
             resp = await client.put(url, content=data, headers=send)
+    except TimeoutError:
+        logger.warning("bundle upload ran out of time")
+        raise _failed("upload") from None
     except httpx.HTTPError as e:
         logger.warning("bundle upload failed (%s)", type(e).__name__)  # the exception text can hold the URL
         raise _failed("upload") from None
@@ -164,7 +168,7 @@ async def get(url: str) -> bytes:
     check_url(url)
     cap = settings.cloud_max_transfer_bytes
     try:
-        async with _client() as client:
+        async with asyncio.timeout(settings.cloud_transfer_total_seconds), _client() as client:
             async with client.stream("GET", url) as resp:
                 if resp.status_code != 200:
                     logger.warning("bundle download refused (HTTP %s)", resp.status_code)
@@ -181,6 +185,9 @@ async def get(url: str) -> bytes:
                     if len(body) > cap:
                         raise CloudError("The cloud's download is larger than this server accepts.",
                                          status=502, code="bundle_invalid", detail={"max_bytes": cap}) from None
+    except TimeoutError:
+        logger.warning("bundle download ran out of time")
+        raise _failed("download") from None
     except httpx.HTTPError as e:
         logger.warning("bundle download failed (%s)", type(e).__name__)
         raise _failed("download") from None

@@ -156,12 +156,14 @@ def _upsert_pointer(raw: sqlite3.Connection, p: CloudPointer) -> None:
 
 async def convert_to_pointer(
     snapshot: dict[str, Any], pointer: CloudPointer, *, backup_id: str, created_at: datetime, expires_at: datetime,
+    sealed: tuple[bytes, str] | None = None,
 ) -> None:
     """The local artifact becomes a cloud pointer, in ONE transaction: the sealed backup row is
     written first, then the local rows go, then the pointer and the bookkeeping rows change. Any
     failure rolls all of it back and the artifact is exactly as it was."""
     a = snapshot["artifact"]
-    blob, digest = seal(snapshot)
+    # The gzip of a 12 MB snapshot is CPU work: callers seal it in a worker thread BEFORE the transaction.
+    blob, digest = sealed if sealed is not None else seal(snapshot)
 
     def work(raw: sqlite3.Connection) -> None:
         raw.execute(
@@ -258,6 +260,7 @@ async def delete_bring_home(artifact_id: str) -> None:
 
 # ── backups ──────────────────────────────────────────────────────────────────
 async def list_backups(user_id: str | None = None) -> list[dict[str, Any]]:
+    """Backups (never their content), newest first; with `user_id` only that user's."""
     sql = "SELECT id, artifact_id, user_id, created_at, expires_at, length(snapshot) AS size FROM artifact_cloud_backups"
     params: tuple = ()
     if user_id is not None:
@@ -267,13 +270,17 @@ async def list_backups(user_id: str | None = None) -> list[dict[str, Any]]:
         return [dict(r) for r in await c.fetchall()]
 
 
-async def find_backup(ref: str) -> dict[str, Any] | None:
-    """A backup by its own id, or the newest one of an artifact id. Returns the row with the snapshot decoded
-    and verified (sha256); a damaged one raises ValueError."""
-    async with connection().execute(
-        "SELECT id, artifact_id, user_id, snapshot, sha256, created_at, expires_at FROM artifact_cloud_backups "
-        "WHERE id = ? OR artifact_id = ? ORDER BY created_at DESC LIMIT 1", (ref, ref)
-    ) as c:
+async def find_backup(ref: str, user_id: str | None = None) -> dict[str, Any] | None:
+    """A backup by its own id, or the newest one of an artifact id; with `user_id` only if it is that user's
+    (another user's backup is simply not found). Returns the row with the snapshot decoded and verified
+    (sha256); a damaged one raises ValueError."""
+    sql = ("SELECT id, artifact_id, user_id, snapshot, sha256, created_at, expires_at FROM artifact_cloud_backups "
+           "WHERE (id = ? OR artifact_id = ?)")
+    params: list = [ref, ref]
+    if user_id is not None:
+        sql += " AND user_id = ?"
+        params.append(user_id)
+    async with connection().execute(sql + " ORDER BY created_at DESC LIMIT 1", params) as c:
         row = await c.fetchone()
     if row is None:
         return None
@@ -285,11 +292,41 @@ async def find_backup(ref: str) -> dict[str, Any] | None:
             "created_at": row["created_at"], "expires_at": row["expires_at"], "snapshot": snap}
 
 
-async def delete_expired_backups(now: datetime) -> int:
+async def due_backups(now: datetime) -> list[dict[str, Any]]:
+    """Backups past their expiry, oldest first (what housekeeping considers deleting)."""
+    async with connection().execute(
+        "SELECT id, artifact_id, user_id, created_at, expires_at FROM artifact_cloud_backups WHERE expires_at <= ? "
+        "ORDER BY created_at", (now.isoformat(),)
+    ) as c:
+        return [dict(r) for r in await c.fetchall()]
+
+
+async def delete_backup(backup_id: str) -> bool:
     conn = connection()
-    cursor = await conn.execute("DELETE FROM artifact_cloud_backups WHERE expires_at <= ?", (now.isoformat(),))
+    cursor = await conn.execute("DELETE FROM artifact_cloud_backups WHERE id = ?", (backup_id,))
     await conn.commit()
-    return cursor.rowcount
+    return cursor.rowcount > 0
+
+
+async def newest_backup_id(artifact_id: str) -> str | None:
+    async with connection().execute(
+        "SELECT id FROM artifact_cloud_backups WHERE artifact_id = ? ORDER BY created_at DESC LIMIT 1", (artifact_id,)
+    ) as c:
+        row = await c.fetchone()
+    return row["id"] if row else None
+
+
+async def upsert_pointer_unless_local(p: CloudPointer) -> bool:
+    """Create or refresh a pointer ONLY IF no local artifact has this id, check and write in one transaction.
+    (Checked and written separately, a bring-home finishing in between would leave an id that is both a local
+    page and a pointer.) Returns whether the pointer was written."""
+    def work(raw: sqlite3.Connection) -> bool:
+        if raw.execute("SELECT 1 FROM artifacts WHERE id = ? AND user_id = ?", (p.id, p.user_id)).fetchone():
+            return False
+        _upsert_pointer(raw, p)
+        return True
+
+    return await _atomic(work)
 
 
 async def has_backup(artifact_id: str) -> bool:

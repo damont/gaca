@@ -86,12 +86,25 @@ class ArtifactListMerged(BaseModel):
     stale: bool = False
 
 
+class MoveRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    # Required (true) when `move-preview` says something is not carried over: the person has seen the list.
+    acknowledge_not_carried: bool = False
+
+
+class BringHomeRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    # Required (true) when other members share the page: bringing it home cuts them off.
+    acknowledge_members: bool = False
+
+
 class MoveResult(BaseModel):
     """What a finished move to the cloud answers: the page as a cloud page, and that it was checked."""
     artifact: ArtifactListItem
     verified: bool
     resumed: bool = False  # a copy from an earlier try was found in the cloud, checked and used
     backup_expires_at: datetime
+    not_carried: dict[str, Any] = Field(default_factory=dict)  # what the cloud did not keep (see move-preview)
 
 
 class BringHomeResult(BaseModel):
@@ -100,6 +113,7 @@ class BringHomeResult(BaseModel):
     confirmed: bool
     undo_until: str | None = None
     warning: str | None = None
+    members_lost_access: int = 0  # other members who lost access when it came home
 
 
 class UndoResult(BaseModel):

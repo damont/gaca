@@ -97,9 +97,8 @@ async def remember(user_id: str, g: Any) -> CloudPointer | None:
     p = pointer_from(user_id, link.account_id or "", g)
     if p is None:
         return None
-    if await artifacts_db.find(user_id, p.id) is not None:
+    if not await move_db.upsert_pointer_unless_local(p):  # a local page with this id wins (checked atomically)
         return None
-    await db.upsert_pointer(p)
     return await db.get_pointer(user_id, p.id)
 
 
@@ -152,6 +151,7 @@ async def pointers_for_list(user_id: str) -> tuple[list[CloudPointer], bool]:
             return await db.list_pointers(user_id), False
         if _backing_off(user_id):
             return await db.list_pointers(user_id), True
+        fetch_began = utcnow()
         try:
             items, complete = await _fetch_all(user_id)
         except (CloudError, CloudReply) as e:
@@ -163,16 +163,19 @@ async def pointers_for_list(user_id: str) -> tuple[list[CloudPointer], bool]:
         seen: set[str] = set()
         for g in items:
             p = pointer_from(user_id, link.account_id or "", g)
-            if p is None or await artifacts_db.find(user_id, p.id) is not None:
+            if p is None:
                 continue
             old = existing.get(p.id)
             if old:
                 p.position = old.position
-            await db.upsert_pointer(p, commit=False)
-            seen.add(p.id)
+            if await move_db.upsert_pointer_unless_local(p):  # never alongside a local page of the same id
+                seen.add(p.id)
         if complete:  # never prune on a partial list: a gacabit on a page we did not read is not gone
             for gone in set(existing) - seen:
-                await db.delete_pointer(user_id, gone, commit=False)
+                # A pointer made or refreshed after this listing began (a move that just finished) is not in the
+                # listing we read, and is not gone either.
+                if existing[gone].last_seen < fetch_began:
+                    await db.delete_pointer(user_id, gone, commit=False)
         await db.commit()
         _synced[user_id] = started
         _failed.pop(user_id, None)

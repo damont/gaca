@@ -142,6 +142,8 @@ class Settings(BaseSettings):
     cloud_max_transfer_bytes: int = 16 * 1024 * 1024
     # One bundle transfer (the PUT to / GET from S3). Separate from cloud_timeout_seconds, which is for API calls.
     cloud_transfer_timeout_seconds: float = 120.0
+    # ... and the WHOLE transfer (a slow drip under the size cap never trips a per-read timeout).
+    cloud_transfer_total_seconds: float = 120.0
     # How many times a 503 / lost answer on the import is retried (same upload id), and how long to wait
     # between tries when the cloud gives no Retry-After.
     cloud_import_attempts: int = 4

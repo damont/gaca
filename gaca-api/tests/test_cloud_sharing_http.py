@@ -90,7 +90,7 @@ def test_the_clouds_answers_come_back_unchanged(linked, cloud):
         cloud.on("POST", f"/gacabits/{GID}/publish", status=status, json={"code": code, "message": "m", "detail": {"k": 1}},
                  headers={"retry-after": "7"})
         r = linked.post(f"/api/cloud/gacabits/{GID}/publish", headers=linked.session, json={})
-        assert r.status_code == status and r.json() == {"code": code, "message": "m", "detail": {"k": 1}}
+        assert r.status_code == status and r.json() == {"code": code, "message": "m", "detail": "m", "info": {"k": 1}}
     assert r.headers["retry-after"] == "7"
 
 

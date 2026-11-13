@@ -138,6 +138,167 @@ def _validator() -> Draft202012Validator:
     return Draft202012Validator(json.loads(_SCHEMA_PATH.read_text()))
 
 
+def bad_numbers(bundle: dict[str, Any], limit: int = 10) -> list[str]:
+    """Paths of numbers the cloud would refuse: integers outside int64, NaN and Infinity. Iterative (no
+    recursion limit), CPU-bound: call it in a worker thread."""
+    found: list[str] = []
+    stack: list[tuple[Any, tuple]] = [(bundle, ())]
+    while stack and len(found) < limit:
+        value, path = stack.pop()
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            if not -(2 ** 63) <= value < 2 ** 63:
+                found.append("/" + "/".join(map(str, path)))
+        elif isinstance(value, float):
+            if value != value or value in (float("inf"), float("-inf")):
+                found.append("/" + "/".join(map(str, path)))
+        elif isinstance(value, dict):
+            stack.extend((v, path + (k,)) for k, v in value.items())
+        elif isinstance(value, list):
+            stack.extend((v, path + (i,)) for i, v in enumerate(value))
+    return sorted(found)
+
+
+def not_carried(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """What a move to the cloud does NOT keep (the cloud has no place for it, or keeps less). The person is
+    told before it happens; the sealed backup still holds all of it for 30 days."""
+    a = snapshot["artifact"]
+    doc = a["doc"]
+    older = [v for v in snapshot["versions"] if v["version"] != a["version"]]
+    dropped = max(0, len(older) - (CLOUD_VERSIONS_KEPT - 1))
+    links = {k: doc[k] for k in ("session_id", "alert_id") if doc.get(k)}
+    out = {
+        "versions_dropped": dropped,
+        "handled_events_dropped": sum(1 for e in snapshot["events"] if e["handled"]),
+        "crew": doc.get("crew") or None,
+        "chat_alert_links": links or None,
+        "doc_versions_reset": sum(1 for d in snapshot["docs"] if d["version"] > 1),
+        "last_opened": bool(doc.get("last_opened_at")),
+    }
+    out["anything"] = bool(out["versions_dropped"] or out["handled_events_dropped"] or out["crew"]
+                           or out["chat_alert_links"] or out["doc_versions_reset"] or out["last_opened"])
+    return out
+
+
+def canon(value: Any) -> str:
+    """Canonical JSON: sorted keys, no NaN, no ASCII escaping. Unlike Python `==` it tells True from 1 and
+    1.0 from 1, and two spellings of the same text (NFC/NFD) stay different."""
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+
+
+def _instant(value: Any) -> datetime | None:
+    try:
+        d = datetime.fromisoformat(value) if isinstance(value, str) else None
+    except ValueError:
+        return None
+    if d is None:
+        return None
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=timezone.utc)
+    return d.astimezone(timezone.utc)
+
+
+def same_instant_ms(sent: Any, got: Any) -> bool:
+    """The cloud stores times to the millisecond: what we sent, cut to the millisecond, must be what it holds."""
+    a, b = _instant(sent), _instant(got)
+    return a is not None and b is not None and a.replace(microsecond=a.microsecond // 1000 * 1000) == b
+
+
+def compare_with_cloud(bundle: dict[str, Any], g: dict, data: Any, html: str, versions: Any,
+                       old_html: dict[int, str], events: Any) -> list[str]:
+    """Everything the cloud stores of this page, compared with what was sent, TYPE-STRICT. Returns the names of
+    the parts that differ ([] = identical). Pure and CPU-bound: call it in a worker thread."""
+    bad: list[str] = []
+    meta = bundle["meta"]
+    if g.get("role") != "owner":
+        bad.append("owner")
+    if g.get("status") not in ("active", "read_only"):
+        bad.append(f"status {g.get('status')}")
+    if g.get("title") != " ".join(meta["title"].split()):
+        bad.append("title")
+    if g.get("description") != meta.get("description"):
+        bad.append("description")
+    if g.get("data_notes") != meta.get("data_notes"):
+        bad.append("data notes")
+    if g.get("archived") is not bool(meta.get("archived")):
+        bad.append("archived")
+    if g.get("version") != bundle["html_version"] or isinstance(g.get("version"), bool):
+        bad.append("page version")
+    try:
+        if canon(_norm_schemas(g.get("schemas"))) != canon(_norm_schemas(bundle["schemas"])):
+            bad.append("collection schemas")
+    except (ValueError, TypeError):
+        bad.append("collection schemas")
+    if not isinstance(data, dict) or not isinstance(data.get("rev"), int):
+        return bad + ["data"]
+    try:
+        if canon(data.get("state")) != canon(bundle["state"]):
+            bad.append("state")
+        if data.get("state_version") != bundle["state_version"]:
+            bad.append("state version")
+        got_docs = {name: {d.get("id"): d for d in docs} for name, docs in (data.get("collections") or {}).items() if docs}
+        sent_docs = {name: docs for name, docs in bundle["collections"].items() if docs}
+        if {k: sorted(v) for k, v in got_docs.items()} != {k: sorted(v) for k, v in sent_docs.items()}:
+            bad.append("document counts")
+        else:
+            differ = times = False
+            for name, docs in sent_docs.items():
+                for doc_id, d in docs.items():
+                    theirs = got_docs[name][doc_id]
+                    if canon(theirs.get("data")) != canon(d["data"]):
+                        differ = True
+                    if not (same_instant_ms(d["created_at"], theirs.get("created_at"))
+                            and same_instant_ms(d.get("updated_at") or d["created_at"], theirs.get("updated_at"))):
+                        times = True
+            if differ:
+                bad.append("documents")
+            if times:
+                bad.append("document times")
+    except (ValueError, TypeError):
+        bad.append("data")
+    if html != bundle["html"]:
+        bad.append("page")
+    # page history: the same versions, the older ones with the same html, note and time
+    older = sorted(bundle.get("html_versions") or [], key=lambda v: v["version"])
+    got_versions = {v.get("version"): v for v in (versions or {}).get("versions", [])} if isinstance(versions, dict) else {}
+    if sorted(got_versions) != sorted([v["version"] for v in older] + [bundle["html_version"]]):
+        bad.append("page versions")
+    else:
+        for v in older:
+            theirs = got_versions[v["version"]]
+            if old_html.get(v["version"]) != v["html"]:
+                bad.append("page versions")
+                break
+            if theirs.get("note") != v.get("note") or not same_instant_ms(v["created_at"], theirs.get("created_at")):
+                bad.append("page version times")
+                break
+    sent_events = bundle["events"]
+    got_events = (events or {}).get("events") if isinstance(events, dict) else None
+    if not isinstance(got_events, list) or len(got_events) != len(sent_events):
+        bad.append("events")
+    else:
+        try:
+            if canon([[e["name"], e.get("payload") or {}] for e in sent_events]) != \
+                    canon([[e.get("name"), e.get("payload") or {}] for e in got_events]):
+                bad.append("events")
+            elif not all(same_instant_ms(a["created_at"], b.get("created_at")) for a, b in zip(sent_events, got_events)):
+                bad.append("event times")
+        except (ValueError, TypeError):
+            bad.append("events")
+    return bad
+
+
+def _norm_schemas(value: Any) -> dict:
+    out = {}
+    for name, spec in (value or {}).items():
+        try:
+            out[name] = s.CollectionSchema.model_validate(spec).model_dump(exclude_none=True)
+        except ValueError:
+            out[name] = spec
+    return out
+
+
 # ── wire format ──────────────────────────────────────────────────────────────
 def pack(bundle: dict[str, Any]) -> bytes:
     """Compact JSON, gzip'd. Raises BundleInvalid for a value JSON cannot carry (NaN, Infinity)."""

@@ -71,8 +71,9 @@ def _map(reply: CloudReply, phase: str) -> CloudError:
     cloud_code = data.get("code") if isinstance(data.get("code"), str) else None
     message = data.get("message") if isinstance(data.get("message"), str) else "The cloud refused the request."
     detail: dict[str, Any] = {"phase": phase, "cloud_code": cloud_code}
-    if isinstance(data.get("detail"), dict):
-        detail["cloud"] = data["detail"]
+    structured = data.get("info") if isinstance(data.get("info"), dict) else data.get("detail")
+    if isinstance(structured, dict):
+        detail["cloud"] = structured
     headers = {k: v for k, v in reply.headers.items() if k.lower() == "retry-after"}
     code = "too_large_for_cloud" if reply.status == 413 else (cloud_code or "cloud_error")
     return CloudError(message, status=reply.status, code=code, detail=detail, headers=headers or None)
@@ -116,7 +117,9 @@ class _Phase:
     known = False  # the artifact exists locally (a failure is worth remembering for the app)
 
 
-async def move_to_cloud(user_id: str, artifact_id: str, request_id: str | None = None) -> dict[str, Any]:
+async def move_to_cloud(
+    user_id: str, artifact_id: str, request_id: str | None = None, acknowledge_not_carried: bool = False,
+) -> dict[str, Any]:
     link = await cloud_link.require_link(user_id)
     if link.scope != "manage":
         raise CloudError("This server's cloud link is read-only. Link it again with full access to move pages.",
@@ -126,7 +129,7 @@ async def move_to_cloud(user_id: str, artifact_id: str, request_id: str | None =
     phase = _Phase()
     with artifact_locks.busy(artifact_id, moving=True):
         try:
-            return await _move(user_id, artifact_id, link, phase, request_id)
+            return await _move(user_id, artifact_id, link, phase, request_id, acknowledge_not_carried)
         except CloudReply as r:
             err = _map(r, phase.name)
         except CloudUnavailable as e:
@@ -146,12 +149,82 @@ async def move_to_cloud(user_id: str, artifact_id: str, request_id: str | None =
             err.detail = {}
         err.detail.setdefault("phase", phase.name)
         err.detail["local_data_changed"] = False
-        if phase.known:
+        if phase.known and err.code != "confirmation_required":
             await db.set_failure(user_id, artifact_id, phase.name, err.code, err.message, utcnow())
         raise err
 
 
-async def _move(user_id: str, artifact_id: str, link, phase: _Phase, request_id: str | None) -> dict[str, Any]:
+def _prepare(snap: dict[str, Any], now: datetime) -> dict[str, Any]:
+    """All the CPU work of a move, in one plain function so it can run in a worker thread (a 12 MB page takes
+    seconds of JSON and gzip that must not stall every other request): the bundle, what stops it fitting, the
+    numbers the cloud would refuse, the wire bytes, the schema check, the fingerprint, what is not carried."""
+    bundle = cloud_bundle.build_bundle(snap, now)
+    problems = cloud_bundle.too_big(snap, bundle)
+    numbers = cloud_bundle.bad_numbers(bundle)
+    out: dict[str, Any] = {"bundle": bundle, "problems": problems, "numbers": numbers, "data": None, "errors": [],
+                           "fingerprint": db.fingerprint(snap), "not_carried": cloud_bundle.not_carried(snap)}
+    if problems or numbers:
+        return out
+    out["data"] = cloud_bundle.pack(bundle)
+    out["errors"] = cloud_bundle.validate_bundle(bundle)
+    return out
+
+
+def _preflight_errors(prep: dict[str, Any]) -> CloudError | None:
+    if prep["numbers"]:
+        return CloudError(
+            "This page holds numbers the cloud cannot store (whole numbers beyond 64 bits, or NaN/Infinity). "
+            "Nothing was sent; change them and try again.", status=422, code="unsupported_number",
+            detail={"paths": prep["numbers"]})
+    if prep["problems"]:
+        return CloudError("This page is too big for the cloud. Nothing was sent; trim what is listed and try again.",
+                          status=413, code="too_large_for_cloud", detail={"problems": prep["problems"]})
+    data = prep["data"]
+    if len(data) > settings.cloud_max_transfer_bytes:
+        return CloudError("This page is too big for the cloud even compressed. Nothing was sent.", status=413,
+                          code="too_large_for_cloud", detail={"problems": [{
+                              "item": "the compressed bundle", "size": len(data),
+                              "limit": settings.cloud_max_transfer_bytes, "unit": "bytes"}]})
+    if prep["errors"]:  # our own bundle does not match the contract: a bug or data this server should not have
+        return CloudError("This page cannot be put into the cloud's bundle format.", status=422,
+                          code="bundle_invalid", detail={"errors": prep["errors"]})
+    return None
+
+
+async def move_preview(user_id: str, artifact_id: str) -> dict[str, Any]:
+    """What a move would do, without doing anything and without calling the cloud: whether it fits, what is
+    NOT carried over, and what happens to members (nobody: the page is not shared yet)."""
+    if await cloud_db.get_pointer(user_id, artifact_id) is not None:
+        raise CloudError("This page already lives in the cloud.", status=409, code="already_in_cloud")
+    async with artifact_service._write_lock:  # noqa: SLF001
+        snap = await db.read_snapshot(user_id, artifact_id)
+    if snap is None:
+        raise NotFound("artifact", artifact_id)
+    prep = await asyncio.to_thread(_prepare, snap, utcnow())
+    err = _preflight_errors(prep)
+    problems = [] if err is None else (err.detail or {}).get("problems") or (
+        [{"item": "numbers", "paths": prep["numbers"]}] if prep["numbers"] else [{"item": err.message}])
+    raw = len(json.dumps(prep["bundle"], ensure_ascii=False).encode())
+    carried = prep["not_carried"]
+    return {
+        "artifact_id": artifact_id,
+        "can_move": err is None and not snap["artifact"]["archived"] and cloud_bundle.portable_id(artifact_id),
+        "blocked_because": (None if err is None else err.code) or (
+            "artifact_archived" if snap["artifact"]["archived"] else
+            None if cloud_bundle.portable_id(artifact_id) else "id_not_portable"),
+        "problems": problems,
+        "size": {"bytes": raw, "limit_bytes": settings.cloud_max_bundle_bytes,
+                 "compressed_bytes": len(prep["data"]) if prep["data"] else None,
+                 "documents": len(snap["docs"]), "unhandled_events": len(prep["bundle"]["events"])},
+        "not_carried": carried,
+        "requires_acknowledgement": carried["anything"],
+        "member_impact": "none",
+        "backup_days": settings.cloud_backup_days,
+    }
+
+
+async def _move(user_id: str, artifact_id: str, link, phase: _Phase, request_id: str | None,
+                acknowledge: bool = False) -> dict[str, Any]:
     async with artifact_service._write_lock:  # noqa: SLF001 - no write is half-done while we read
         snap = await db.read_snapshot(user_id, artifact_id)
     if snap is None:
@@ -164,24 +237,16 @@ async def _move(user_id: str, artifact_id: str, link, phase: _Phase, request_id:
     if not cloud_bundle.portable_id(artifact_id):
         raise CloudError("This page's id cannot be kept in the cloud, so it cannot be moved.",
                          status=422, code="id_not_portable")
-    now = utcnow()
-    bundle = cloud_bundle.build_bundle(snap, now)
-    problems = cloud_bundle.too_big(snap, bundle)
-    if problems:
+    prep = await asyncio.to_thread(_prepare, snap, utcnow())
+    refusal = _preflight_errors(prep)
+    if refusal is not None:
+        raise refusal
+    bundle, data, fingerprint, carried = prep["bundle"], prep["data"], prep["fingerprint"], prep["not_carried"]
+    if carried["anything"] and not acknowledge:
         raise CloudError(
-            "This page is too big for the cloud. Nothing was sent; trim what is listed and try again.",
-            status=413, code="too_large_for_cloud", detail={"problems": problems})
-    data = cloud_bundle.pack(bundle)
-    if len(data) > settings.cloud_max_transfer_bytes:
-        raise CloudError("This page is too big for the cloud even compressed. Nothing was sent.", status=413,
-                         code="too_large_for_cloud", detail={"problems": [{
-                             "item": "the compressed bundle", "size": len(data),
-                             "limit": settings.cloud_max_transfer_bytes, "unit": "bytes"}]})
-    errors = cloud_bundle.validate_bundle(bundle)
-    if errors:  # our own bundle does not match the contract: a bug or data this server should not have
-        raise CloudError("This page cannot be put into the cloud's bundle format.", status=422,
-                         code="bundle_invalid", detail={"errors": errors})
-    fingerprint = db.fingerprint(snap)
+            "Some of this page is not kept in the cloud. Review what is listed, then move it again with "
+            "acknowledge_not_carried set to true. Nothing was sent.", status=409, code="confirmation_required",
+            detail={"not_carried": carried, "backup_days": settings.cloud_backup_days})
 
     await _call(user_id, "GET", "/me", request_id=request_id)  # linked, token good, cloud reachable
     resumed = False
@@ -215,7 +280,8 @@ async def _move(user_id: str, artifact_id: str, link, phase: _Phase, request_id:
     pointer = await cloud_db.get_pointer(user_id, artifact_id)
     assert pointer is not None
     return {"artifact": cloud_list._item(pointer),  # noqa: SLF001
-            "verified": True, "resumed": resumed, "backup_expires_at": backup_expires.isoformat()}
+            "verified": True, "resumed": resumed, "backup_expires_at": backup_expires.isoformat(),
+            "not_carried": carried}
 
 
 def _check_existing(g: dict, link) -> None:
@@ -237,7 +303,7 @@ async def _convert(user_id: str, artifact_id: str, link, g: dict, expected_finge
         snap = await db.read_snapshot(user_id, artifact_id)
         if snap is None:
             raise NotFound("artifact", artifact_id)
-        if db.fingerprint(snap) != expected_fingerprint:
+        if await asyncio.to_thread(db.fingerprint, snap) != expected_fingerprint:
             raise CloudError(
                 "The page changed while it was being moved, so it was NOT switched to the cloud copy. Try again.",
                 status=409, code="changed_during_move")
@@ -246,7 +312,8 @@ async def _convert(user_id: str, artifact_id: str, link, g: dict, expected_finge
             raise CloudUnavailable("The cloud answered in a way this server did not understand.")
         now = utcnow()
         expires = now + timedelta(days=settings.cloud_backup_days)
-        await db.convert_to_pointer(snap, pointer, backup_id=new_id(), created_at=now, expires_at=expires)
+        sealed = await asyncio.to_thread(db.seal, snap)  # gzip of the whole page: not on the event loop
+        await db.convert_to_pointer(snap, pointer, backup_id=new_id(), created_at=now, expires_at=expires, sealed=sealed)
     return expires
 
 
@@ -323,56 +390,26 @@ async def _import(user_id: str, artifact_id: str, upload_id: str, request_id: st
 
 
 async def _verify(user_id: str, artifact_id: str, bundle: dict, g: dict, request_id: str | None) -> list[str]:
-    """Compare the cloud's copy with the bundle that was sent. [] when they agree."""
-    bad: list[str] = []
+    """Read the cloud's copy back and compare EVERYTHING it stores with the bundle that was sent, type-strict
+    (cloud_bundle.compare_with_cloud). [] when they are identical; else the names of what differs."""
     base = f"/gacabits/{cloud_client.quote_id(artifact_id)}"
-    if g.get("role") != "owner":
-        bad.append("owner")
-    if g.get("status") not in ("active", "read_only"):
-        bad.append(f"status {g.get('status')}")
-    if g.get("version") != bundle["html_version"]:
-        bad.append("page version")
-    if " ".join(str(g.get("title") or "").split()) != bundle["meta"]["title"]:
-        bad.append("title")
-    if _norm_schemas(g.get("schemas")) != _norm_schemas(bundle["schemas"]):
-        bad.append("collection schemas")
-    snap = _json(await _call(user_id, "GET", base + "/data", request_id=request_id))
-    if not isinstance(snap, dict) or not isinstance(snap.get("rev"), int):
-        return bad + ["data"]
-    if snap.get("state") != bundle["state"]:
-        bad.append("state")
-    if snap.get("state_version") != bundle["state_version"]:
-        bad.append("state version")
-    theirs = {name: {d.get("id"): d.get("data") for d in docs}
-              for name, docs in (snap.get("collections") or {}).items() if docs}
-    sent = {name: {doc_id: d["data"] for doc_id, d in docs.items()} for name, docs in bundle["collections"].items() if docs}
-    if {k: len(v) for k, v in theirs.items()} != {k: len(v) for k, v in sent.items()}:
-        bad.append("document counts")
-    elif theirs != sent:
-        bad.append("documents")
+    data = _json(await _call(user_id, "GET", base + "/data", request_id=request_id))
     html = (await _call(user_id, "GET", base + "/html", request_id=request_id)).text
-    if html != bundle["html"]:
-        bad.append("page")
-    ev = _json(await cloud_link.call(user_id, "GET", base + "/events", params={"unhandled": "true", "limit": 500},
-                                     request_id=request_id))
-    got = [(e.get("name"), e.get("payload") or {}) for e in (ev or {}).get("events", [])] if isinstance(ev, dict) else None
-    if got != [(e["name"], e.get("payload") or {}) for e in bundle["events"]]:
-        bad.append("events")
-    return bad
-
-
-def _norm_schemas(value: Any) -> dict:
-    out = {}
-    for name, spec in (value or {}).items():
-        try:
-            out[name] = s.CollectionSchema.model_validate(spec).model_dump(exclude_none=True)
-        except ValueError:
-            out[name] = spec
-    return out
+    versions = _json(await _call(user_id, "GET", base + "/versions", request_id=request_id))
+    old_html: dict[int, str] = {}
+    for v in bundle.get("html_versions") or []:
+        resp = await cloud_link.call(user_id, "GET", base + "/html", params={"version": v["version"]},
+                                     request_id=request_id)
+        old_html[v["version"]] = resp.text
+    events = _json(await cloud_link.call(user_id, "GET", base + "/events", params={"unhandled": "true", "limit": 500},
+                                         request_id=request_id))
+    return await asyncio.to_thread(cloud_bundle.compare_with_cloud, bundle, g, data, html, versions, old_html, events)
 
 
 # ═════════════════════════ bring home ════════════════════════════════════════
-async def bring_home(user_id: str, artifact_id: str, request_id: str | None = None) -> dict[str, Any]:
+async def bring_home(
+    user_id: str, artifact_id: str, request_id: str | None = None, acknowledge_members: bool = False,
+) -> dict[str, Any]:
     with artifact_locks.busy(artifact_id):
         if await artifacts_db.find(user_id, artifact_id) is not None:
             return await _finish_pending(user_id, artifact_id, request_id)
@@ -387,26 +424,34 @@ async def bring_home(user_id: str, artifact_id: str, request_id: str | None = No
             g0 = await _get_gacabit(user_id, artifact_id, request_id)
             if g0 is None:
                 raise CloudError("The cloud has no copy of this page any more.", status=404, code="not_found")
+            members = g0.get("member_count") if isinstance(g0.get("member_count"), int) else 1
+            if members > 1 and not acknowledge_members:
+                # Bringing a page home cuts off every member at once. Say so BEFORE doing it.
+                raise CloudError(
+                    f"{members - 1} other member(s) share this page and would lose access the moment it comes home. "
+                    "Bring it home again with acknowledge_members set to true to go ahead. Nothing was changed.",
+                    status=409, code="members_will_lose_access", detail={"member_count": members, "others": members - 1})
             started = await _start_bring_home(user_id, artifact_id, request_id)
             phase.name = "downloading"
             data = await cloud_transfer.get(_download_url(started))
             phase.name = "restoring"
-            bundle = cloud_bundle.unpack(data)
+            bundle = await asyncio.to_thread(cloud_bundle.unpack, data)
             prior = None
             try:
-                found = await db.find_backup(artifact_id)
-                prior = found["snapshot"] if found and found["user_id"] == user_id else None
+                found = await db.find_backup(artifact_id, user_id)
+                prior = found["snapshot"] if found else None
             except ValueError:
                 logger.warning("the sealed backup of an artifact is damaged; bringing it home without it")
             now = utcnow()
             async with artifact_service._write_lock:  # noqa: SLF001
                 if await artifacts_db.find(user_id, artifact_id) is not None:
                     raise CloudError("A local page with this id appeared meanwhile.", status=409, code="conflict")
-                snap = cloud_bundle.bundle_to_snapshot(
-                    bundle, user_id=user_id, artifact_id=artifact_id, cloud_rev=int(g0.get("rev") or 0),
-                    position=pointer.position, updated_at=now, prior=prior)
+                snap = await asyncio.to_thread(
+                    lambda: cloud_bundle.bundle_to_snapshot(
+                        bundle, user_id=user_id, artifact_id=artifact_id, cloud_rev=int(g0.get("rev") or 0),
+                        position=pointer.position, updated_at=now, prior=prior))
                 await db.restore_snapshot(snap, keep_event_seq=False, bring_home={
-                    "fingerprint": db.fingerprint(snap), "undo_until": started.get("undo_until"),
+                    "fingerprint": await asyncio.to_thread(db.fingerprint, snap), "undo_until": started.get("undo_until"),
                     "created_at": now.isoformat()})
         except asyncio.CancelledError:
             if started is not None:
@@ -419,12 +464,12 @@ async def bring_home(user_id: str, artifact_id: str, request_id: str | None = No
                 err.detail = {**(err.detail if isinstance(err.detail, dict) else {}),
                               "cloud_state": "restored" if undone else "brought_home",
                               "undo_until": started.get("undo_until")}
-                if not undone:
-                    err.message += (" The cloud copy is locked for now; bring it home again or undo it "
-                                    "(it is kept for 7 days).")
+                err.message += (" The cloud copy was put back as it was." if undone else
+                                " The cloud copy is locked for now; bring it home again or undo it (it is kept for 7 days).")
             raise err from None
         cloud_list.forget(user_id)
-        return await _finish_pending(user_id, artifact_id, request_id, undo_until=started.get("undo_until"))
+        return await _finish_pending(user_id, artifact_id, request_id, undo_until=started.get("undo_until"),
+                                     members_lost=max(0, members - 1))
 
 
 def _as_error(e: BaseException, phase: str) -> CloudError:
@@ -442,7 +487,7 @@ def _as_error(e: BaseException, phase: str) -> CloudError:
         return CloudError("A local page with this id appeared meanwhile.", status=409, code="conflict",
                           detail={"phase": phase})
     logger.exception("bring home failed unexpectedly (%s)", type(e).__name__)
-    return CloudError("Bringing the page home failed unexpectedly. The cloud copy was left as it was.",
+    return CloudError("Bringing the page home failed unexpectedly.",
                       status=500, code="bring_home_failed", detail={"phase": phase})
 
 
@@ -457,7 +502,7 @@ async def _start_bring_home(user_id: str, artifact_id: str, request_id: str | No
         resp = await _call(user_id, "POST", path, body=body, request_id=request_id)
     except CloudReply as r:
         # 409 "already brought home": an earlier try flipped it and never finished. Undo that and go again.
-        if not (r.status == 409 and _reply_code(r) == "conflict" and "undo_until" in str(_parse(r).get("detail"))):
+        if not (r.status == 409 and _reply_code(r) == "conflict" and "undo_until" in str(_parse(r).get("info") or _parse(r).get("detail"))):
             raise
         await _call(user_id, "POST", path + "/undo", request_id=request_id)
         resp = await _call(user_id, "POST", path, body=body, request_id=request_id)
@@ -477,7 +522,8 @@ async def _undo_quietly(user_id: str, artifact_id: str) -> bool:
         return False
 
 
-async def _finish_pending(user_id: str, artifact_id: str, request_id: str | None, undo_until: str | None = None) -> dict:
+async def _finish_pending(user_id: str, artifact_id: str, request_id: str | None, undo_until: str | None = None,
+                          members_lost: int = 0) -> dict:
     """Tell the cloud the page arrived (idempotent). Failing here is not a failure of the bring-home:
     the page IS home; the cloud simply keeps its copy until it hears, and we ask again later."""
     row = await db.get_bring_home(artifact_id)
@@ -500,7 +546,8 @@ async def _finish_pending(user_id: str, artifact_id: str, request_id: str | None
                       "It will be told again later; its copy is not deleted until then."
     local = await artifact_service.get(user_id, artifact_id)
     return {"artifact": await cloud_list.local_item(user_id, local), "confirmed": confirmed,
-            "undo_until": undo_until or row.get("undo_until"), "warning": warning}
+            "undo_until": undo_until or row.get("undo_until"), "warning": warning,
+            "members_lost_access": members_lost}
 
 
 async def undo_bring_home(user_id: str, artifact_id: str, request_id: str | None = None) -> dict[str, Any]:
@@ -547,12 +594,12 @@ async def undo_bring_home(user_id: str, artifact_id: str, request_id: str | None
 
 
 # ═════════════════════════ backups and housekeeping ══════════════════════════
-async def restore_backup(ref: str) -> dict[str, Any]:
+async def restore_backup(ref: str, user_id: str | None = None) -> dict[str, Any]:
     """Put a sealed backup back as a local artifact (the CLI: `gaca-api cloud restore-backup <id>`).
     `ref` is the backup id or the artifact id. The cloud is not touched: a copy there (if any) stays,
     and anything written to it after the move is NOT in the backup."""
     try:
-        found = await db.find_backup(ref)
+        found = await db.find_backup(ref, user_id)
     except ValueError as e:
         raise CloudError(str(e), status=500, code="backup_damaged") from None
     if found is None:
@@ -571,25 +618,77 @@ async def restore_backup(ref: str) -> dict[str, Any]:
             "expires_at": found["expires_at"]}
 
 
+_BACKUP_CHECK_EVERY = timedelta(days=1)
+_PROTECT_NEWEST_DAYS = 90  # the newest backup of a page that still has a pointer is kept at least this long
+_BACKUP_CEILING_DAYS = 365  # nothing is kept longer than this, verified or not
+_backup_checked: dict[str, datetime] = {}
+
+
+async def _backup_may_go(row: dict[str, Any], now: datetime) -> bool:
+    """A backup past its 30 days is deleted only when it can no longer be needed:
+    the page is local again; or the cloud copy has just been seen alive and healthy (and the newest backup of a
+    page that still has a pointer is kept for 90 days regardless). A cloud copy that is missing, unreachable or
+    not active keeps the backup (with a warning, rechecked daily). Hard ceiling: one year."""
+    created = datetime.fromisoformat(row["created_at"])
+    age = now - created
+    if age >= timedelta(days=_BACKUP_CEILING_DAYS):
+        logger.warning("deleting a cloud backup after %d days, unverified", _BACKUP_CEILING_DAYS)
+        return True
+    artifact_id, user_id = row["artifact_id"], row["user_id"]
+    if await artifacts_db.find(user_id, artifact_id) is not None:
+        return True  # the page lives here again: its content is not at risk
+    pointer = await cloud_db.get_pointer(user_id, artifact_id)
+    if pointer is None:
+        logger.warning("keeping the cloud backup of page %s: it has no pointer to check the cloud copy with", artifact_id)
+        return False
+    if age < timedelta(days=_PROTECT_NEWEST_DAYS) and await db.newest_backup_id(artifact_id) == row["id"]:
+        return False
+    last = _backup_checked.get(row["id"])
+    if last is not None and now - last < _BACKUP_CHECK_EVERY:
+        return False
+    _backup_checked[row["id"]] = now
+    try:
+        g = await _get_gacabit(user_id, artifact_id)
+    except (CloudError, CloudReply):
+        logger.warning("keeping the cloud backup of page %s: the cloud could not be asked; checking again tomorrow",
+                       artifact_id)
+        return False
+    if g is None or g.get("status") != "active":
+        logger.warning("keeping the cloud backup of page %s: the cloud copy is %s; checking again tomorrow",
+                       artifact_id, "missing" if g is None else g.get("status"))
+        return False
+    return True
+
+
 async def maintenance(now: datetime | None = None) -> dict[str, int]:
-    """Housekeeping, safe to run any time: delete backups past their expiry, and tell the cloud about
-    pages that came home but whose confirm never got through."""
+    """Housekeeping, safe to run any time: delete backups that are past their expiry AND whose cloud copy was just
+    verified healthy (see `_backup_may_go`), and tell the cloud about pages that came home but whose confirm never
+    got through."""
     global _last_maintenance
     now = now or utcnow()
     _last_maintenance = now
-    removed = await db.delete_expired_backups(now)
+    removed = kept = 0
+    for row in await db.due_backups(now):
+        if await _backup_may_go(row, now):
+            removed += await db.delete_backup(row["id"])
+            _backup_checked.pop(row["id"], None)
+        else:
+            kept += 1
     confirmed = 0
     for row in await db.list_bring_homes():
         if row["confirmed"]:
             continue
         try:
-            await _call(row["user_id"], "POST",
-                        f"/gacabits/{cloud_client.quote_id(row['artifact_id'])}/bring-home/confirm")
-            await db.mark_bring_home_confirmed(row["artifact_id"])
+            # Not while a bring-home / undo of this page is running: a confirm sent in that window can start the
+            # cloud's 7-day purge clock early.
+            with artifact_locks.busy(row["artifact_id"]):
+                await _call(row["user_id"], "POST",
+                            f"/gacabits/{cloud_client.quote_id(row['artifact_id'])}/bring-home/confirm")
+                await db.mark_bring_home_confirmed(row["artifact_id"])
             confirmed += 1
         except (CloudReply, CloudError):
-            pass  # not linked / cloud down: try again next time
-    return {"backups_removed": removed, "confirms_sent": confirmed}
+            pass  # not linked / cloud down / busy: try again next time
+    return {"backups_removed": removed, "backups_kept": kept, "confirms_sent": confirmed}
 
 
 async def maintenance_if_due(now: datetime | None = None) -> None:

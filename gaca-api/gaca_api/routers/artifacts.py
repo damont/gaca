@@ -79,25 +79,37 @@ async def get_artifact(artifact_id: str, user: UserDoc = Depends(get_current_use
 
 
 # ── moving between this server and the cloud (paired device only: the tap IS the confirmation) ──
+@router.get("/{artifact_id}/move-preview")
+async def move_preview(artifact_id: str, user: UserDoc = Depends(get_session_user)) -> dict[str, Any]:
+    """What moving this page to the cloud would do: whether it fits (sizes and caps), what is NOT carried over
+    (older page versions, handled events, crew, chat/alert links, per-document versions, last-opened) and
+    whether the move needs `acknowledge_not_carried`. Nothing is sent anywhere."""
+    return await cloud_move.move_preview(user.id, artifact_id)
+
+
 @router.post("/{artifact_id}/move-to-cloud")
 async def move_to_cloud(
-    artifact_id: str, user: UserDoc = Depends(get_session_user), x_request_id: str | None = Header(default=None),
+    artifact_id: str, body: cloud_schemas.MoveRequest | None = None, user: UserDoc = Depends(get_session_user),
+    x_request_id: str | None = Header(default=None),
 ) -> cloud_schemas.MoveResult:
     """Move this page, with its data, to your GACA Cloud account. It keeps its id. The cloud copy is checked
     against what was sent before this page is switched to it, and a sealed backup of the local copy is kept
     for 30 days. Any failure leaves the page here exactly as it was. Safe to retry. Blocks until done."""
     return cloud_schemas.MoveResult(**await cloud_move.move_to_cloud(
-        user.id, artifact_id, cloud_forward.clean_request_id(x_request_id)))
+        user.id, artifact_id, cloud_forward.clean_request_id(x_request_id),
+        (body or cloud_schemas.MoveRequest()).acknowledge_not_carried))
 
 
 @router.post("/{artifact_id}/bring-home")
 async def bring_home(
-    artifact_id: str, user: UserDoc = Depends(get_session_user), x_request_id: str | None = Header(default=None),
+    artifact_id: str, body: cloud_schemas.BringHomeRequest | None = None, user: UserDoc = Depends(get_session_user),
+    x_request_id: str | None = Header(default=None),
 ) -> cloud_schemas.BringHomeResult:
     """Bring a cloud page (that you own) back to this server. The cloud keeps its copy for 7 days (undo)
     and is only told to delete it after the page has arrived here. Safe to retry."""
     return cloud_schemas.BringHomeResult(**await cloud_move.bring_home(
-        user.id, artifact_id, cloud_forward.clean_request_id(x_request_id)))
+        user.id, artifact_id, cloud_forward.clean_request_id(x_request_id),
+        (body or cloud_schemas.BringHomeRequest()).acknowledge_members))
 
 
 @router.post("/{artifact_id}/undo-bring-home")

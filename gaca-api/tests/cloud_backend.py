@@ -49,6 +49,18 @@ def _ms(value: str) -> str:
     return d.replace(microsecond=d.microsecond // 1000 * 1000).isoformat()
 
 
+def bad_int(value) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return not -(2 ** 63) <= value < 2 ** 63
+    if isinstance(value, dict):
+        return any(bad_int(v) for v in value.values())
+    if isinstance(value, list):
+        return any(bad_int(v) for v in value)
+    return False
+
+
 def err(status: int, code: str, message: str, detail: dict | None = None, headers: dict | None = None):
     body = {"code": code, "message": message} | ({"detail": detail} if detail else {})
     return httpx.Response(status, json=body, headers=headers or {})
@@ -70,6 +82,11 @@ class FakeBackend(FakeCloud):
         self.s3_url_suffix = ""  # e.g. "@evil.example.com" appended after the host
         self.presign_headers: dict | None = None
         self.on_confirm = None  # called (no args) when a bring-home confirm arrives
+        self.billing_required = False  # uploads and imports answer 402 (the create gate of the real cloud)
+        self.upload_limit, self.transfer_limit = 20, 30  # per account per hour, as in config_bundles.py
+        self.upload_hits = self.transfer_hits = 0
+        self.serve_list = False  # answer GET /gacabits from the stored gacabits instead of a script
+        self.tamper = None  # called with the stored gacabit right after an import (simulates a cloud that drifts)
 
     # ── plumbing ─────────────────────────────────────────────────────────────
     def fault(self, name: str):
@@ -104,7 +121,7 @@ class FakeBackend(FakeCloud):
             "id": g["id"], "title": g["title"], "description": g["description"], "data_notes": g["data_notes"],
             "schemas": g["schemas"], "archived": g["archived"], "version": g["version"], "rev": g["rev"],
             "state_version": g["state_version"], "owner": ACCOUNT, "role": "owner", "status": g["status"],
-            "member_count": 1, "size_bytes": 1000, "created_at": g["created_at"], "updated_at": g["updated_at"],
+            "member_count": g.get("member_count", 1), "size_bytes": 1000, "created_at": g["created_at"], "updated_at": g["updated_at"],
             "link": f"gaca://gacabit/{g['id']}", "brought_home_until": g.get("undo_until"),
         }
 
@@ -136,6 +153,9 @@ class FakeBackend(FakeCloud):
         m, rx = request.method, re.fullmatch
         if (m, path) == ("GET", "/me"):
             return httpx.Response(200, json={**ACCOUNT, "email": "d@example.com", "created_at": "x"})
+        if (m, path) == ("GET", "/gacabits") and self.serve_list:
+            return httpx.Response(200, json={"gacabits": [self.out(g) for g in self.gacabits.values()],
+                                             "next_cursor": None})
         if (m, path) == ("POST", "/uploads"):
             return self._uploads(request)
         if (m, path) == ("POST", "/gacabits/import"):
@@ -145,7 +165,8 @@ class FakeBackend(FakeCloud):
             return None
         gid, tail = hit.group(1), hit.group(2) or ""
         g = self.gacabits.get(gid)
-        if (m, tail) == ("GET", "") or (g is not None and (m, tail) in (("GET", "/data"), ("GET", "/html"), ("GET", "/events"))):
+        if (m, tail) == ("GET", "") or (g is not None and (m, tail) in (
+                ("GET", "/data"), ("GET", "/html"), ("GET", "/events"), ("GET", "/versions"))):
             if g is None:
                 return err(404, "not_found", "gacabit not found")
             fault = self.fault("read_after_import") if self.imports else None
@@ -154,7 +175,17 @@ class FakeBackend(FakeCloud):
             if tail == "":
                 return httpx.Response(200, json=self.out(g))
             if tail == "/html":
+                want = request.url.params.get("version")
+                if want is not None:
+                    row = next((v for v in g["versions"] if str(v["version"]) == want), None)
+                    if row is None:
+                        return err(404, "not_found", "no such version")
+                    return httpx.Response(200, text=row["html"], headers={"content-type": "text/html"})
                 return httpx.Response(200, text=g["html"], headers={"content-type": "text/html"})
+            if tail == "/versions":
+                return httpx.Response(200, json={"current": g["version"], "versions": [
+                    {"version": v["version"], "created_at": v["created_at"], "note": v["note"], "size": len(v["html"])}
+                    for v in g["versions"]]})
             if tail == "/events":
                 unhandled = request.url.params.get("unhandled") == "true"
                 return httpx.Response(200, json={"events": [
@@ -176,6 +207,11 @@ class FakeBackend(FakeCloud):
         fault = self.fault("uploads")
         if fault:
             return err(*fault)
+        if self.billing_required:
+            return err(402, "billing_required", "Set up billing to create more gacabits")
+        self.upload_hits += 1
+        if self.upload_hits > self.upload_limit:
+            return err(429, "rate_limited", "Too many transfers; try again later", headers={"Retry-After": "1800"})
         body = self.body(request)
         if body.get("purpose") != "bundle" or not isinstance(body.get("size_bytes"), int):
             return err(422, "request_invalid", "bad request")
@@ -195,6 +231,11 @@ class FakeBackend(FakeCloud):
         fault = self.fault("import")
         if isinstance(fault, tuple):
             return err(*fault)
+        if self.billing_required:
+            return err(402, "billing_required", "Set up billing to create more gacabits")
+        self.transfer_hits += 1
+        if self.transfer_hits > self.transfer_limit:
+            return err(429, "rate_limited", "Too many transfers; try again later", headers={"Retry-After": "1800"})
         upload_id = self.body(request).get("upload_id")
         up = self.uploads.get(upload_id)
         if up is None or up["consumed"]:
@@ -210,6 +251,8 @@ class FakeBackend(FakeCloud):
             return err(422, "bundle_invalid", "The bundle does not match the bundle format", {"errors": [str(e)[:80]]})
         if len(raw) > 12 * 1024 * 1024:
             return err(413, "gacabit_size_exceeded", "too big")
+        if bad_int(bundle):  # the real cloud's database cannot hold these (check_json)
+            return err(422, "bundle_invalid", "A number does not fit in 64 bits")
         origin = bundle["meta"].get("origin_id")
         if origin in self.foreign_ids:
             return err(409, "id_conflict", "This gacabit's id is already used in the cloud by another account")
@@ -246,6 +289,8 @@ class FakeBackend(FakeCloud):
             "events": events, "rev": 0, "status": "active", "created_at": _ms(meta.get("created_at") or now.isoformat()),
             "updated_at": now.isoformat(), "confirmed": False, "undo_until": None,
         }
+        if self.tamper:
+            self.tamper(g)
         self.gacabits[gid] = g
         self.imports += 1
         return g
@@ -261,6 +306,9 @@ class FakeBackend(FakeCloud):
                 return err(*fault)
             if not self.body(request).get("user_confirmed"):
                 return err(403, "user_confirmation_required", "needs user_confirmed")
+            self.transfer_hits += 1
+            if self.transfer_hits > self.transfer_limit:
+                return err(429, "rate_limited", "Too many transfers; try again later", headers={"Retry-After": "1800"})
             if g["status"] == "brought_home":
                 return err(409, "conflict", "This gacabit was already brought home; undo that first to change it",
                            {"undo_until": g["undo_until"]})
