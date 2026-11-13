@@ -268,6 +268,8 @@ FAILURES = [
     ("import_422_blocked", lambda c: c.faults.update(**{"import": [(422, "validation_blocked", "blocked", {"findings": [{"rule": "html.eval", "severity": "block", "message": "eval"}]})]}), 422, "validation_blocked", "importing"),
     ("import_429", lambda c: c.faults.update(**{"import": [(429, "rate_limited", "slow down", None, {"Retry-After": "120"})]}), 429, "rate_limited", "importing"),
     ("import_503_forever", lambda c: c.faults.update(**{"import": [(503, "validation_unavailable", "later")] * 9}), 503, "validation_unavailable", "importing"),
+    ("import_403", lambda c: c.faults.update(**{"import": [(403, "forbidden_scope", "this server token is read-only")]}), 403, "forbidden_scope", "importing"),
+    ("cloud_down", lambda c: setattr(c, "down", True), 502, "cloud_unavailable", "preflight"),
     ("verify_mismatch", lambda c: c.faults.update(data_tamper=[1]), 502, "verify_failed", "verifying"),
 ]
 
