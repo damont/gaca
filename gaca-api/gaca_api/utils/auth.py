@@ -7,6 +7,8 @@ There are no passwords and no sessions to sign.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 
@@ -73,3 +75,16 @@ async def get_session_user(token: str = Depends(oauth2_scheme), request: Request
     """Like get_current_user but for owner-only actions an API token must never perform
     (managing tokens and devices): a paired device is required."""
     return await _resolve(request, token, allow_api_token=False)
+
+
+@dataclass
+class Caller:
+    """Who is calling, and whether it is software (an API token: Hermes, a script) rather than the
+    person's own app. Used where an action needs the person's explicit go-ahead from software."""
+    user: UserDoc
+    is_agent: bool
+
+
+async def get_caller(token: str = Depends(oauth2_scheme), request: Request = None) -> Caller:
+    user = await _resolve(request, token, allow_api_token=True)
+    return Caller(user=user, is_agent=not token_utils.looks_like_device(token))

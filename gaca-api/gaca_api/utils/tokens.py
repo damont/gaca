@@ -31,6 +31,16 @@ SCOPE_RULES: dict[str, list[tuple[str, str]]] = {
     ],
     "briefings": [("*", r"/api/briefings(/.*)?")],
     "artifacts": [("*", r"/api/artifacts(/.*)?")],
+    # The cloud link, for Hermes: see the link status, preview/redeem an invite (the latter needs
+    # `user_confirmed`, see services/cloud_proxy.py), browse and install templates. Linking and
+    # unlinking are never here: they need a paired device.
+    "cloud": [
+        ("GET", r"/api/cloud/link"),
+        ("POST", r"/api/cloud/invites/(preview|redeem)"),
+        ("GET", r"/api/cloud/templates"),
+        ("GET", r"/api/cloud/templates/[^/]+"),
+        ("POST", r"/api/cloud/templates/[^/]+/(get|install)"),
+    ],
     # Read-only on purpose: the heartbeat may learn its limits but never change them.
     "heartbeat": [("GET", r"/api/heartbeat/settings")],
 }
