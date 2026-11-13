@@ -428,7 +428,7 @@ def lag_during(linked, work, probe_path="/api/artifacts"):
 
 def big_page(linked, docs=3000):
     aid = make_page(linked, versions=2, events=0, handled=0, crew=None, collections={}, schemas={})
-    pad = "lorem ipsum " * 40
+    pad = "lorem ipsum dolor sit amet " * 100
     for start in range(0, docs, 200):
         ops = [{"op": "set", "collection": "log", "id": f"d{n}", "data": {"n": n, "pad": pad, "f": n / 7}}
                for n in range(start, min(docs, start + 200))]
