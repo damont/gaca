@@ -48,6 +48,15 @@ class LinkStatus(BaseModel):
     scope: str | None = None
     # The owner's setting: may their agents (Hermes) use the cloud? Off until switched on in the app.
     agent_access: bool = False
+    # False when this server has no cloud address (GACA_CLOUD_URL empty): linking cannot work, say so up front.
+    configured: bool = True
+    # A link in progress, so the app can show the same code again after leaving the screen. Paired device only
+    # (never an API token), and only while the code is still valid.
+    user_code: str | None = None
+    verification_uri: str | None = None
+    expires_at: datetime | None = None
+    expires_in: int | None = None
+    interval: int | None = None
     # Whether the credential asking may use cloud pages right now (the app: yes; a token: has `cloud`).
     cloud_access: bool = True
 
@@ -82,6 +91,8 @@ class ArtifactListItem(s.ArtifactOut):
     member_count: int = 1
     # True while this page is being moved to the cloud (it is read-only until that ends).
     moving: bool = False
+    # The id of the template last published from this page (cloud pages the owner published; else null).
+    published_template_id: str | None = None
     # Where it is in a cloud transfer. A cloud page: the cloud's own status (active, read_only,
     # brought_home ...). A local page: null, or `moving`, `move_failed` (the last move did not finish;
     # nothing was lost) or `bring_home_unconfirmed` (it came home but the cloud has not been told yet).

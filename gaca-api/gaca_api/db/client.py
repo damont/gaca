@@ -274,6 +274,10 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("artifacts", "position", "INTEGER"),
     # Whether the owner let their agents (Hermes tokens) use the cloud; off until they say so in the app.
     ("cloud_link", "agent_access", "INTEGER NOT NULL DEFAULT 0"),
+    # What a link in progress showed the person, so the app can show it again after leaving the screen.
+    # Neither is a secret (the device code is, and is never stored in the clear).
+    ("cloud_link", "pending_user_code", "TEXT"),
+    ("cloud_link", "pending_verification_uri", "TEXT"),
 )
 
 # Indexes that depend on a column from _ADDED_COLUMNS, so they can only be

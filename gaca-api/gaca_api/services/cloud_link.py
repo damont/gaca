@@ -193,6 +193,20 @@ async def status(user_id: str) -> dict[str, Any]:
     }
 
 
+async def pending_attempt(user_id: str) -> dict[str, Any] | None:
+    """The link in progress, as `start` showed it, while it is still valid; for a paired device only."""
+    link = await db.get_link(user_id)
+    if (link is None or link.status != "pending" or not link.pending_user_code
+            or not link.pending_verification_uri or not link.pending_expires_at):
+        return None
+    now = utcnow()
+    if now >= link.pending_expires_at:
+        return None
+    return {"user_code": link.pending_user_code, "verification_uri": link.pending_verification_uri,
+            "expires_at": link.pending_expires_at, "expires_in": int((link.pending_expires_at - now).total_seconds()),
+            "interval": link.pending_interval or 5}
+
+
 async def agent_access_wanted(user_id: str) -> bool:
     """Whether new Hermes tokens should carry the `cloud` scope (the owner switched it on)."""
     link = await db.get_link(user_id)
@@ -253,6 +267,7 @@ async def start(user_id: str, scope: str) -> dict[str, Any]:
         server_name=name, pending_device_enc=cloud_crypto.encrypt(device_code),
         pending_expires_at=now + timedelta(seconds=expires_in), pending_interval=interval,
         pending_next_poll=now + timedelta(seconds=interval), created_at=now,
+        pending_user_code=str(user_code), pending_verification_uri=str(verification_uri),
     ))
     return {"user_code": user_code, "verification_uri": verification_uri, "expires_in": expires_in, "interval": interval}
 

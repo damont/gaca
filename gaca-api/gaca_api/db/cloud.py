@@ -10,7 +10,7 @@ from .client import connection
 
 _LINK_COLS = (
     "user_id, cloud_url, status, scope, server_name, account_id, handle, server_id, token_enc, linked_at, "
-    "pending_device_enc, pending_expires_at, pending_interval, pending_next_poll, created_at, agent_access"
+    "pending_device_enc, pending_expires_at, pending_interval, pending_next_poll, created_at, agent_access, pending_user_code, pending_verification_uri"
 )
 _DT = ("linked_at", "pending_expires_at", "pending_next_poll", "created_at")
 
