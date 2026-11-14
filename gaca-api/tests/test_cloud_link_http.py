@@ -210,10 +210,10 @@ def test_link_routes_need_a_paired_device(http, cloud):
     assert http.post("/api/cloud/link/start", headers=hermes, json={}).status_code == 403
     assert http.post("/api/cloud/link/poll", headers=hermes).status_code == 403
     assert http.delete("/api/cloud/link", headers=hermes).status_code == 403
-    # but an API token with the cloud scope may read the status; one without may not
+    # any API token may ask whether the cloud is there; one without the cloud scope gets the trimmed answer
     assert http.get("/api/cloud/link", headers=hermes).status_code == 200
     plain = mint(http, name="plain", scopes=("artifacts",))
-    assert http.get("/api/cloud/link", headers=plain).status_code == 403
+    assert http.get("/api/cloud/link", headers=plain).status_code == 200
 
 
 def test_cloud_url_is_never_taken_from_the_request(http, cloud):
@@ -271,7 +271,8 @@ def test_unlink_revokes_on_the_cloud_then_forgets(http, cloud):
     sent = cloud.seen("DELETE", "/me/servers/srv9")[0]
     assert sent.headers["authorization"] == f"Bearer {SERVER_TOKEN}"  # the server token, to the cloud only
     assert http.get("/api/cloud/link", headers=http.session).json() == {
-        "linked": False, "state": "none", "handle": None, "account_id": None, "linked_at": None, "scope": None}
+        "linked": False, "state": "none", "handle": None, "account_id": None, "linked_at": None, "scope": None,
+        "agent_access": False, "cloud_access": True}
 
 
 def test_unlink_with_the_cloud_down_still_deletes_locally_and_says_so(http, cloud):

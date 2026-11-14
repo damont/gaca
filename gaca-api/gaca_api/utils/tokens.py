@@ -50,7 +50,9 @@ SCOPES = tuple(SCOPE_RULES)
 OPT_IN_SCOPES = ("cloud",)
 DEFAULT_SCOPES = tuple(s for s in SCOPES if s not in OPT_IN_SCOPES)
 # Allowed with any scope: lets a client check "is my token good, and whose is it".
-ALWAYS = [("GET", r"/api/auth/me")]
+# `GET /api/cloud/link` is here so an agent can always ask "are we connected to the cloud, and may I use it?"
+# (the answer is trimmed for a token without the `cloud` scope, see routers/cloud.py).
+ALWAYS = [("GET", r"/api/auth/me"), ("GET", r"/api/cloud/link")]
 
 
 def generate() -> str:

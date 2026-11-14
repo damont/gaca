@@ -65,6 +65,12 @@ async def revoke_active_by_name(user_id: str, name: str, when: datetime, *, keep
     return cursor.rowcount
 
 
+async def set_scopes(token_id: str, scopes: list[str]) -> None:
+    conn = connection()
+    await conn.execute("UPDATE api_tokens SET scopes = ? WHERE id = ?", (json.dumps(scopes), token_id))
+    await conn.commit()
+
+
 async def touch(token_id: str, when: datetime) -> None:
     conn = connection()
     await conn.execute("UPDATE api_tokens SET last_used_at = ? WHERE id = ?", (when.isoformat(), token_id))

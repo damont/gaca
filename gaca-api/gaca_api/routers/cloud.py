@@ -18,7 +18,7 @@ from ..models.user import UserDoc
 from ..schemas import artifact as artifact_schemas
 from ..schemas import cloud as s
 from ..services import cloud_forward, cloud_link, cloud_proxy
-from ..utils.auth import get_current_user, get_session_user
+from ..utils.auth import Caller, get_caller, get_current_user, get_session_user
 
 router = APIRouter(prefix="/cloud", tags=["cloud"])
 
@@ -44,9 +44,21 @@ async def poll_link(user: UserDoc = Depends(get_session_user)) -> s.LinkPoll:
 
 
 @router.get("/link")
-async def link_status(user: UserDoc = Depends(get_current_user)) -> s.LinkStatus:
-    """Whether this server is linked, to which account, and with what scope. Never the token."""
-    return s.LinkStatus(**await cloud_link.status(user.id))
+async def link_status(caller: Caller = Depends(get_caller)) -> s.LinkStatus:
+    """Whether this server is linked, to which account, and with what scope. Never the token.
+    Any API token may ask (an agent must be able to find out whether the cloud exists for it); one
+    without the `cloud` scope gets only `linked`, `state`, `agent_access` and `cloud_access: false`."""
+    st = await cloud_link.status(caller.user.id)
+    if not caller.cloud:
+        st = {k: st[k] for k in ("linked", "state", "agent_access") if k in st}
+    return s.LinkStatus(**st, cloud_access=caller.cloud)
+
+
+@router.put("/agent-access")
+async def set_agent_access(body: s.AgentAccess, user: UserDoc = Depends(get_session_user)) -> s.LinkStatus:
+    """The owner's switch (paired device only): let their agents (Hermes) see and use cloud pages, or
+    not. Off by default; turning it on needs a linked account. Existing Hermes tokens change in place."""
+    return s.LinkStatus(**await cloud_link.set_agent_access(user, body.enabled))
 
 
 @router.delete("/link")

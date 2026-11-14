@@ -46,6 +46,14 @@ class LinkStatus(BaseModel):
     account_id: str | None = None
     linked_at: datetime | None = None
     scope: str | None = None
+    # The owner's setting: may their agents (Hermes) use the cloud? Off until switched on in the app.
+    agent_access: bool = False
+    # Whether the credential asking may use cloud pages right now (the app: yes; a token: has `cloud`).
+    cloud_access: bool = True
+
+
+class AgentAccess(BaseModel):
+    enabled: bool
 
 
 class Unlinked(BaseModel):

@@ -186,6 +186,21 @@ def cmd_list(args):
     print("\n".join(describe(a) for a in found) if found else "(no artifacts)")
 
 
+def cmd_cloud_status(args):
+    """Is GACA Cloud connected, and may this agent use it? Answers from the server; nothing is assumed."""
+    st = api("GET", "/cloud/link")
+    if not st.get("linked"):
+        print("not connected: there is no GACA Cloud account on this server. Nothing to do; if the user wants "
+              "cloud pages or sharing, they connect it themselves in the app.")
+    elif not st.get("cloud_access"):
+        print("connected, but not for you: the user has not let their agent use the cloud. Do not try; if it "
+              "matters, tell them it is a switch in the app called Let my agent use the cloud.")
+    else:
+        print("connected and allowed: pages marked `cloud` in `list` live in the user's cloud account"
+              + (f" (account {st['handle']})" if st.get("handle") else "")
+              + ". Their `role` says what you may do.")
+
+
 def cmd_show(args):
     aid = resolve(args.ref)
     a = api("GET", f"/artifacts/{aid}")
@@ -366,6 +381,7 @@ def main():
         return sp
 
     sp = add("list", cmd_list); sp.add_argument("--q"); sp.add_argument("--all", action="store_true")
+    add("cloud-status", cmd_cloud_status)
     add("show", cmd_show, "ref")
     sp = add("publish", cmd_publish)
     sp.add_argument("--title", required=True); sp.add_argument("--html-file", required=True)
