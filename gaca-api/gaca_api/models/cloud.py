@@ -24,6 +24,8 @@ class CloudLink(BaseModel):
     pending_interval: int | None = None
     pending_next_poll: datetime | None = None
     created_at: datetime
+    pending_user_code: str | None = None
+    pending_verification_uri: str | None = None
     agent_access: bool = False  # the owner let Hermes tokens carry the `cloud` scope
 
 

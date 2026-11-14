@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Header, Query, Request
 
+from ..config import settings
 from ..models.user import UserDoc
 from ..schemas import artifact as artifact_schemas
 from ..schemas import cloud as s
@@ -51,7 +52,9 @@ async def link_status(caller: Caller = Depends(get_caller)) -> s.LinkStatus:
     st = await cloud_link.status(caller.user.id)
     if not caller.cloud:
         st = {k: st[k] for k in ("linked", "state", "agent_access") if k in st}
-    return s.LinkStatus(**st, cloud_access=caller.cloud)
+    if not caller.is_agent and st.get("state") == "pending":
+        st.update(await cloud_link.pending_attempt(caller.user.id) or {})
+    return s.LinkStatus(**st, configured=bool(settings.cloud_url.strip()), cloud_access=caller.cloud)
 
 
 @router.put("/agent-access")

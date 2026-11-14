@@ -272,7 +272,8 @@ def test_unlink_revokes_on_the_cloud_then_forgets(http, cloud):
     assert sent.headers["authorization"] == f"Bearer {SERVER_TOKEN}"  # the server token, to the cloud only
     assert http.get("/api/cloud/link", headers=http.session).json() == {
         "linked": False, "state": "none", "handle": None, "account_id": None, "linked_at": None, "scope": None,
-        "agent_access": False, "cloud_access": True}
+        "agent_access": False, "cloud_access": True, "configured": True, "user_code": None,
+        "verification_uri": None, "expires_at": None, "expires_in": None, "interval": None}
 
 
 def test_unlink_with_the_cloud_down_still_deletes_locally_and_says_so(http, cloud):

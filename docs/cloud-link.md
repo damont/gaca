@@ -51,7 +51,7 @@ Setup puts nothing cloud-related in Hermes. The skill is the same on every box a
 |---|---|
 | `POST /api/cloud/link/start` `{scope?}` | calls the cloud's `/auth/device/start`; returns `{user_code, verification_uri, expires_in, interval}` |
 | `POST /api/cloud/link/poll` | one step of `/auth/device/token`: `{status: pending\|linked\|expired\|denied}`; call every `interval` s |
-| `GET /api/cloud/link` | `{linked, state, handle, account_id, linked_at, scope, agent_access, cloud_access}`; never the token; trimmed for a token without `cloud` |
+| `GET /api/cloud/link` | `{linked, state, handle, account_id, linked_at, scope, agent_access, cloud_access, configured}`; never the token; trimmed for a token without `cloud`. `configured` is false when `GACA_CLOUD_URL` is empty. While `state` is `pending` a paired device also gets `{user_code, verification_uri, expires_at, expires_in, interval}` (never an API token, never the device code; gone once expired) so the app can show the same code again |
 | `PUT /api/cloud/agent-access` `{enabled}` | paired device only; lets Hermes tokens use the cloud (above) |
 | `DELETE /api/cloud/link[?force=true]` | refused `409 cloud_artifacts_present` (counts) while any page lives in the cloud, unless `force=true`; then revokes on the cloud (`DELETE /me/server`, falling back to `/me/servers/{id}` on 404/405), then deletes locally; if the cloud is unreachable it still deletes and says `cloud_revoked: false` |
 | `POST /api/cloud/invites/preview`, `/redeem` (paired device only) | pass-through; redeem creates the pointer |
@@ -59,7 +59,7 @@ Setup puts nothing cloud-related in Hermes. The skill is the same on every box a
 | `POST /api/cloud/templates/{id}/install` | get the bundle and create the local artifact from it |
 
 `/api/artifacts/{id}/...` for a pointer id is forwarded to `/gacabits/{id}/...`. `GET /api/artifacts` lists local
-artifacts and cloud pointers (`home`, `role`, `shared_by`, `member_count`, `stale`). `DELETE` on a pointer means
+artifacts and cloud pointers (`home`, `role`, `shared_by`, `member_count`, `published_template_id`, `stale`). `DELETE` on a pointer means
 leave (the owner gets the cloud's `409 owner_cannot_leave`).
 
 ## The list when the cloud is down
