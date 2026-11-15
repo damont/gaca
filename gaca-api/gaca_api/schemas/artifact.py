@@ -174,6 +174,8 @@ class ArtifactOut(BaseModel):
     session_id: str | None = None
     alert_id: str | None = None
     archived: bool = False
+    # The id of the template last published from this page (local: remembered here; cloud: from the cloud); else null.
+    published_template_id: str | None = None
     # Where the owner dragged it in the Artifacts tab (0 = first); null until they place it.
     position: int | None = None
     version: int

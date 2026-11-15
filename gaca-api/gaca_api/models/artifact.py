@@ -33,5 +33,8 @@ class ArtifactDoc(BaseModel):
     # collection name -> its shape ({fields: {name: {type, required, enum, min, max, max_length}}, strict}); see
     # schemas/artifact.py CollectionSchema and services/artifact_schema.py. Stored as plain dicts in the doc JSON.
     schemas: dict[str, Any] = Field(default_factory=dict)
+    # The template last published from this page (set by services/cloud_publish.py; a cloud page gets its
+    # own from the cloud instead). Part of the doc JSON, so no migration.
+    published_template_id: str | None = None
     created_at: datetime = Field(default_factory=utcnow)
     last_opened_at: datetime | None = None

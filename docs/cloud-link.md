@@ -59,7 +59,7 @@ Setup puts nothing cloud-related in Hermes. The skill is the same on every box a
 | `POST /api/cloud/templates/{id}/install` | get the bundle and create the local artifact from it |
 
 `/api/artifacts/{id}/...` for a pointer id is forwarded to `/gacabits/{id}/...`. `GET /api/artifacts` lists local
-artifacts and cloud pointers (`home`, `role`, `shared_by`, `member_count`, `published_template_id`, `stale`). `DELETE` on a pointer means
+artifacts and cloud pointers (`home`, `role`, `shared_by`, `member_count`, `published_template_id` (local pages: remembered by Part 8e publishing), `stale`). `DELETE` on a pointer means
 leave (the owner gets the cloud's `409 owner_cannot_leave`).
 
 ## The list when the cloud is down
@@ -102,7 +102,8 @@ pass-through; the only logic added is the transfer itself.
 | `POST /api/artifacts/{id}/undo-bring-home` | cancel a bring-home while the cloud still has its copy (7 days) |
 | `GET/PATCH/DELETE /api/cloud/gacabits/{id}/members[/{account_id}]`, `POST .../leave` | members |
 | `GET/POST /api/cloud/gacabits/{id}/invites`, `DELETE .../invites/{invite_id}` | invite links |
-| `GET/POST /api/cloud/gacabits/{id}/validations`, `POST .../publish` | share/publish previews, publish |
+| `GET/POST /api/cloud/gacabits/{id}/validations` | share checks (and, DEPRECATED, the publish preview: use `publish-check` below) |
+| `POST /api/cloud/gacabits/{id}/publish` | **DEPRECATED** (still works, cloud pages only): use `POST /api/artifacts/{id}/publish` below |
 | `PATCH/DELETE /api/cloud/templates/{id}`, `POST .../recheck` | the account's own templates (`GET /api/cloud/templates?mine=true` lists them) |
 
 The sharing routes are an explicit allowlist, one declared route per cloud route. A gacabit/template id is validated as 32
@@ -110,6 +111,33 @@ lowercase hex (anything else is 422/404 and nothing is sent); body and answer pa
 set here (never taken from the app) where the cloud wants it from a server token: creating an invite link, publishing,
 patching a template, deleting a template (`?user_confirmed=true`), and joining with an invite. An invite link's `url` is returned
 to the app once, exactly as the cloud sends it (`Cache-Control: no-store`); this server never stores or logs it.
+
+### Publishing to the gallery (Part 8e)
+
+Two routes for the app, paired device only (the tap is the confirmation; an API token gets 403), that work for a private
+page AND a cloud page. The app does not need to know which. They live in `services/cloud_publish.py` and
+`routers/artifact_publish.py`, apart from sharing (`cloud_share.py`): publishing and sharing do not share a service.
+
+| Route | What |
+|---|---|
+| `POST /api/artifacts/{id}/publish-check` | body = the listing text (`title`, `description`, `include_data_notes`, `tags`, `category`, `license`). Answers the cloud's report: `status`, `findings`, `content_hash`, `preview` (the page and its shapes, no data). Stores and publishes nothing |
+| `POST /api/artifacts/{id}/publish` | body = the listing text plus `visibility` (`listed`/`unlisted`), `confirmed_preview: true` and `preview_hash` (from the check). `201` with the template (starts `checking`) |
+
+- **Private page:** this server sends the page's CURRENT html and collection shapes (`schemas`), plus `data_notes` only when
+  `include_data_notes` is true, to the cloud's `POST /templates/preview` and `POST /templates/publish` with `source.id` = the
+  local artifact id. It never sends state, documents, events, handled events or any older page version. Publishing the same
+  page again is a new version of the same template. `title` defaults to the page's title. The new template's id is
+  stored on the local page and comes back as `published_template_id` in `GET /api/artifacts` rows (storing it is not an edit:
+  `rev`, `version` and `updated_at` do not change). Needs the cloud's `/templates/preview` and `/templates/publish` (cloud Brief 1).
+- **Cloud page:** the same listing goes to the cloud's `POST /gacabits/{id}/validations` (`subject: publish`) and
+  `POST /gacabits/{id}/publish`. `published_template_id` comes from the cloud as before.
+- `user_confirmed: true` is set here; the request cannot carry it, `source`, or any data field (422). The cloud's answers and
+  errors pass through unchanged (a `409 preview_mismatch` with the current hash, a blocked scan, 402, 429).
+- Refused here, before anything is sent: `409 cloud_not_configured` (no cloud address and no link), `409 cloud_not_linked`,
+  `403 cloud_link_read_only` (link scope `read`), `409 artifact_archived`, `423 artifact_moving` (a move is running),
+  `409 transfer_in_progress` (a bring-home is running), `404` (not this account's page).
+- The older `POST /api/cloud/gacabits/{id}/publish` and the `publish` subject of `.../validations` still work for cloud pages
+  but are **deprecated**; use the routes above.
 
 ### Move to the cloud
 
