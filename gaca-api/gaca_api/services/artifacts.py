@@ -57,6 +57,7 @@ def _out(row: db.ArtifactRow, schema_issues: list[str] | None = None) -> s.Artif
         schemas={name: s.CollectionSchema.model_validate(v) for name, v in d.schemas.items()},
         schema_issues=schema_issues or [],
         session_id=d.session_id, alert_id=d.alert_id, archived=row.archived, position=row.position,
+        published_template_id=d.published_template_id,
         version=row.version,
         rev=row.rev, state_version=row.state_version, created_at=d.created_at,
         updated_at=row.updated_at, last_opened_at=d.last_opened_at,

@@ -91,8 +91,6 @@ class ArtifactListItem(s.ArtifactOut):
     member_count: int = 1
     # True while this page is being moved to the cloud (it is read-only until that ends).
     moving: bool = False
-    # The id of the template last published from this page (cloud pages the owner published; else null).
-    published_template_id: str | None = None
     # Where it is in a cloud transfer. A cloud page: the cloud's own status (active, read_only,
     # brought_home ...). A local page: null, or `moving`, `move_failed` (the last move did not finish;
     # nothing was lost) or `bring_home_unconfirmed` (it came home but the cloud has not been told yet).

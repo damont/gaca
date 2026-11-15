@@ -126,12 +126,14 @@ async def run_validation(
         user.id, "POST", _g(gid, "/validations"), raw_body=await request.body(), request_id=_rid(x_request_id))
 
 
-@router.post("/gacabits/{gid}/publish")
+@router.post("/gacabits/{gid}/publish", deprecated=True)
 async def publish(
     request: Request, gid: str = GID, user: UserDoc = Depends(get_session_user),
     x_request_id: str | None = Header(default=None),
 ) -> None:
-    """Publish a stripped template (html + schemas, never data), after the person confirmed the preview."""
+    """DEPRECATED: use `POST /api/artifacts/{id}/publish` (works for private and cloud pages). Still works, for a
+    page already in the cloud. Publish a stripped template (html + schemas, never data), after the person confirmed
+    the preview."""
     await cloud_share.forward(
         user.id, "POST", _g(gid, "/publish"), raw_body=await request.body(), confirm_body=True,
         request_id=_rid(x_request_id))
