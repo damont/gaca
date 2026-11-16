@@ -18,7 +18,7 @@ from .agent import runtime as agent_runtime
 from .agent.base import EngineUnavailable
 from .bus import event_bus
 from .db import client
-from .provisioning.base import ProvisioningError
+from .provisioning.base import ProfileNameRejected, ProvisioningError
 from .config import settings
 from .security import BodyLimitMiddleware, SecurityHeadersMiddleware, cors_origins
 from .routers import agent, alerts, artifacts, auth, automations, briefings, artifact_publish, cloud, cloud_gacabits, crew, devices, heartbeat, push, sessions, setup, tokens
@@ -185,11 +185,19 @@ async def handle_crew_not_configured(
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
+@app.exception_handler(ProfileNameRejected)
+async def handle_profile_name_rejected(request: Request, exc: ProfileNameRejected) -> JSONResponse:
+    """The agent refused the crew member's name: 422 with the agent's own explanation."""
+    return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+
 @app.exception_handler(ProvisioningError)
 async def handle_provisioning_error(request: Request, exc: ProvisioningError) -> JSONResponse:
     """Map a failed provisioning call to HTTP 502 — gaca-api reached out to
     the user's own box on their behalf and that failed; not a client error,
-    and not gaca-api's own fault either, hence 502 rather than 500."""
+    and not gaca-api's own fault either, hence 502 rather than 500. Logged, because the
+    502 itself says nothing about why."""
+    logger.warning("%s %s: provisioning failed: %s: %s", request.method, request.url.path, type(exc).__name__, exc)
     return JSONResponse(status_code=502, content={"detail": str(exc)})
 
 

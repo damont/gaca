@@ -53,7 +53,7 @@ from pathlib import Path
 import httpx
 
 from . import cron_runs, skill_sync
-from .base import ProvisioningError
+from .base import ProfileNameRejected, ProvisioningError
 from .envfile import has_gaca_token, upsert_env
 
 
@@ -64,11 +64,23 @@ class LocalError(ProvisioningError):
     """A local Hermes operation failed or was refused."""
 
 
+_NAME_REJECTED = re.compile(r"not a valid profile name", re.I)
+
+
+def _tidy_hermes_name_error(reason: str) -> str:
+    """Hermes's own sentence, minus its "Then run `hermes profile create ...`" CLI hint."""
+    return re.sub(r"\s*Then run `[^`]*`\.?", "", reason).removeprefix("Error: ").strip()
+
+
 # The only keys local mode may write into a profile besides its API_SERVER_* settings: how that
 # profile's skills reach GACA. Nothing else about a profile's .env is ever touched.
 GACA_ENV_KEYS = ("GACA_BASE_URL", "GACA_API_TOKEN")
 
 PROFILE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
+# A name someone *asks* for. Hermes decides whether it is a valid profile name (and says why in
+# words the app can show), so this only refuses what must never reach a command line or a path:
+# control characters, path separators, a leading "-" (an option) or ".", and absurd length.
+_NEW_NAME_SAFE = re.compile(r"[^\x00-\x20\x7f/\\.\-][^\x00-\x1f\x7f/\\]{0,199}")
 _API_KEY = re.compile(r"[A-Za-z0-9_-]{16,256}")
 _KEY_VALUE = re.compile(r"[\x21-\x7e]+")  # printable ASCII, no whitespace
 _API_SERVER_LINE = re.compile(r"^(API_SERVER_[A-Z_]+)=(.*)$")
@@ -103,7 +115,7 @@ def argv_allowed(args: tuple[str, ...]) -> bool:
         len(args) == 4
         and args[0] == "profile"
         and args[1] == "create"
-        and PROFILE_NAME.fullmatch(args[2]) is not None
+        and _NEW_NAME_SAFE.fullmatch(args[2]) is not None
         and args[2] != "default"
         and args[3] == "--no-alias"
     )
@@ -552,8 +564,10 @@ class LocalHermes:
         that runs a gateway per profile, which local mode does not support. `extra_env` (only
         GACA_BASE_URL / GACA_API_TOKEN) is written in the same atomic write as the profile's
         own settings, so its skills can reach GACA from the first moment."""
-        if name == "default" or not (isinstance(name, str) and PROFILE_NAME.fullmatch(name)):
-            raise LocalError(f"not a valid new profile name: {name!r}")
+        if not (isinstance(name, str) and _NEW_NAME_SAFE.fullmatch(name)):
+            raise ProfileNameRejected(f"{name!r} is not a usable profile name")
+        if name == "default":
+            raise ProfileNameRejected("'default' is reserved; pick another name")
         if not (isinstance(api_key, str) and _API_KEY.fullmatch(api_key)):
             raise LocalError("not a valid API key")
         if extra_env is not None:
@@ -593,9 +607,13 @@ class LocalHermes:
         self, name: str, api_key: str, extra_env: dict[str, str] | None = None
     ) -> tuple[int, str]:
         default_port = await asyncio.to_thread(self._read_default_gateway_port)
-        code, _, err = await self._hermes("profile", "create", name, "--no-alias", timeout=120)
+        code, out, err = await self._hermes("profile", "create", name, "--no-alias", timeout=120)
         if code != 0:
-            raise LocalError(f"provisioning {name!r} failed at create: {err.strip()}")
+            # Hermes prints most of its reasons on stdout, not stderr: keep both.
+            reason = " ".join(f"{err}\n{out}".split())
+            if _NAME_REJECTED.search(reason):
+                raise ProfileNameRejected(_tidy_hermes_name_error(reason))
+            raise LocalError(f"provisioning {name!r} failed at create: {reason[-600:]}")
         directory = self._profile_dir(name)
         if directory is None:
             raise LocalError(f"provisioning {name!r} failed at create: profile directory not found")
