@@ -139,6 +139,9 @@ async def provision_crew_member(
     whether the name collides there too, surfaced as SSHError (mapped to
     502) if so.
     """
+    # Hermes lowercases profile names itself ("Scout" becomes profiles/scout), so the crew
+    # member is known by that name from the start. Whether the name is *valid* is Hermes' call.
+    name = name.strip().lower()
     if access is not None and settings.agent_access == "ssh":
         user = await set_ssh_connection(
             user, access.host, access.port, access.username, access.private_key

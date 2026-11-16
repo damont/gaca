@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from gaca_api.provisioning import local
-from gaca_api.provisioning.base import ProvisioningError
+from gaca_api.provisioning.base import ProfileNameRejected, ProvisioningError
 from gaca_api.provisioning.local import LocalError, LocalHermes, argv_allowed, stock_texts_from_source
 
 KEY = "k" * 32
@@ -158,20 +158,44 @@ BAD_NAMES = [
     "a b", "a\nb", "a\x00b", "x" * 65, "-rf", "_x", "a;id", "a$(id)", "a`id`", "a|b", "toolshed/..",
     "toolshed\n", "ｔoolshed", "ünï",
 ]
+# What may never reach a hermes command line or a path. Everything else a person might type
+# ("Gaca dev", "ünï", "a;id") goes to Hermes, which judges it and explains itself.
+UNSAFE_NEW_NAMES = [
+    "..", ".", "../etc", "a/b", "a\\b", "/etc/passwd", "", " ", " a", "a\nb", "a\x00b", "x" * 201,
+    "-rf", ".hidden", "toolshed/..",
+]
 
 
 @pytest.mark.parametrize("name", BAD_NAMES)
 def test_bad_names_are_refused_everywhere_and_nothing_runs(box, name):
     with pytest.raises(LocalError):
         run(box.hermes.read_profile_files(name))
-    with pytest.raises(LocalError):
+    assert calls(box) == []
+
+
+@pytest.mark.parametrize("name", UNSAFE_NEW_NAMES)
+def test_unsafe_new_names_are_refused_and_nothing_runs(box, name):
+    with pytest.raises(ProfileNameRejected):
         run(box.hermes.create_profile(name, 8650, KEY))
     assert calls(box) == []
     assert not argv_allowed(("profile", "create", name, "--no-alias"))
 
 
+@pytest.mark.parametrize("name", ["Gaca dev", "ünï", "a;id", "x" * 65])
+def test_other_odd_names_are_left_for_hermes_to_judge(box, name):
+    box.stub.write_text(
+        f"#!{sys.executable}\nimport sys\nprint(\"Error: 'gaca dev' is not a valid profile name. Use "
+        "lowercase letters, numbers, '-' or '_' (for example: gaca-dev). Then run `hermes profile create gaca-dev`.\")\n"
+        "sys.exit(1)\n")
+    with pytest.raises(ProfileNameRejected) as raised:
+        run(box.hermes.create_profile(name, 8650, KEY))
+    message = str(raised.value)
+    assert "not a valid profile name" in message and "gaca-dev" in message
+    assert "Then run" not in message and "`" not in message
+
+
 def test_default_cannot_be_created_and_other_junk_keys_are_refused(box):
-    with pytest.raises(LocalError):
+    with pytest.raises(ProfileNameRejected):
         run(box.hermes.create_profile("default", 8650, KEY))
     for bad_key in ["short", "x" * 300, "a" * 32 + "\nEVIL=1", "a" * 32 + " ", "a" * 31 + ";", ""]:
         with pytest.raises(LocalError):
@@ -283,7 +307,7 @@ def test_odd_default_soul_sources_yield_no_stock_texts_and_do_not_raise(source):
 
 @pytest.mark.parametrize("argv", [
     ("profile", "delete", "x"), ("profile", "create", "x"), ("profile", "create", "x", "--no-alias", "--extra"),
-    ("profile", "create", "default", "--no-alias"), ("profile", "create", "x;id", "--no-alias"),
+    ("profile", "create", "default", "--no-alias"), ("profile", "create", "x/y", "--no-alias"),
     ("--version", "--help"), ("chat",), ("config", "set", "a", "b"), ("gateway", "install"),
     ("--profile", "x", "gateway", "install", "--start-now"), ("-c", "id"), ("--version;id",), (),
     ("run", "bash"), ("skills", "install", "http://evil"), ("profile", "create", "-x", "--no-alias"),
@@ -349,9 +373,12 @@ def test_a_hung_hermes_is_killed_and_reported(box, tmp_path):
         os.kill(pid, 0)
 
 
-def test_a_failing_create_reports_hermes_stderr(box):
+def test_a_failing_create_reports_hermes_stderr_and_stdout(box):
     box.stub.write_text(f"#!{sys.executable}\nimport sys\nsys.stderr.write('profile exists')\nsys.exit(1)\n")
     with pytest.raises(LocalError, match="failed at create: profile exists"):
+        run(box.hermes.create_profile("fresh", 1, KEY))
+    box.stub.write_text(f"#!{sys.executable}\nimport sys\nprint('disk is full')\nsys.exit(1)\n")
+    with pytest.raises(LocalError, match="failed at create: .*disk is full"):
         run(box.hermes.create_profile("fresh", 1, KEY))
 
 

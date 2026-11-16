@@ -16,6 +16,11 @@ class ProvisioningError(Exception):
     client error, and not gaca-api's own fault either."""
 
 
+class ProfileNameRejected(ProvisioningError):
+    """The agent (Hermes) refused the requested crew member name. The message is the agent's
+    own explanation, fit to show a person. Mapped to HTTP 422 in main.py."""
+
+
 class Provisioner(Protocol):
     # Where the Hermes HTTP gateway is reached from gaca-api when nothing is
     # connected yet ("http://127.0.0.1" locally, the SSH host otherwise).
