@@ -22,6 +22,7 @@ from gaca_api.schemas.event import RunCompleted, RunFailed
 from gaca_api.services import alerts as alert_service
 from gaca_api.services import sessions as session_service
 from gaca_api.services.exceptions import (
+    Conflict,
     CrewNotConfigured,
     InvalidRequest,
     InvalidTransition,
@@ -202,79 +203,44 @@ def test_unique_index_is_the_backstop_for_dedupe(tmp_path):
     _run(go)
 
 
-# ── effective status ────────────────────────────────────────────────
+# ── stored rows from before alert actions ───────────────────────────
 
-def test_elapsed_snooze_reads_as_new():
-    alert = AlertDoc(
-        user_id="u1",
-        kind="disk.low",
-        title="t",
-        status="snoozed",
-        snooze_until=NOW - timedelta(seconds=1),
+@pytest.mark.parametrize("old, extra, now_reads", [
+    ("snoozed", {}, "new"),
+    ("delegated", {}, "new"),
+    ("completed", {}, "new"),
+    ("dismissed", {}, "not_useful"),
+    ("acted", {}, "done_by_me"),
+    ("acted", {"session_id": "s1"}, "done_by_gaca"),                      # a chat or run was involved
+    ("acted", {"resolution_note": "Taken to chat"}, "done_by_gaca"),
+    ("new", {}, "new"),
+    ("noted", {}, "noted"),
+])
+def test_old_statuses_read_as_the_new_vocabulary(old, extra, now_reads):
+    """Rows are normalised on read; nothing in storage needs rewriting."""
+    alert = AlertDoc.model_validate(
+        {"user_id": "u1", "kind": "k", "title": "t", "status": old, "snooze_until": "2026-08-09T12:00:00", **extra}
     )
-    assert alert.status == "snoozed"  # stored value is untouched
-    assert alert_service.effective_status(alert, NOW) == "new"
+    assert alert.status == now_reads
 
-
-def test_future_snooze_stays_snoozed():
-    alert = AlertDoc(
-        user_id="u1",
-        kind="disk.low",
-        title="t",
-        status="snoozed",
-        snooze_until=NOW + timedelta(hours=1),
-    )
-    assert alert_service.effective_status(alert, NOW) == "snoozed"
-
-
-def test_other_statuses_pass_through_untouched():
-    for status in ("new", "delegated", "acted", "dismissed"):
-        alert = AlertDoc(user_id="u1", kind="k", title="t", status=status)
-        assert alert_service.effective_status(alert, NOW) == status
-
-
-def test_naive_snooze_until_does_not_explode():
-    """Comparing a naive datetime with an aware one raises TypeError.
-
-    The model coerces naive input to UTC precisely so the most-called endpoint
-    in the app can't 500 on it.
-    """
-    alert = AlertDoc(
-        user_id="u1",
-        kind="k",
-        title="t",
-        status="snoozed",
-        snooze_until=datetime(2026, 8, 9, 11, 0, 0),  # no tzinfo
-    )
-    assert alert_service.effective_status(alert, NOW) == "new"
 
 
 # ── listing ─────────────────────────────────────────────────────────
 
-def test_list_filters_on_effective_status_not_stored_status(tmp_path):
-    """A deferred alert has to come back on its own, or snooze is a black hole."""
+def test_list_filters_on_status(tmp_path):
     settings.db_path = str(tmp_path / "t.db")
 
     async def go():
-        elapsed, _ = await alert_service.create("u1", _payload(title="elapsed"))
-        elapsed.status = "snoozed"
-        elapsed.snooze_until = NOW - timedelta(minutes=1)
-        await alerts_db.replace(elapsed)
+        for title, status in (("open", "new"), ("done", "done_by_gaca"), ("meh", "not_useful")):
+            await alerts_db.insert(_with_status(status, title=title))
+        open_ = await alert_service.list_for_user("u1", statuses=["new"])
+        closed = await alert_service.list_for_user("u1", statuses=["done_by_gaca", "not_useful"])
+        return open_, closed
 
-        pending, _ = await alert_service.create("u1", _payload(title="still snoozed"))
-        pending.status = "snoozed"
-        pending.snooze_until = NOW + timedelta(hours=2)
-        await alerts_db.replace(pending)
+    open_, closed = _run(go)
+    assert [a.title for a in open_] == ["open"]
+    assert sorted(a.title for a in closed) == ["done", "meh"]
 
-        as_new = await alert_service.list_for_user("u1", statuses=["new"], now=NOW)
-        as_snoozed = await alert_service.list_for_user(
-            "u1", statuses=["snoozed"], now=NOW
-        )
-        return as_new, as_snoozed
-
-    as_new, as_snoozed = _run(go)
-    assert [a.title for a in as_new] == ["elapsed"]
-    assert [a.title for a in as_snoozed] == ["still snoozed"]
 
 
 def test_list_is_scoped_to_the_owner(tmp_path):
@@ -326,181 +292,73 @@ def test_list_filters_by_crew(tmp_path):
 # ── triage transitions ──────────────────────────────────────────────
 
 def _with_status(status: str, **fields) -> AlertDoc:
-    return AlertDoc(user_id="u1", kind="k", title="t", status=status, **fields)
+    return AlertDoc(**{"user_id": "u1", "kind": "k", "title": "t", "status": status, **fields})
 
 
-def test_act_settles_the_alert_and_records_the_note(tmp_path):
+def test_close_records_how_it_ended_and_the_note(tmp_path):
+    settings.db_path = str(tmp_path / "t.db")
+
+    async def go():
+        out = {}
+        for reason in ("done_by_me", "noted", "not_useful"):
+            alert, _ = await alert_service.create("u1", _payload(title=reason))
+            before = alert.status_changed_at
+            closed = await alert_service.close("u1", alert.id, reason, note=f"because {reason}")
+            reloaded = await alert_service.get("u1", alert.id)
+            out[reason] = (closed, reloaded, before)
+        return out
+
+    for reason, (closed, reloaded, before) in _run(go).items():
+        assert closed.status == reloaded.status == reason
+        assert closed.resolution_note == f"because {reason}"
+        assert closed.status_changed_at >= before
+
+
+def test_done_by_gaca_cannot_be_chosen_by_hand(tmp_path):
+    """Only a successful action or take-to-chat says the agent did it."""
     settings.db_path = str(tmp_path / "t.db")
 
     async def go():
         alert, _ = await alert_service.create("u1", _payload())
-        before = alert.status_changed_at
-        acted = await alert_service.act("u1", alert.id, note="did it by hand")
-        return acted, before, await alert_service.get("u1", alert.id)
+        for bad in ("done_by_gaca", "new", "snoozed", "acted"):
+            with pytest.raises(InvalidRequest):
+                await alert_service.close("u1", alert.id, bad)
+        return await alert_service.get("u1", alert.id)
 
-    acted, before, reloaded = _run(go)
-    assert acted.status == "acted"
-    assert acted.resolution_note == "did it by hand"
-    assert acted.status_changed_at >= before
-    assert reloaded.status == "acted"  # persisted, not just returned
+    assert _run(go).status == "new"
 
 
-def test_dismiss_settles_the_alert(tmp_path):
+def test_the_old_act_and_dismiss_map_onto_close(tmp_path):
     settings.db_path = str(tmp_path / "t.db")
 
     async def go():
-        alert, _ = await alert_service.create("u1", _payload())
-        return await alert_service.dismiss("u1", alert.id, note="not interesting")
+        a, _ = await alert_service.create("u1", _payload(title="a"))
+        b, _ = await alert_service.create("u1", _payload(title="b"))
+        return (await alert_service.act("u1", a.id)).status, (await alert_service.dismiss("u1", b.id)).status
 
-    dismissed = _run(go)
-    assert dismissed.status == "dismissed"
-    assert dismissed.resolution_note == "not interesting"
+    assert _run(go) == ("done_by_me", "not_useful")
 
 
-def test_act_with_no_note_preserves_the_existing_resolution_note(tmp_path):
-    """Acting on a `completed` alert with no note of your own keeps Hermes's
-    own output rather than silently wiping it to None."""
+def test_closing_with_no_note_keeps_the_existing_resolution_note(tmp_path):
     settings.db_path = str(tmp_path / "t.db")
 
     async def go():
-        await alerts_db.insert(_with_status("completed", resolution_note="Hermes: cleaned up 4GB"))
+        await alerts_db.insert(_with_status("new", resolution_note="earlier note"))
         alert = (await alerts_db.find_by_user("u1"))[0]
-        return await alert_service.act("u1", alert.id)
+        return await alert_service.close("u1", alert.id, "noted")
 
-    acted = _run(go)
-    assert acted.status == "acted"
-    assert acted.resolution_note == "Hermes: cleaned up 4GB"
+    assert _run(go).resolution_note == "earlier note"
 
 
-def test_act_with_a_note_overwrites_the_existing_resolution_note(tmp_path):
+@pytest.mark.parametrize("closed", ["done_by_gaca", "done_by_me", "noted", "not_useful"])
+def test_a_closed_alert_rejects_closing_again(tmp_path, closed):
     settings.db_path = str(tmp_path / "t.db")
 
     async def go():
-        await alerts_db.insert(_with_status("completed", resolution_note="Hermes: cleaned up 4GB"))
-        alert = (await alerts_db.find_by_user("u1"))[0]
-        return await alert_service.act("u1", alert.id, note="looks good, thanks")
-
-    acted = _run(go)
-    assert acted.resolution_note == "looks good, thanks"
-
-
-def test_dismiss_with_no_note_preserves_the_existing_resolution_note(tmp_path):
-    settings.db_path = str(tmp_path / "t.db")
-
-    async def go():
-        await alerts_db.insert(_with_status("completed", resolution_note="Hermes: nothing to report"))
-        alert = (await alerts_db.find_by_user("u1"))[0]
-        return await alert_service.dismiss("u1", alert.id)
-
-    dismissed = _run(go)
-    assert dismissed.resolution_note == "Hermes: nothing to report"
-
-
-def test_snooze_defers_and_then_returns_on_its_own(tmp_path):
-    settings.db_path = str(tmp_path / "t.db")
-    until = NOW + timedelta(hours=2)
-
-    async def go():
-        alert, _ = await alert_service.create("u1", _payload())
-        snoozed = await alert_service.snooze("u1", alert.id, until)
-        return snoozed
-
-    snoozed = _run(go)
-    assert snoozed.status == "snoozed"
-    assert snoozed.snooze_until == until
-    # Still deferred an hour before it's due...
-    assert alert_service.effective_status(snoozed, until - timedelta(hours=1)) == "snoozed"
-    # ...and back in the inbox a second after, with nothing scheduled to do it.
-    assert alert_service.effective_status(snoozed, until + timedelta(seconds=1)) == "new"
-
-
-def test_act_clears_a_pending_snooze(tmp_path):
-    """No stale deferral left hanging on a settled alert."""
-    settings.db_path = str(tmp_path / "t.db")
-
-    async def go():
-        alert, _ = await alert_service.create("u1", _payload())
-        await alert_service.snooze("u1", alert.id, NOW + timedelta(days=1))
-        return await alert_service.act("u1", alert.id)
-
-    acted = _run(go)
-    assert acted.status == "acted"
-    assert acted.snooze_until is None
-
-
-def test_a_snoozed_alert_can_still_be_triaged(tmp_path):
-    settings.db_path = str(tmp_path / "t.db")
-
-    async def go():
-        alert, _ = await alert_service.create("u1", _payload())
-        await alert_service.snooze("u1", alert.id, NOW + timedelta(days=1))
-        # re-snooze, then settle it
-        await alert_service.snooze("u1", alert.id, NOW + timedelta(days=2))
-        return await alert_service.dismiss("u1", alert.id)
-
-    assert _run(go).status == "dismissed"
-
-
-def test_completed_alerts_are_triageable(tmp_path):
-    """`completed` behaves exactly like `new` for manual triage — Hermes
-    finishing isn't the same as the alert being closed out."""
-    settings.db_path = str(tmp_path / "t.db")
-
-    async def go():
-        await alerts_db.insert(_with_status("completed"))
-        alert = (await alerts_db.find_by_user("u1"))[0]
-        return await alert_service.act("u1", alert.id)
-
-    assert _run(go).status == "acted"
-
-
-def test_completed_alert_can_be_snoozed(tmp_path):
-    settings.db_path = str(tmp_path / "t.db")
-
-    async def go():
-        await alerts_db.insert(_with_status("completed"))
-        alert = (await alerts_db.find_by_user("u1"))[0]
-        return await alert_service.snooze("u1", alert.id, NOW + timedelta(days=1))
-
-    assert _run(go).status == "snoozed"
-
-
-def test_completed_alert_can_be_redelegated(tmp_path, monkeypatch):
-    settings.db_path = str(tmp_path / "t.db")
-    _install_backend(monkeypatch, output="ok")
-
-    async def go():
-        await alerts_db.insert(_with_status("completed"))
-        alert = (await alerts_db.find_by_user("u1"))[0]
-        return await alert_service.delegate(_user(), alert.id)
-
-    assert _run(go).status == "delegated"
-
-
-@pytest.mark.parametrize("settled", ["acted", "dismissed"])
-def test_terminal_states_reject_further_triage(tmp_path, settled):
-    settings.db_path = str(tmp_path / "t.db")
-
-    async def go():
-        await alerts_db.insert(_with_status(settled))
-        alert = (await alerts_db.find_by_user("u1"))[0]
-        for move in (alert_service.act, alert_service.dismiss):
-            with pytest.raises(InvalidTransition):
-                await move("u1", alert.id)
-        with pytest.raises(InvalidTransition):
-            await alert_service.snooze("u1", alert.id, NOW + timedelta(days=1))
-
-    _run(go)
-
-
-def test_delegated_alerts_are_settled_by_the_run_not_by_hand(tmp_path):
-    settings.db_path = str(tmp_path / "t.db")
-
-    async def go():
-        await alerts_db.insert(_with_status("delegated"))
+        await alerts_db.insert(_with_status(closed))
         alert = (await alerts_db.find_by_user("u1"))[0]
         with pytest.raises(InvalidTransition):
-            await alert_service.act("u1", alert.id)
+            await alert_service.close("u1", alert.id, "noted")
 
     _run(go)
 
@@ -511,7 +369,7 @@ def test_transitions_are_scoped_to_the_owner(tmp_path):
     async def go():
         theirs, _ = await alert_service.create("u2", _payload())
         with pytest.raises(NotFound):
-            await alert_service.act("u1", theirs.id)
+            await alert_service.close("u1", theirs.id, "noted")
         # and it really is untouched
         return await alert_service.get("u2", theirs.id)
 
@@ -597,55 +455,126 @@ async def _drain_background() -> None:
     await asyncio.gather(*list(runs._background))
 
 
-def test_delegate_starts_a_session_and_marks_the_alert_delegated(tmp_path, monkeypatch):
+def test_running_an_action_opens_the_alert_chat_and_records_a_running_run(tmp_path, monkeypatch):
     settings.db_path = str(tmp_path / "t.db")
     _install_backend(monkeypatch, output="done")
 
     async def go():
-        alert, _ = await alert_service.create("u1", _payload())
-        return await alert_service.delegate(_user(), alert.id)
+        alert, _ = await alert_service.create(
+            "u1", _payload(suggested_actions=[{"label": "Clean logs", "prompt": "Free space"}])
+        )
+        return await alert_service.run_action(_user(), alert.id, suggested_action_index=0)
 
-    # Asserted on the return value, before the run has had a chance to settle
-    # anything — delegate() is non-blocking, same as start_turn underneath it.
-    delegated = _run(go)
-    assert delegated.status == "delegated"
-    assert delegated.session_id is not None
-    assert delegated.snooze_until is None
+    # Asserted on the return value, before the run has had a chance to settle:
+    # run_action() is non-blocking, same as start_turn underneath it.
+    started = _run(go)
+    assert started.status == "new"                      # open while it runs
+    assert started.session_id is not None
+    [run] = started.runs
+    assert (run.state, run.label, run.action_index, run.session_id) == (
+        "running", "Clean logs", 0, started.session_id)
 
 
-def test_a_completed_run_settles_the_alert_to_completed_with_the_output(tmp_path, monkeypatch):
-    """Not `acted` — Hermes finishing isn't the same as the alert being closed
-    out. `resolution_note` carries the run's own output so there's something
-    to actually look at."""
+def test_a_successful_run_records_the_result_and_closes_the_alert_done_by_gaca(tmp_path, monkeypatch):
     settings.db_path = str(tmp_path / "t.db")
-    _install_backend(monkeypatch, output="cleaned up 4GB")
+    _install_backend(monkeypatch, output="Added to your calendar.\nhttps://cal.example.com/e/1")
 
     async def go():
         alert, _ = await alert_service.create("u1", _payload())
-        await alert_service.delegate(_user(), alert.id)
+        await alert_service.run_action(_user(), alert.id)
         await _drain_background()
         return await alert_service.get("u1", alert.id)
 
     settled = _run(go)
-    assert settled.status == "completed"
-    assert settled.resolution_note == "cleaned up 4GB"
+    assert settled.status == "done_by_gaca"
+    [run] = settled.runs
+    assert run.state == "done" and run.finished_at is not None
+    assert "Added to your calendar" in run.summary
+    assert [link.url for link in run.links] == ["https://cal.example.com/e/1"]
+    assert settled.resolution_note == run.summary
 
 
-def test_a_failed_run_bounces_the_alert_back_to_new_with_the_error(tmp_path, monkeypatch):
-    """A failed delegation can never silently vanish — same rule as slice 4,
-    just triggered by the agent instead of a hand."""
+def test_a_failed_run_leaves_the_alert_open_with_the_error_on_the_run(tmp_path, monkeypatch):
+    """A failed action can never silently vanish or close the alert — it stays in the inbox
+    with what went wrong, and can be tried again."""
     settings.db_path = str(tmp_path / "t.db")
     _install_backend(monkeypatch, error="hermes gateway timed out")
 
     async def go():
         alert, _ = await alert_service.create("u1", _payload())
-        await alert_service.delegate(_user(), alert.id)
+        await alert_service.run_action(_user(), alert.id)
         await _drain_background()
         return await alert_service.get("u1", alert.id)
 
-    bounced = _run(go)
-    assert bounced.status == "new"
-    assert bounced.resolution_note == "hermes gateway timed out"
+    failed = _run(go)
+    assert failed.status == "new"
+    [run] = failed.runs
+    assert (run.state, run.error) == ("failed", "hermes gateway timed out")
+
+
+def test_a_failed_run_can_be_retried_in_the_same_chat(tmp_path, monkeypatch):
+    settings.db_path = str(tmp_path / "t.db")
+    _install_backend(monkeypatch, error="boom")
+
+    async def go():
+        alert, _ = await alert_service.create("u1", _payload())
+        await alert_service.run_action(_user(), alert.id)
+        await _drain_background()
+        _install_backend(monkeypatch, output="worked")
+        await alert_service.run_action(_user(), alert.id)
+        await _drain_background()
+        return await alert_service.get("u1", alert.id)
+
+    done = _run(go)
+    assert [r.state for r in done.runs] == ["failed", "done"]
+    assert len({r.session_id for r in done.runs}) == 1      # one chat per alert
+    assert done.status == "done_by_gaca"
+
+
+def test_only_one_action_runs_at_a_time(tmp_path, monkeypatch):
+    settings.db_path = str(tmp_path / "t.db")
+    _install_backend(monkeypatch, output="ok")
+
+    async def go():
+        alert, _ = await alert_service.create("u1", _payload())
+        await alert_service.run_action(_user(), alert.id)
+        with pytest.raises(Conflict):
+            await alert_service.run_action(_user(), alert.id)
+        await _drain_background()
+
+    _run(go)
+
+
+def test_a_run_that_finishes_after_the_alert_was_closed_does_not_reopen_it(tmp_path, monkeypatch):
+    settings.db_path = str(tmp_path / "t.db")
+    _install_backend(monkeypatch, output="done anyway")
+
+    async def go():
+        alert, _ = await alert_service.create("u1", _payload())
+        await alert_service.run_action(_user(), alert.id)
+        await alert_service.close("u1", alert.id, "not_useful")
+        await _drain_background()
+        return await alert_service.get("u1", alert.id)
+
+    settled = _run(go)
+    assert settled.status == "not_useful"                   # the person's choice stands
+    assert settled.runs[0].state == "done"                  # but the result is still recorded
+
+
+def test_a_refired_alert_forgets_earlier_runs_and_chat(tmp_path, monkeypatch):
+    settings.db_path = str(tmp_path / "t.db")
+    _install_backend(monkeypatch, output="ok")
+
+    async def go():
+        first, _ = await alert_service.create("u1", _payload(dedupe_key="k"))
+        await alert_service.run_action(_user(), first.id)
+        await _drain_background()
+        again, created = await alert_service.create("u1", _payload(dedupe_key="k"))
+        return created, again
+
+    created, again = _run(go)
+    assert created is False
+    assert again.status == "new" and again.runs == [] and again.session_id is None
 
 
 def test_delegate_raises_crew_not_configured_before_touching_anything(tmp_path):
@@ -661,7 +590,7 @@ def test_delegate_raises_crew_not_configured_before_touching_anything(tmp_path):
     async def go():
         alert, _ = await alert_service.create("u1", _payload())
         with pytest.raises(CrewNotConfigured):
-            await alert_service.delegate(_user(crew_configured=False), alert.id)
+            await alert_service.run_action(_user(crew_configured=False), alert.id)
         return await alert_service.get("u1", alert.id)
 
     unchanged = _run(go)
@@ -669,15 +598,15 @@ def test_delegate_raises_crew_not_configured_before_touching_anything(tmp_path):
     assert unchanged.session_id is None
 
 
-@pytest.mark.parametrize("settled", ["acted", "dismissed"])
-def test_delegating_a_terminal_alert_is_rejected(tmp_path, settled):
+@pytest.mark.parametrize("settled", ["done_by_gaca", "done_by_me", "noted", "not_useful"])
+def test_running_an_action_on_a_closed_alert_is_rejected(tmp_path, settled):
     settings.db_path = str(tmp_path / "t.db")
 
     async def go():
         await alerts_db.insert(_with_status(settled))
         alert = (await alerts_db.find_by_user("u1"))[0]
         with pytest.raises(InvalidTransition):
-            await alert_service.delegate(_user(), alert.id)
+            await alert_service.run_action(_user(), alert.id)
 
     _run(go)
 
@@ -696,11 +625,12 @@ def test_delegate_prefers_the_chosen_suggested_action_prompt(tmp_path, monkeypat
                 ]
             ),
         )
-        await alert_service.delegate(_user(), alert.id, suggested_action_index=1)
+        await alert_service.run_action(_user(), alert.id, suggested_action_index=1)
         await _drain_background()
 
     _run(go)
-    assert stub.user_message == "Compress the largest files"
+    assert stub.user_message.endswith("Compress the largest files")
+    assert "Disk is 91% full" in stub.user_message       # the agent is also given the alert itself
 
 
 def test_delegate_combines_action_and_free_text_instruction(tmp_path, monkeypatch):
@@ -711,7 +641,7 @@ def test_delegate_combines_action_and_free_text_instruction(tmp_path, monkeypatc
         alert, _ = await alert_service.create(
             "u1", _payload(suggested_actions=[{"label": "Clean logs", "prompt": "Free space"}])
         )
-        await alert_service.delegate(
+        await alert_service.run_action(
             _user(),
             alert.id,
             instruction="but don't touch anything under /var/lib/gaca",
@@ -720,7 +650,7 @@ def test_delegate_combines_action_and_free_text_instruction(tmp_path, monkeypatc
         await _drain_background()
 
     _run(go)
-    assert stub.user_message == "Free space\n\nbut don't touch anything under /var/lib/gaca"
+    assert stub.user_message.endswith("Free space\n\nbut don't touch anything under /var/lib/gaca")
 
 
 def test_delegate_falls_back_to_title_and_body_with_no_action_or_instruction(tmp_path, monkeypatch):
@@ -731,11 +661,12 @@ def test_delegate_falls_back_to_title_and_body_with_no_action_or_instruction(tmp
         alert, _ = await alert_service.create(
             "u1", _payload(title="Disk is 91% full", body="mount /")
         )
-        await alert_service.delegate(_user(), alert.id)
+        await alert_service.run_action(_user(), alert.id)
         await _drain_background()
 
     _run(go)
-    assert stub.user_message == "Disk is 91% full\n\nmount /"
+    assert "Disk is 91% full\n\nmount /" in stub.user_message
+    assert stub.user_message.rstrip().endswith("Disk is 91% full\n\nmount /")
 
 
 def test_delegate_rejects_an_out_of_range_suggested_action_index(tmp_path):
@@ -747,7 +678,7 @@ def test_delegate_rejects_an_out_of_range_suggested_action_index(tmp_path):
     async def go():
         alert, _ = await alert_service.create("u1", _payload())  # no suggested_actions
         with pytest.raises(InvalidRequest):
-            await alert_service.delegate(
+            await alert_service.run_action(
                 _user(crew_configured=False), alert.id, suggested_action_index=0
             )
 
@@ -791,7 +722,7 @@ def test_delegate_uses_the_alerts_own_crew_by_default(tmp_path, monkeypatch):
 
     async def go():
         alert, _ = await alert_service.create("u1", _payload(crew="trading"))
-        await alert_service.delegate(_multi_crew_user(), alert.id)
+        await alert_service.run_action(_multi_crew_user(), alert.id)
         await _drain_background()
 
     _run(go)
@@ -804,7 +735,7 @@ def test_delegate_explicit_crew_overrides_the_alerts_own_crew(tmp_path, monkeypa
 
     async def go():
         alert, _ = await alert_service.create("u1", _payload(crew="trading"))
-        await alert_service.delegate(_multi_crew_user(), alert.id, crew="toolshed")
+        await alert_service.run_action(_multi_crew_user(), alert.id, crew="toolshed")
         await _drain_background()
 
     _run(go)
@@ -819,7 +750,7 @@ def test_delegate_falls_back_to_the_default_when_the_alerts_crew_is_unset(
 
     async def go():
         alert, _ = await alert_service.create("u1", _payload())  # no crew
-        await alert_service.delegate(
+        await alert_service.run_action(
             _multi_crew_user(default_crew="trading"), alert.id
         )
         await _drain_background()
@@ -839,7 +770,7 @@ def test_delegate_falls_back_to_the_default_when_the_alerts_crew_is_unmatched(
 
     async def go():
         alert, _ = await alert_service.create("u1", _payload(crew="some-other-profile"))
-        await alert_service.delegate(
+        await alert_service.run_action(
             _multi_crew_user(default_crew="trading"), alert.id
         )
         await _drain_background()
@@ -856,15 +787,15 @@ def test_delegate_rejects_an_unknown_explicit_crew(tmp_path):
     async def go():
         alert, _ = await alert_service.create("u1", _payload())
         with pytest.raises(InvalidRequest):
-            await alert_service.delegate(
+            await alert_service.run_action(
                 _multi_crew_user(), alert.id, crew="nonexistent"
             )
 
     _run(go)
 
 
-# ── take to chat (open the chat with a draft; send nothing; mark handled) ────
-def test_take_to_chat_opens_a_session_with_a_draft_and_sends_nothing(tmp_path, monkeypatch):
+# ── take to chat (open the alert's chat; send nothing; the agent gets the alert as context) ────
+def test_take_to_chat_opens_a_session_with_no_draft_and_sends_nothing(tmp_path, monkeypatch):
     settings.db_path = str(tmp_path / "t.db")
     calls = _install_recording_backend(monkeypatch)
 
@@ -877,12 +808,11 @@ def test_take_to_chat_opens_a_session_with_a_draft_and_sends_nothing(tmp_path, m
         return taken, session, messages, draft
 
     taken, session, messages, draft = _run(go)
-    assert draft == "Disk is 91% full\n\nOnly 9 GB free on /var"
-    assert (session.alert_id, session.crew) == (taken.id, "default")  # same link + crew rules as delegate
+    assert draft is None                                              # the alert reaches the agent as context, not as typed text
+    assert (session.alert_id, session.crew) == (taken.id, "default")  # same link + crew rules as an action run
     assert messages == []                                             # nothing was sent, nothing stored
     assert calls == []                                                # and no agent was even contacted
-    assert (taken.status, taken.session_id, taken.resolution_note) == ("acted", session.id, "Taken to chat")
-    assert taken.snooze_until is None
+    assert (taken.status, taken.session_id, taken.resolution_note) == ("done_by_gaca", session.id, "Taken to chat")
 
 
 def test_take_to_chat_with_a_suggested_action_drafts_that_actions_prompt(tmp_path, monkeypatch):
@@ -901,25 +831,24 @@ def test_take_to_chat_with_a_suggested_action_drafts_that_actions_prompt(tmp_pat
     assert _run(go) == "Free space in /var/log"
 
 
-def test_take_to_chat_handles_snoozed_and_completed_alerts_but_leaves_closed_ones(tmp_path, monkeypatch):
+def test_take_to_chat_closes_an_open_alert_but_leaves_closed_ones(tmp_path, monkeypatch):
     settings.db_path = str(tmp_path / "t.db")
     _install_recording_backend(monkeypatch)
 
     async def go():
-        snoozed, _ = await alert_service.create("u1", _payload(title="a"))
-        await alert_service.snooze("u1", snoozed.id, datetime.now(timezone.utc) + timedelta(hours=2))
-        dismissed, _ = await alert_service.create("u1", _payload(title="b"))
-        await alert_service.dismiss("u1", dismissed.id, "not needed")
+        open_, _ = await alert_service.create("u1", _payload(title="a"))
+        meh, _ = await alert_service.create("u1", _payload(title="b"))
+        await alert_service.close("u1", meh.id, "not_useful", "not needed")
         return (
-            (await alert_service.take_to_chat(_user(), snoozed.id))[0],
-            (await alert_service.take_to_chat(_user(), dismissed.id))[0],
+            (await alert_service.take_to_chat(_user(), open_.id))[0],
+            (await alert_service.take_to_chat(_user(), meh.id))[0],
         )
 
-    from_snoozed, from_dismissed = _run(go)
-    assert from_snoozed.status == "acted" and from_snoozed.snooze_until is None
+    from_open, from_closed = _run(go)
+    assert from_open.status == "done_by_gaca"
     # Already closed: the chat still opens, but the alert keeps its status and its own note.
-    assert (from_dismissed.status, from_dismissed.resolution_note) == ("dismissed", "not needed")
-    assert from_dismissed.session_id
+    assert (from_closed.status, from_closed.resolution_note) == ("not_useful", "not needed")
+    assert from_closed.session_id
 
 
 def test_take_to_chat_twice_reuses_the_conversation(tmp_path, monkeypatch):
@@ -937,7 +866,7 @@ def test_take_to_chat_twice_reuses_the_conversation(tmp_path, monkeypatch):
 
     first, second, third, d1, d2, d3 = _run(go)
     assert first == second == third  # one conversation, not three
-    assert d1 and d2 is None and d3 == "Free space"  # reopening has no draft unless you pick a suggestion
+    assert d1 is None and d2 is None and d3 == "Free space"  # a draft only when you pick an action
 
 
 def test_take_to_chat_needs_a_crew_and_is_scoped_to_the_owner(tmp_path, monkeypatch):
@@ -1027,12 +956,12 @@ def test_delegate_new_raises_and_delegates_in_one_step(tmp_path, monkeypatch):
 
     instruction = DelegationCreate(instruction=instruction).instruction
     alert, msgs = _run(go)
-    assert alert.status == "delegated" and alert.session_id
+    assert alert.status == "new" and alert.session_id and alert.runs[0].state in ("running", "done")
     assert (alert.kind, alert.title, alert.body) == ("manual.delegation", "x" * 120, instruction)
     assert (alert.crew, alert.source) == ("toolshed", "app")
     # (resolved twice: once up front, so nothing is stored if it can't be reached)
     assert set(calls) == {("http://agent.example.com:8643", "toolshed-key")}
-    assert msgs[0].content == instruction  # what the crew member was sent
+    assert msgs[0].content == instruction  # what the chat records as said
 
 
 def test_delegate_new_defaults_the_crew_and_stores_nothing_on_a_bad_one(tmp_path, monkeypatch):

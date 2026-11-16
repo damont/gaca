@@ -68,8 +68,13 @@ async def start_turn(
     *,
     on_settled: OnSettled | None = None,
     attachments: Sequence["StoredAttachment"] = (),
+    agent_context: str | None = None,
 ) -> MessageDoc:
     """Persist the user message, start a run, spawn its reader. Non-blocking.
+
+    `agent_context`, if given, is shown to the agent ahead of the message on this turn only —
+    it is not stored as part of the message, so the transcript stays what the person said. It is
+    how a chat tied to an alert always carries the alert without anyone retyping it.
 
     `backend` is resolved by the caller (agent/runtime.py:backend_for, keyed
     on the calling user's own credentials) and handed in rather than looked
@@ -106,7 +111,7 @@ async def start_turn(
     run_id = await backend.start_run(
         session_id=session_id,
         history=history,
-        user_message=content,
+        user_message=f"{agent_context}\n\n{content}" if agent_context else content,
         images=[ImageInput(a.doc.content_type, a.data) for a in attachments],
     )
 

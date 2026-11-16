@@ -2,15 +2,15 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
 
 from ..db import alerts as alerts_db
 from ..db import users as users_db
 from ..db import artifacts as artifacts_db
-from ..models.alert import AlertDoc
+from ..db import sessions as sessions_db
+from ..models.alert import PERSON_CLOSE_REASONS, AlertDoc, AlertLink, AlertRun
 from ..models.base import utcnow
 from ..models.user import UserDoc
-from ..schemas.alert import AlertCreate, AlertOut
+from ..schemas.alert import AlertCreate, AlertOut, render_value
 from ..schemas.event import GacaEvent, RunCompleted, RunFailed
 from . import artifact_refs
 from ..db import cloud as cloud_db
@@ -18,30 +18,16 @@ from . import auth as auth_service
 from . import push as push_service
 from . import runs as run_service
 from . import sessions as session_service
-from .exceptions import InvalidRequest, InvalidTransition, NotFound
+from .exceptions import Conflict, InvalidRequest, InvalidTransition, NotFound
 
-# Manual triage is only possible out of the inbox states. `delegated` is settled
-# by the run working on it, not by hand; `acted` and `dismissed` are terminal.
-# `completed` — Hermes finished, but not yet closed out — is triageable the
-# same as `new`.
-TRIAGEABLE = ("new", "snoozed", "completed")
+# An alert can be closed, or have an action run on it, only while it is open.
+OPEN = "new"
+RUN_SUMMARY_MAX = 300
+MAX_RUN_LINKS = 5
 
 
-def effective_status(alert: AlertDoc, now: datetime | None = None) -> str:
-    """The status a client should display, which is not always the stored one.
-
-    A snooze that has elapsed reads as `new` again. Deriving that on read is
-    what lets the whole app run with no background worker: there is no sweeper
-    flipping rows back on a timer, and nothing to fall behind or double-fire.
-    The stored `status` stays `snoozed` — only the view changes.
-    """
-    if (
-        alert.status == "snoozed"
-        and alert.snooze_until is not None
-        and alert.snooze_until <= (now or utcnow())
-    ):
-        return "new"
-    return alert.status
+def is_open(alert: AlertDoc) -> bool:
+    return alert.status == OPEN
 
 
 async def create(user_id: str, payload: AlertCreate, allow_cloud: bool = True) -> tuple[AlertDoc, bool]:
@@ -88,9 +74,10 @@ async def create(user_id: str, payload: AlertCreate, allow_cloud: bool = True) -
                     **payload.model_dump(),
                     "status": "new",
                     "status_changed_at": utcnow(),
-                    # Clear anything the previous triage left behind.
-                    "snooze_until": None,
+                    # Clear anything the previous triage left behind, including runs: they
+                    # answered an earlier picture of the condition.
                     "session_id": None,
+                    "runs": [],
                     "resolution_note": None,
                 }
             )
@@ -125,7 +112,7 @@ async def to_out(user_id: str, alerts: list[AlertDoc]) -> list[AlertOut]:
     return [
         AlertOut(
             **a.model_dump(),
-            effective_status=effective_status(a),
+            effective_status=a.status,
             crew_removed=a.crew in removed,
             artifact=refs.get(a.artifact_id) if a.artifact_id else None,
         )
@@ -146,78 +133,108 @@ async def get(user_id: str, alert_id: str) -> AlertDoc:
     return alert
 
 
-async def _triage(
-    user_id: str, alert_id: str, to_status: str, **fields
+
+
+async def close(
+    user_id: str, alert_id: str, reason: str, note: str | None = None
 ) -> AlertDoc:
-    """Move an alert into `to_status`, or refuse.
+    """The person closes an open alert and says how it ended (`done_by_me`, `noted` or
+    `not_useful`). `done_by_gaca` is never chosen by hand — only a successful run or take-to-chat
+    sets it.
 
-    The guard reads the STORED status, not the effective one. They only ever
-    differ for an elapsed snooze, and `snoozed` is triageable anyway — so the
-    two agree here, and using the stored value keeps the rule about the real
-    state rather than a derived view of it.
+    The reason is what the heartbeat learns from, so it is required, not defaulted.
     """
+    if reason not in PERSON_CLOSE_REASONS:
+        raise InvalidRequest(f"reason must be one of {', '.join(PERSON_CLOSE_REASONS)}")
     alert = await get(user_id, alert_id)
-    if alert.status not in TRIAGEABLE:
-        raise InvalidTransition("alert", alert_id, alert.status, to_status)
-
+    if not is_open(alert):
+        raise InvalidTransition("alert", alert_id, alert.status, reason)
     updated = alert.model_copy(
-        update={"status": to_status, "status_changed_at": utcnow(), **fields}
+        update={
+            "status": reason,
+            "status_changed_at": utcnow(),
+            "resolution_note": note if note is not None else alert.resolution_note,
+        }
     )
     await alerts_db.replace(updated)
     return updated
 
 
-async def _resolution_note_for(user_id: str, alert_id: str, note: str | None) -> str | None:
-    """The note to store: the caller's, if given — otherwise whatever's
-    already there.
-
-    Matters most for a `completed` alert: it arrives with `resolution_note`
-    set to Hermes's own output, and closing it out with no note of your own
-    should keep that, not silently wipe it with None.
-    """
-    if note is not None:
-        return note
-    return (await get(user_id, alert_id)).resolution_note
-
-
 async def act(user_id: str, alert_id: str, note: str | None = None) -> AlertDoc:
-    """Mark an alert handled. Terminal.
-
-    `snooze_until` is cleared on the way out so no stale deferral is left
-    hanging on a settled alert.
-    """
-    resolution_note = await _resolution_note_for(user_id, alert_id, note)
-    return await _triage(
-        user_id, alert_id, "acted", resolution_note=resolution_note, snooze_until=None
-    )
+    """Deprecated: "I handled it myself". Same as close(reason="done_by_me")."""
+    return await close(user_id, alert_id, "done_by_me", note)
 
 
 async def dismiss(user_id: str, alert_id: str, note: str | None = None) -> AlertDoc:
-    """Ignore an alert. Terminal — but a re-fired dedupe_key still resurfaces it."""
-    resolution_note = await _resolution_note_for(user_id, alert_id, note)
-    return await _triage(
-        user_id, alert_id, "dismissed", resolution_note=resolution_note, snooze_until=None
-    )
+    """Deprecated: "ignore this". Same as close(reason="not_useful")."""
+    return await close(user_id, alert_id, "not_useful", note)
 
 
-async def snooze(user_id: str, alert_id: str, until: datetime) -> AlertDoc:
-    """Defer an alert until `until`, after which it reads as `new` again.
+# Given to the agent with every action run, so the answer is short enough to show under a button.
+RUN_CONTRACT = (
+    "The person tapped this action in the GACA app. Do it now, then reply in at most three short "
+    "lines saying exactly what you did, with no preamble. Put any link to what you made or "
+    "changed on its own line as a plain URL. If you could not do it, say why in one line."
+)
 
-    Nothing is scheduled — no timer, no worker, no row to sweep. The deferral is
-    a stored timestamp and `effective_status` does the rest on the next read.
-    """
-    return await _triage(user_id, alert_id, "snoozed", snooze_until=until)
+
+def _alert_context(alert: AlertDoc) -> str:
+    """The alert as plain text for an agent: what it said, what it carries, what was offered and
+    what has already been tried. Sent ahead of every turn in a chat tied to the alert, so the
+    person never retypes it and the agent never works from a stale copy."""
+    lines = [
+        "[GACA alert this conversation is about — context, not a message from the person. "
+        "Don't ask them to repeat it.]",
+        f"Title: {alert.title}",
+        f"Kind: {alert.kind}   Severity: {alert.severity}   Status: {alert.status}",
+    ]
+    if alert.body:
+        lines.append(f"Body: {alert.body}")
+    for key, value in alert.data.items():
+        lines.append(f"{key}: {render_value(value)}")
+    if alert.links:
+        lines.append("Links:")
+        lines += [f"- {link.label or link.url}: {link.url}" for link in alert.links]
+    if alert.suggested_actions:
+        lines.append("Actions that were offered:")
+        lines += [f"- {a.label}" for a in alert.suggested_actions]
+    if alert.runs:
+        lines.append("Already tried:")
+        for run in alert.runs:
+            detail = run.summary or run.error or ""
+            lines.append(f"- {run.label} — {run.state}{': ' + detail if detail else ''}")
+    return "\n".join(lines)
+
+
+async def chat_context(user_id: str, alert_id: str | None) -> str | None:
+    """Context for a chat turn in a session tied to `alert_id`; None if there is none (or the
+    alert is gone — the chat then simply carries on without it)."""
+    if not alert_id:
+        return None
+    alert = await alerts_db.find(alert_id)
+    if alert is None or alert.user_id != user_id:
+        return None
+    return _alert_context(alert)
+
+
+def _action_prompt(alert: AlertDoc, instruction: str | None, action_index: int | None) -> tuple[str, str]:
+    """(label for the run, prompt for the agent)."""
+    prompt = _delegate_prompt(alert, instruction, action_index)
+    if action_index is not None:
+        label = alert.suggested_actions[action_index].label
+    else:
+        label = re.split(r"\r\n|\r|\n", (instruction or alert.title).strip(), maxsplit=1)[0][:_TITLE_MAX]
+    return label, prompt
 
 
 def _delegate_prompt(
     alert: AlertDoc, instruction: str | None, suggested_action_index: int | None
 ) -> str:
-    """Build the text handed to the agent for a delegated alert.
+    """The text handed to the agent for an action run.
 
-    A chosen `suggested_action` seeds the prompt with its proven text; a
-    free-text `instruction` layers on top of that, or stands alone with no
-    action chosen. With neither, fall back to the alert's own title/body so
-    the agent still has something to work from.
+    A chosen suggested action supplies its own prompt (written to stand alone); a free-text
+    `instruction` layers on top of that, or stands alone. With neither, the alert's own
+    title/body/links stand in for it.
     """
     parts: list[str] = []
     if suggested_action_index is not None:
@@ -232,8 +249,6 @@ def _delegate_prompt(
         parts.append(instruction)
     if not parts:
         parts.append(f"{alert.title}\n\n{alert.body}" if alert.body else alert.title)
-        # The alert's own words stand in for it, so its links must too — otherwise the page the
-        # alert pointed at never reaches the agent. (A chosen suggestion's prompt stands alone.)
         if alert.links:
             parts.append(
                 "Links:\n" + "\n".join(f"- {link.label or link.url}: {link.url}" for link in alert.links)
@@ -241,7 +256,24 @@ def _delegate_prompt(
     return "\n\n".join(parts)
 
 
-async def delegate(
+async def _alert_session(user: UserDoc, alert: AlertDoc, crew: str | None):
+    """The chat tied to this alert, opened on first use. One chat per alert: a retry or a
+    follow-up lands in the same conversation, so the agent has what it already tried.
+
+    Returns (session_id, crew_member, created)."""
+    if alert.session_id:
+        existing = await sessions_db.find(alert.session_id)
+        if existing is not None:
+            member = auth_service.find_crew_member(user, existing.crew) or auth_service.resolve_crew_for_delegate(
+                user, crew, alert.crew
+            )
+            return existing.id, member, False
+    member = auth_service.resolve_crew_for_delegate(user, crew, alert.crew)
+    session = await session_service.create(user.id, alert.title, member.name, alert_id=alert.id)
+    return session.id, member, True
+
+
+async def run_action(
     user: UserDoc,
     alert_id: str,
     *,
@@ -249,55 +281,119 @@ async def delegate(
     suggested_action_index: int | None = None,
     crew: str | None = None,
 ) -> AlertDoc:
-    """Hand an alert to one of the caller's own crew members: open a session,
-    start a run, mark it delegated.
+    """Tap an action: record a run on the alert and start an agent on it.
 
-    Which crew member handles it is resolved by
-    auth_service.resolve_crew_for_delegate: `crew` (an explicit, named
-    choice) first, then the alert's own `crew` field (who raised it), then
-    the account's default. Takes the full UserDoc, not just an id — resolving
-    a crew member needs the user's configured host/crew (raises
-    CrewNotConfigured if none resolve, same as the chat routes).
+    The alert stays open while the run is in flight and when it fails (so it can be retried).
+    A run that succeeds closes the alert as `done_by_gaca` — see _settle_run. Only one run at a
+    time per alert, and only on an open alert. The agent is given the alert as context and the
+    short-answer contract; the chat keeps just the action's own prompt as what was "said".
 
-    The session this opens carries `crew` (which member owns it, fixed for
-    its lifetime) and `alert_id` (the chat-side half of the bidirectional
-    link back to this alert — the alert holds the forward pointer via
-    `session_id`, set below).
-
-    Same guard as manual triage — only a TRIAGEABLE alert (`new`, `snoozed`,
-    or `completed`) can be delegated. The run settles the alert asynchronously
-    via `_on_run_settled`, wired in as `on_settled` below; this call only
-    starts the run, it doesn't wait for it.
+    `crew` is an explicit choice (unknown -> 422); otherwise the chat's own crew member, the
+    alert's `crew`, then the account default.
     """
     alert = await get(user.id, alert_id)
-    if alert.status not in TRIAGEABLE:
-        raise InvalidTransition("alert", alert_id, alert.status, "delegated")
+    if not is_open(alert):
+        raise InvalidTransition("alert", alert_id, alert.status, "running")
+    if any(r.state == "running" for r in alert.runs):
+        raise Conflict("An action is already running on this alert")
 
-    # Validate the request against the alert's own data before touching the
-    # crew at all — a bad suggested_action_index is a 422 regardless of
-    # whether this user has even configured a crew member yet.
-    prompt = _delegate_prompt(alert, instruction, suggested_action_index)
-    crew_member = auth_service.resolve_crew_for_delegate(user, crew, alert.crew)
+    # Validate against the alert's own data before touching a crew member at all.
+    label, prompt = _action_prompt(alert, instruction, suggested_action_index)
+    session_id, crew_member, _ = await _alert_session(user, alert, crew)
     backend = auth_service.backend_for_crew(user, crew_member)
-    session = await session_service.create(
-        user.id, alert.title, crew_member.name, alert_id=alert.id
-    )
 
-    updated = alert.model_copy(
-        update={
-            "status": "delegated",
-            "status_changed_at": utcnow(),
-            "session_id": session.id,
-            "snooze_until": None,
-        }
-    )
+    run = AlertRun(action_index=suggested_action_index, label=label, session_id=session_id)
+    updated = alert.model_copy(update={"session_id": session_id, "runs": [*alert.runs, run]})
     await alerts_db.replace(updated)
 
     async def _on_settled(event: GacaEvent) -> None:
-        await _settle_delegation(alert_id, event)
+        await _settle_run(alert_id, run.id, event)
 
-    await run_service.start_turn(backend, session.id, prompt, on_settled=_on_settled)
+    try:
+        await run_service.start_turn(
+            backend,
+            session_id,
+            prompt,
+            on_settled=_on_settled,
+            agent_context=f"{_alert_context(updated)}\n\n{RUN_CONTRACT}",
+        )
+    except Exception as error:
+        # The run never started, so don't leave it "running" forever.
+        await _finish_run(alert_id, run.id, state="failed", error=str(error))
+        raise
     return updated
+
+
+def _links_in(text: str) -> list[AlertLink]:
+    """http(s) URLs the agent mentioned, in order, de-duplicated — shown as tappable links."""
+    seen: list[str] = []
+    for url in re.findall(r"https?://[^\s<>)\]\"']+", text):
+        url = url.rstrip(".,;:!?")
+        if url not in seen:
+            seen.append(url)
+    return [AlertLink(url=u) for u in seen[:MAX_RUN_LINKS]]
+
+
+async def _finish_run(
+    alert_id: str, run_id: str, *, state: str, summary: str | None = None,
+    links: list[AlertLink] | None = None, error: str | None = None,
+) -> AlertDoc | None:
+    """Record how a run ended. Reads the row fresh: the alert may have been closed, deduped
+    or deleted since the run started, and a settlement must never clobber that. Returns the
+    updated alert, or None if there was nothing to settle."""
+    current = await alerts_db.find(alert_id)
+    if current is None:
+        return None
+    runs = list(current.runs)
+    for i, r in enumerate(runs):
+        if r.id == run_id and r.state == "running":
+            runs[i] = r.model_copy(
+                update={
+                    "state": state, "finished_at": utcnow(), "summary": summary,
+                    "links": links or [], "error": error,
+                }
+            )
+            break
+    else:
+        return None
+    updated = current.model_copy(update={"runs": runs})
+    await alerts_db.replace(updated)
+    return updated
+
+
+async def _settle_run(alert_id: str, run_id: str, event: GacaEvent) -> None:
+    """A run ended. Success records the result and closes an open alert as `done_by_gaca`;
+    failure records the error and leaves the alert open so it can be retried. Either way the
+    person is told."""
+    from ..utils import artifact_links
+    from .sessions import tidy
+
+    if isinstance(event, RunCompleted):
+        text = artifact_links.strip(event.output or "")
+        summary = tidy(text, RUN_SUMMARY_MAX) or "Done."
+        updated = await _finish_run(
+            alert_id, run_id, state="done", summary=summary, links=_links_in(event.output or "")
+        )
+        if updated is None:
+            return
+        if is_open(updated):
+            updated = updated.model_copy(
+                update={"status": "done_by_gaca", "status_changed_at": utcnow(), "resolution_note": summary}
+            )
+            await alerts_db.replace(updated)
+        await push_service.notify(
+            updated.user_id, title=f"Done: {updated.title}", body=summary,
+            alert_id=updated.id, severity=updated.severity,
+        )
+    elif isinstance(event, RunFailed):
+        updated = await _finish_run(alert_id, run_id, state="failed", error=event.error)
+        if updated is None:
+            return
+        await push_service.notify(
+            updated.user_id, title=f"Couldn't finish: {updated.title}",
+            body=event.error or "The action failed. It is still in your inbox.",
+            alert_id=updated.id, severity=updated.severity,
+        )
 
 
 MANUAL_DELEGATION_KIND = "manual.delegation"
@@ -308,14 +404,12 @@ async def delegate_new(
     user: UserDoc, instruction: str, *, crew: str | None = None, source: str = "app"
 ) -> AlertDoc:
     """Raise an alert for something the user asked for (rather than something an agent
-    noticed) and delegate it straight away — the app's "New delegation" screen.
+    noticed) and run it straight away — the app's "New delegation" screen.
 
-    It's an ordinary alert so the result lands where every delegation's does: the run
-    settles it (`completed` with the reply, or back to `new` on failure). Titled with the
-    instruction's first line; attributed to the crew member handling it, since
-    delegate() never writes the resolved crew back onto the alert and the inbox's crew
-    filter goes by this field. Who handles it — and that they're reachable — is checked
-    before anything is stored, so a bad `crew` never leaves an orphan alert behind.
+    It's an ordinary alert so the result lands where every run's does. Attributed to the crew
+    member handling it, since the inbox's crew filter goes by this field. Who handles it — and
+    that they're reachable — is checked before anything is stored, so a bad `crew` never leaves
+    an orphan alert behind.
     """
     crew_member = auth_service.resolve_crew_for_delegate(user, crew, None)
     auth_service.backend_for_crew(user, crew_member)  # raises if there's no agent to reach
@@ -323,14 +417,11 @@ async def delegate_new(
     alert, _ = await create(
         user.id,
         AlertCreate(
-            kind=MANUAL_DELEGATION_KIND,
-            title=title,
-            body=instruction,
-            crew=crew_member.name,
-            source=source,
+            kind=MANUAL_DELEGATION_KIND, title=title, body=instruction,
+            crew=crew_member.name, source=source,
         ),
     )
-    return await delegate(user, alert.id, instruction=instruction, crew=crew_member.name)
+    return await run_action(user, alert.id, instruction=instruction, crew=crew_member.name)
 
 
 async def take_to_chat(
@@ -340,105 +431,40 @@ async def take_to_chat(
     suggested_action_index: int | None = None,
     crew: str | None = None,
 ) -> tuple[AlertDoc, str, str | None]:
-    """Move an alert into a chat WITHOUT sending anything to the agent.
+    """Open the alert's chat WITHOUT sending anything to the agent.
 
-    Where delegate() opens a session and starts a run immediately, this opens the
-    session (same crew resolution, same `alert_id` link) and hands back a `draft`
-    — the text delegate() would have sent — for the person to read, edit and send
-    themselves. Nothing runs until they do.
+    The chat is tied to the alert and receives it as context on every turn (see chat_context),
+    so nothing of the alert is copied into the message box. `draft` is only the one picked
+    action's prompt, for the person to read, edit and send; otherwise None.
 
-    Moving to the chat counts as handling the alert: a triageable alert (`new`,
-    `snoozed`, `completed`) becomes `acted` straight away, with a note saying so;
-    one that's already closed or mid-run keeps its status. If the alert already
-    has a conversation it is reused rather than opening a second, and `draft` is
-    only given when a suggested action was picked (the person is steering the
-    existing chat), else None.
+    Taking an alert to chat counts as the agent helping: an open alert closes as `done_by_gaca`
+    with a note saying so. A closed one keeps its status. An alert that already has a chat reuses it.
 
     Returns (alert, session_id, draft).
     """
     alert = await get(user.id, alert_id)
-    # Validate (and compose) first: a bad suggested_action_index is a 422 even
-    # before we look at crew.
-    wants_draft = suggested_action_index is not None or not alert.session_id
-    draft = _delegate_prompt(alert, None, suggested_action_index) if wants_draft else None
+    draft = None
+    if suggested_action_index is not None:
+        actions = alert.suggested_actions
+        if not (0 <= suggested_action_index < len(actions)):
+            raise InvalidRequest(
+                f"suggested_action_index {suggested_action_index} is out of "
+                f"range for alert {alert.id!r} ({len(actions)} action(s))"
+            )
+        draft = actions[suggested_action_index].prompt
 
-    session_id = alert.session_id
-    if not session_id:
-        crew_member = auth_service.resolve_crew_for_delegate(user, crew, alert.crew)
-        session = await session_service.create(
-            user.id, alert.title, crew_member.name, alert_id=alert.id
-        )
-        session_id = session.id
-        alert = alert.model_copy(update={"session_id": session_id})
-
-    if alert.status in TRIAGEABLE:
+    session_id, _, _ = await _alert_session(user, alert, crew)
+    alert = alert.model_copy(update={"session_id": session_id})
+    if is_open(alert):
         alert = alert.model_copy(
             update={
-                "status": "acted",
+                "status": "done_by_gaca",
                 "status_changed_at": utcnow(),
-                "snooze_until": None,
                 "resolution_note": alert.resolution_note or "Taken to chat",
             }
         )
     await alerts_db.replace(alert)
     return alert, session_id, draft
-
-
-async def _settle_delegation(alert_id: str, event: GacaEvent) -> None:
-    """Resolve a delegated alert once its run ends, one way or the other.
-
-    A completed run means Hermes finished the work: settle to `completed`,
-    not `acted` — finishing isn't the same as being closed out, and
-    `resolution_note` gets the run's own output so there's something to
-    actually look at. Only a later `act`/`dismiss` (a real user action)
-    reaches a terminal state from here. A failed run bounces back to `new`
-    with the error in `resolution_note`, so a failed delegation can never
-    silently vanish — it's the same rule slice 4 applies to every other
-    terminal outcome, just triggered by the agent instead of a hand.
-
-    Reads the row fresh rather than trusting the copy captured at delegate()
-    time, and no-ops if it's no longer `delegated` — the alert could have moved
-    between then and now (a second settlement racing this one, in principle),
-    and this must not clobber whatever state it's actually in.
-    """
-    current = await alerts_db.find(alert_id)
-    if current is None or current.status != "delegated":
-        return
-
-    if isinstance(event, RunCompleted):
-        resolved = current.model_copy(
-            update={
-                "status": "completed",
-                "status_changed_at": utcnow(),
-                "resolution_note": event.output,
-            }
-        )
-        await alerts_db.replace(resolved)
-        await push_service.notify(
-            resolved.user_id,
-            title=f"Hermes finished: {resolved.title}",
-            body="Tap to see what it found.",
-            alert_id=resolved.id,
-            severity=resolved.severity,
-        )
-    elif isinstance(event, RunFailed):
-        resolved = current.model_copy(
-            update={
-                "status": "new",
-                "status_changed_at": utcnow(),
-                "resolution_note": event.error,
-            }
-        )
-        await alerts_db.replace(resolved)
-        await push_service.notify(
-            resolved.user_id,
-            title=f"Hermes couldn't finish: {resolved.title}",
-            body=event.error or "The delegated run failed — it's back in your inbox.",
-            alert_id=resolved.id,
-            severity=resolved.severity,
-        )
-    else:
-        return
 
 
 async def list_for_user(
@@ -448,25 +474,17 @@ async def list_for_user(
     severities: list[str] | None = None,
     crews: list[str] | None = None,
     limit: int = 50,
-    now: datetime | None = None,
 ) -> list[AlertDoc]:
-    """A user's alerts, newest first, filtered on EFFECTIVE status.
-
-    Filtering on effective status is the point: asking for `new` has to include
-    alerts whose snooze has quietly run out, or a deferred alert would never
-    come back.
-    """
-    now = now or utcnow()
+    """A user's alerts, newest first. `statuses` is any of new / done_by_gaca / done_by_me /
+    noted / not_useful."""
     alerts = await alerts_db.find_by_user(user_id)
-
     if statuses:
         wanted = set(statuses)
-        alerts = [a for a in alerts if effective_status(a, now) in wanted]
+        alerts = [a for a in alerts if a.status in wanted]
     if severities:
         wanted = set(severities)
         alerts = [a for a in alerts if a.severity in wanted]
     if crews:
         wanted = set(crews)
         alerts = [a for a in alerts if a.crew in wanted]
-
     return alerts[:limit]

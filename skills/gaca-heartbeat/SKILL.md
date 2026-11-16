@@ -32,7 +32,7 @@ Helper: `python3 ${HERMES_SKILL_DIR}/scripts/heartbeat.py <command>` (`-h` lists
 ## Every run, in this order
 
 1. **Gate.** `heartbeat.py gate`. If it prints `"run": false`, stop and reply exactly `[SILENT]`. It covers the user's quiet hours, the on/off switch and any pause they set in the app, the daily run budget, and a pause after the model provider ran out of budget. Do not argue with it and do not look at anything first.
-2. **Remember.** `heartbeat.py context`. It lists what you told the user lately and what they did with each: `acted` (they did something about it), `dismissed` (it was not worth their time), `snoozed`, or still `new`. This is how you learn what they care about. Read it before you look at anything.
+2. **Remember.** `heartbeat.py context`. It lists what you told the user lately and what they did with each: `done_by_gaca` (an action you offered ran for them), `done_by_me` (they handled it themselves), `noted` (good to know, nothing to do), `not_useful` (not worth their time), or still `new`. This is how you learn what they care about: `not_useful` raises the bar for that kind of thing, `noted` means it belongs in the briefing rather than an interruption, and `done_by_me` means they did something an action of yours could have done, so offer that action next time. Read it before you look at anything.
 3. **Look.** Check the sources below. Keep it cheap: scan, do not research. Open something in full only when the scan says it might clear the bar.
 4. **Decide**, using the bar below. Usually the answer is nothing.
 5. **If something clears the bar:** post at most one alert, with `heartbeat.py alert` (JSON on standard input). Fold several small things into one alert instead of sending several.
@@ -77,10 +77,10 @@ Alert only when **all** of these hold:
 
 1. **It needs the user, or soon will.** A decision, a reply, a conflict, a deadline, a thing about to go wrong. Information that is merely interesting does not qualify.
 2. **The timing matters.** Waiting for tomorrow's briefing would cost them something (a missed deadline, a lost slot, an annoyed person). If it can wait for the briefing, it waits.
-3. **It is new.** Not already in `context` as an alert they have `new`, `acted` or `dismissed`. If they dismissed that kind of thing before, the bar for it is higher still.
+3. **It is new.** Not already in `context` as an alert that is still `new` or that they have closed in any way. If they marked that kind of thing `not_useful` before, the bar for it is higher still.
 4. **You can make it nearly effortless.** Do the thinking first. Not "an email from the landlord", but "the landlord asks to move the inspection to Thursday 10am; you are free then; reply yes?" Put a drafted reply or the exact next step in the body and in `suggested_actions` (each `prompt` must stand on its own, because it may be handed to an agent without the button label).
 
-Signals that raise the bar: a real person (not a mailing list) waiting on them; a hard date inside about 48 hours; money or health or travel; something that changed from what they were last told. Signals that lower it: newsletters, receipts, marketing, automated notices that need nothing, anything they have dismissed before.
+Signals that raise the bar: a real person (not a mailing list) waiting on them; a hard date inside about 48 hours; money or health or travel; something that changed from what they were last told. Signals that lower it: newsletters, receipts, marketing, automated notices that need nothing, anything they have marked not useful before.
 
 When it is borderline, stay quiet. The budget is small on purpose (the helper holds you to a few alerts a day, with gaps between them), so spend it on the best thing and let the rest go to the next run or the morning briefing.
 

@@ -6,7 +6,7 @@ a paired device (the app), which has the owner's full access:
 
   * it can only call the endpoints its scopes name, below; everything else (chat, crew, the agent
     connection, push, account, and token management itself) answers 403;
-  * on alerts it can create and read, but not act/dismiss/snooze/delegate/take-to-chat — those are
+  * on alerts it can create and read, but not close/run-an-action/take-to-chat — those are
     the owner's decisions, made in the app;
   * it can be revoked individually, and it never expires silently (no expiry unless asked for).
 """

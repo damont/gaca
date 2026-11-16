@@ -16,6 +16,7 @@ from ..models.user import UserDoc
 from ..schemas.message import MessageAccepted, MessageCreate
 from ..schemas.session import SessionCreate, SessionDetail, SessionList, SessionOut
 from ..schemas.message import AttachmentOut
+from ..services import alerts as alert_service
 from ..services import attachments as attachment_service
 from ..services import auth as auth_service
 from ..services import events as events_service
@@ -96,6 +97,8 @@ async def post_message(
         body.content,
         on_settled=run_service.chat_reply_notifier(user.id, session_id, crew_member.name),
         attachments=photos,
+        # A chat tied to an alert always carries it, so nobody retypes it.
+        agent_context=await alert_service.chat_context(user.id, session.alert_id),
     )
     return MessageAccepted(turn_id=message.id)
 

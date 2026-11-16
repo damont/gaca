@@ -148,6 +148,13 @@ def test_something_the_user_already_dismissed_is_not_raised_again(beat):
     assert held.returncode == 3 and "dismissed" in held.stderr and Fake.posted == []
 
 
+@pytest.mark.parametrize("closed", ["done_by_gaca", "done_by_me", "noted", "not_useful"])
+def test_any_way_of_closing_an_alert_holds_a_repeat(beat, closed):
+    Fake.alerts = [stored(status=closed, key="mail:1:reply")]
+    held = beat("alert", stdin=ALERT, check=False)
+    assert held.returncode == 3 and closed in held.stderr and Fake.posted == []
+
+
 def test_an_open_alert_can_be_updated_without_spending_the_budget(beat):
     Fake.alerts = [stored(status="new", key="mail:1:reply")]
     beat("config", "--set", "max_alerts_per_day=1")
@@ -172,6 +179,15 @@ def test_context_says_what_the_user_did_with_earlier_alerts(beat):
     assert "heartbeat.newsletter: 2 dismissed" in out and "heartbeat.reply.needed: 1 acted" in out
     assert "foreign-key" not in out and "stale-key" not in out
     assert "3 of 3 left" in out
+
+
+def test_context_reports_the_four_ways_an_alert_can_end_and_what_each_means(beat):
+    Fake.alerts = [stored(status="not_useful", kind="newsletter", key="a"), stored(status="noted", kind="newsletter", key="b"),
+                   stored(status="done_by_me", kind="reply.needed", key="c"), stored(status="done_by_gaca", kind="calendar", key="d")]
+    out = beat("context").stdout
+    assert "heartbeat.newsletter: 1 not_useful, 1 noted" in out
+    assert "heartbeat.reply.needed: 1 done_by_me" in out and "heartbeat.calendar: 1 done_by_gaca" in out
+    assert "belongs in the daily briefing" in out and "raise the bar" in out and "you offered no action" in out
 
 
 def test_context_with_no_history_says_so(beat):

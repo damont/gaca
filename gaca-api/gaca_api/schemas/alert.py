@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from ..models.alert import AlertLink, SuggestedAction
+from ..models.alert import AlertLink, AlertRun, SuggestedAction
 from .artifact import ArtifactRefOut
 
 
@@ -130,18 +130,23 @@ class AlertOut(BaseModel):
     # `artifact_id` resolved for its chip (see ArtifactRefOut) — null when there's none.
     artifact: ArtifactRefOut | None = None
 
+    # `new` while open; otherwise how it ended — done_by_gaca / done_by_me / noted / not_useful.
     status: str
-    # What the client should display and filter on. Differs from `status` when a
-    # snooze has elapsed — see services/alerts.effective_status.
+    # Same as `status`. Kept so apps built before alert actions keep reading it; new code uses `status`.
     effective_status: str
+    # True until the alert is closed. Saves a client from knowing the list of closed reasons.
+    open: bool = True
     status_changed_at: datetime
-    snooze_until: datetime | None = None
+    # The chat tied to this alert, if any. It always gets the alert as context.
     session_id: str | None = None
+    # What was tried on it, oldest first; each run carries its short result.
+    runs: list[AlertRun] = []
     resolution_note: str | None = None
     parent_alert_id: str | None = None
 
     @model_validator(mode="after")
     def _derived(self) -> "AlertOut":
+        self.open = self.status == "new"
         self.links = [
             AlertLink(url=link.url, label=link.label or _host_label(link.url)) for link in self.links
         ]
@@ -159,8 +164,24 @@ class AlertResolve(BaseModel):
     note: str | None = Field(default=None, max_length=2000)
 
 
+class AlertClose(BaseModel):
+    """Body for POST /{id}/close — how the person is closing the alert."""
+
+    reason: Literal["done_by_me", "noted", "not_useful"]
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class AlertActionRun(BaseModel):
+    """Body for POST /{id}/actions/{index}/run — optional extra instruction layered on the
+    action's own prompt, and an explicit crew choice (same rules as delegate)."""
+
+    instruction: str | None = Field(default=None, max_length=2000)
+    crew: str | None = Field(default=None, max_length=100)
+
+
 class AlertDelegate(BaseModel):
-    """Body for POST /{id}/delegate — all fields optional.
+    """Body for POST /{id}/delegate (deprecated: use /actions/{index}/run, or /run for
+    free text) — all fields optional.
 
     `suggested_action_index` is a convenience: it points at one of the alert's
     own `suggested_actions` rather than making the caller retype its prompt.
@@ -207,32 +228,11 @@ class AlertTakeToChat(BaseModel):
     crew: str | None = Field(default=None, max_length=100)
 
 
-class AlertSnooze(BaseModel):
-    """Body for snooze."""
-
-    until: datetime
-
-    @field_validator("until")
-    @classmethod
-    def _must_be_in_the_future(cls, value: datetime) -> datetime:
-        """A snooze into the past is almost certainly a client bug.
-
-        It would also be a no-op that looks like it worked: the alert would
-        reappear as `new` on the very next read, because effective status
-        derives from this field.
-        """
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=timezone.utc)
-        if value <= datetime.now(timezone.utc):
-            raise ValueError("snooze `until` must be in the future")
-        return value
-
-
 class TakeToChatOut(BaseModel):
-    """Result of taking an alert to a chat: the (now handled) alert, the chat to open,
-    and the text to pre-fill in its message box. Nothing has been sent."""
+    """Result of taking an alert to a chat: the (now handled) alert and the chat to open. The
+    chat always carries the alert as context, so `draft` is only ever a short action line."""
 
     alert: AlertOut
     session_id: str
-    # None when reopening an existing conversation with no new suggestion to steer it.
+    # Only the one picked action's prompt; None otherwise (the alert itself needs no retyping).
     draft: str | None = None

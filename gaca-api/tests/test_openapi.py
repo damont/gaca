@@ -39,7 +39,7 @@ def test_schema_lists_the_pairing_and_session_paths():
         "/api/alerts/{alert_id}",
         "/api/alerts/{alert_id}/act",
         "/api/alerts/{alert_id}/dismiss",
-        "/api/alerts/{alert_id}/snooze",
+        "/api/alerts/{alert_id}/close",
         "/api/alerts/{alert_id}/delegate",
         "/api/alerts/{alert_id}/take-to-chat",
         "/api/briefings",

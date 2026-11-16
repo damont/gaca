@@ -96,28 +96,27 @@ def _user() -> UserDoc:
                    crew=[CrewMember(name="default", port=8642, api_key="k")], default_crew="default")
 
 
-def test_taking_an_alert_to_chat_includes_its_links_in_the_draft(tmp_path):
+def test_the_agent_is_given_the_alert_and_its_links_as_context_not_a_draft(tmp_path):
     async def go():
         with_links, _ = await alert_service.create("u1", _payload(
             title="Soccer at 5", body="Riverside Park", links=[
                 {"url": "https://calendar.example.com/#week-1", "label": "Open family calendar"},
                 {"url": "https://www.example.org/field-map"}]))
-        plain, _ = await alert_service.create("u1", _payload(title="No links here"))
         action, _ = await alert_service.create("u1", _payload(
             title="x", links=[{"url": "https://a.example/z"}],
             suggested_actions=[{"label": "Do it", "prompt": "Do the thing"}]))
         return (
             (await alert_service.take_to_chat(_user(), with_links.id))[2],
-            (await alert_service.take_to_chat(_user(), plain.id))[2],
             (await alert_service.take_to_chat(_user(), action.id, suggested_action_index=0))[2],
+            await alert_service.chat_context("u1", with_links.id),
         )
 
-    linked, plain, chosen = _run(go, tmp_path)
-    assert linked == ("Soccer at 5\n\nRiverside Park\n\nLinks:\n"
-                      "- Open family calendar: https://calendar.example.com/#week-1\n"
-                      "- https://www.example.org/field-map: https://www.example.org/field-map")
-    assert plain == "No links here"        # unchanged when there are none
-    assert chosen == "Do the thing"        # a chosen suggestion's prompt stands on its own
+    plain, chosen, context = _run(go, tmp_path)
+    assert plain is None                    # nothing is pre-typed for the person
+    assert chosen == "Do the thing"         # a chosen action's prompt stands on its own
+    assert "Soccer at 5" in context and "Riverside Park" in context
+    assert "- Open family calendar: https://calendar.example.com/#week-1" in context
+    assert "- https://www.example.org/field-map: https://www.example.org/field-map" in context
 
 
 # ── over HTTP ────────────────────────────────────────────────────────────────

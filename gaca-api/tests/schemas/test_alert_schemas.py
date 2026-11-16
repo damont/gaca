@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from pydantic import ValidationError
 
-from gaca_api.schemas.alert import AlertCreate, AlertResolve, AlertSnooze
+from gaca_api.schemas.alert import AlertClose, AlertCreate, AlertResolve
 
 
 def _payload(**overrides) -> dict:
@@ -73,27 +73,28 @@ def test_data_accepts_arbitrary_json():
     assert payload.data["used_pct"] == 91
 
 
-# ── snooze ──────────────────────────────────────────────────────────
+# ── closing ─────────────────────────────────────────────────────────
 
-def test_snooze_accepts_a_future_time():
-    until = datetime.now(timezone.utc) + timedelta(hours=1)
-    assert AlertSnooze(until=until).until == until
-
-
-def test_snooze_normalizes_a_naive_time_to_utc():
-    naive = (datetime.now(timezone.utc) + timedelta(hours=1)).replace(tzinfo=None)
-    assert AlertSnooze(until=naive).until.tzinfo is not None
+@pytest.mark.parametrize("reason", ["done_by_me", "noted", "not_useful"])
+def test_close_accepts_the_reasons_a_person_can_give(reason):
+    assert AlertClose(reason=reason).reason == reason
 
 
-@pytest.mark.parametrize("delta", [timedelta(seconds=-1), timedelta(days=-1)])
-def test_snooze_into_the_past_rejected(delta):
-    """It would be a no-op that looks like it worked.
-
-    Effective status derives from this field, so a past `until` means the alert
-    reappears as `new` on the very next read.
-    """
+@pytest.mark.parametrize("reason", ["done_by_gaca", "new", "dismissed", "snoozed", ""])
+def test_close_rejects_everything_else(reason):
+    """done_by_gaca is the system's to set; the old words are gone."""
     with pytest.raises(ValidationError):
-        AlertSnooze(until=datetime.now(timezone.utc) + delta)
+        AlertClose(reason=reason)
+
+
+def test_a_suggested_action_may_carry_a_kind_and_params():
+    payload = AlertCreate(**_payload(suggested_actions=[
+        {"label": "Add to calendar", "prompt": "Add it", "kind": "calendar.add", "params": {"title": "Dentist"}},
+        {"label": "Plain", "prompt": "Do it"},
+    ]))
+    first, second = payload.suggested_actions
+    assert (first.kind, first.params) == ("calendar.add", {"title": "Dentist"})
+    assert (second.kind, second.params) == (None, {})
 
 
 def test_resolve_note_is_optional():

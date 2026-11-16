@@ -7,17 +7,18 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Path, Query, Response
 
 from ..models.alert import AlertDoc
 from ..models.user import UserDoc
 from ..schemas.alert import (
+    AlertActionRun,
+    AlertClose,
     AlertCreate,
     AlertDelegate,
     AlertList,
     AlertOut,
     AlertResolve,
-    AlertSnooze,
     AlertTakeToChat,
     DelegationCreate,
     TakeToChatOut,
@@ -53,8 +54,8 @@ async def create_alert(
 @router.post("/delegations", response_model=AlertOut, status_code=201)
 async def create_delegation(body: DelegationCreate, user: UserDoc = Depends(get_current_user)):
     """"Have a crew member do this." Raises a `manual.delegation` alert for the instruction
-    and delegates it in one call; returns it already `delegated`. The run settles it like
-    any delegation."""
+    and runs it in one call; returns it with the run in flight. A successful run closes it
+    as `done_by_gaca`."""
     return await _out(
         await alert_service.delegate_new(user, body.instruction, crew=body.crew, source=body.source)
     )
@@ -63,8 +64,7 @@ async def create_delegation(body: DelegationCreate, user: UserDoc = Depends(get_
 @router.get("", response_model=AlertList)
 async def list_alerts(
     user: UserDoc = Depends(get_current_user),
-    # Repeatable: ?status=new&status=snoozed. Filtered on EFFECTIVE status, so
-    # an elapsed snooze shows up under `new`.
+    # Repeatable: ?status=new&status=noted. `new` is the open inbox; the rest are how an alert ended.
     status: Annotated[list[str] | None, Query()] = None,
     severity: Annotated[list[str] | None, Query()] = None,
     crew: Annotated[list[str] | None, Query()] = None,
@@ -82,36 +82,57 @@ async def get_alert(alert_id: str, user: UserDoc = Depends(get_current_user)):
     return await _out(await alert_service.get(user.id, alert_id))
 
 
-@router.post("/{alert_id}/act", response_model=AlertOut)
+@router.post("/{alert_id}/close", response_model=AlertOut)
+async def close_alert(
+    alert_id: str,
+    body: AlertClose,
+    user: UserDoc = Depends(get_current_user),
+):
+    """Close an open alert and say how it ended: `done_by_me` (I handled it), `noted` (useful,
+    nothing to do) or `not_useful` (I don't want this). `done_by_gaca` is set by the system when
+    an action succeeds or the alert is taken to chat — it can't be chosen here."""
+    return await _out(await alert_service.close(user.id, alert_id, body.reason, body.note))
+
+
+@router.post("/{alert_id}/act", response_model=AlertOut, deprecated=True)
 async def act_on_alert(
     alert_id: str,
     body: AlertResolve | None = None,
     user: UserDoc = Depends(get_current_user),
 ):
-    """"I handled it myself." Terminal."""
+    """Deprecated — use /close with `done_by_me`."""
     return await _out(await alert_service.act(user.id, alert_id, body.note if body else None))
 
 
-@router.post("/{alert_id}/dismiss", response_model=AlertOut)
+@router.post("/{alert_id}/dismiss", response_model=AlertOut, deprecated=True)
 async def dismiss_alert(
     alert_id: str,
     body: AlertResolve | None = None,
     user: UserDoc = Depends(get_current_user),
 ):
-    """"Ignore this." Terminal — though a re-fired dedupe_key resurfaces it."""
+    """Deprecated — use /close with `not_useful`."""
     return await _out(
         await alert_service.dismiss(user.id, alert_id, body.note if body else None)
     )
 
 
-@router.post("/{alert_id}/snooze", response_model=AlertOut)
-async def snooze_alert(
+@router.post("/{alert_id}/actions/{index}/run", response_model=AlertOut)
+async def run_alert_action(
     alert_id: str,
-    body: AlertSnooze,
+    index: Annotated[int, Path(ge=0)],
+    body: AlertActionRun | None = None,
     user: UserDoc = Depends(get_current_user),
 ):
-    """"Not now." Reads as `new` again once `until` passes."""
-    return await _out(await alert_service.snooze(user.id, alert_id, body.until))
+    """Tap one of the alert's suggested actions. Starts an agent on it and returns the alert with
+    the run in flight (`runs[-1].state == "running"`); poll the alert or wait for the push.
+    Success closes the alert as `done_by_gaca`; failure leaves it open with the error on the run.
+    409 if another action is already running or the alert is closed."""
+    b = body or AlertActionRun()
+    return await _out(
+        await alert_service.run_action(
+            user, alert_id, instruction=b.instruction, suggested_action_index=index, crew=b.crew
+        )
+    )
 
 
 @router.post("/{alert_id}/take-to-chat", response_model=TakeToChatOut)
@@ -120,8 +141,9 @@ async def take_alert_to_chat(
     body: AlertTakeToChat | None = None,
     user: UserDoc = Depends(get_current_user),
 ):
-    """"Talk to Hermes about this." Opens the chat and returns a `draft` to pre-fill —
-    nothing is sent until the person sends it — and marks the alert handled (`acted`)."""
+    """"Talk to Hermes about this." Opens the alert's chat — which always carries the alert as
+    context, so nothing is copied into the message box — and closes the alert as `done_by_gaca`.
+    `draft` is only the picked action's one-line prompt, if one was picked."""
     b = body or AlertTakeToChat()
     alert, session_id, draft = await alert_service.take_to_chat(
         user, alert_id, suggested_action_index=b.suggested_action_index, crew=b.crew
@@ -129,16 +151,17 @@ async def take_alert_to_chat(
     return TakeToChatOut(alert=await _out(alert), session_id=session_id, draft=draft)
 
 
-@router.post("/{alert_id}/delegate", response_model=AlertOut)
+@router.post("/{alert_id}/delegate", response_model=AlertOut, deprecated=True)
 async def delegate_alert(
     alert_id: str,
     body: AlertDelegate | None = None,
     user: UserDoc = Depends(get_current_user),
 ):
-    """"Hand it to Hermes." Starts a real run; the alert settles once it ends."""
+    """Deprecated — use /actions/{index}/run, or this for a free-text instruction. Runs an agent
+    on the alert the same way."""
     b = body or AlertDelegate()
     return await _out(
-        await alert_service.delegate(
+        await alert_service.run_action(
             user,
             alert_id,
             instruction=b.instruction,

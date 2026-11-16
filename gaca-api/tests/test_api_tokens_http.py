@@ -99,7 +99,7 @@ def test_a_token_can_do_what_hermes_skills_need(http):
 # ── what a token must NOT be able to do ──────────────────────────────
 
 @pytest.mark.parametrize("method,path", [
-    ("POST", "/api/alerts/{id}/act"), ("POST", "/api/alerts/{id}/dismiss"), ("POST", "/api/alerts/{id}/snooze"),
+    ("POST", "/api/alerts/{id}/act"), ("POST", "/api/alerts/{id}/dismiss"), ("POST", "/api/alerts/{id}/close"), ("POST", "/api/alerts/{id}/actions/0/run"),
     ("POST", "/api/alerts/{id}/delegate"), ("POST", "/api/alerts/{id}/take-to-chat"),
     ("GET", "/api/crew"), ("POST", "/api/crew"), ("POST", "/api/crew/discover"), ("GET", "/api/crew/default/profile"),
     ("GET", "/api/sessions"), ("POST", "/api/sessions"), ("GET", "/api/agent"), ("PUT", "/api/agent"),
