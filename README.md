@@ -235,12 +235,12 @@ shell the first time) and it works from any directory.
 
 | command | does |
 |---|---|
-| `gaca-api doctor` | checks everything (service, API, public address, paired phones, Hermes, its tokens and skills, push) and says how to fix what is wrong |
+| `gaca-api doctor` | checks everything (service, the Hermes helper, API, public address, paired phones, Hermes, its tokens and skills, push) and says how to fix what is wrong |
 | `gaca-api pair` | a one-time code and QR code to pair another phone; `gaca-api device list` / `revoke <id>` |
 | `gaca-api push status` | which push channels are on |
 | `gaca-api push android` / `push ios` | set up (or replace) push after installing: asks for the key info, or take `--key FILE` (and for iPhone `--key-id`, `--team-id`, `--bundle-id`); `--restart` restarts the server for you |
 | `gaca-api push remove android\|ios` | turn one off and delete its key |
-| `gaca-api service status` / `restart` / `logs [-f]` | the systemd service, without remembering `systemctl` / `journalctl` flags (restart asks for sudo if it is a system service) |
+| `gaca-api service status` / `restart` / `logs [-f]` | the systemd service, without remembering `systemctl` / `journalctl` flags (restart asks for sudo if it is a system service). On a system service they cover its Hermes helper too |
 | `gaca-api backup [FILE]` | a consistent copy of the database (your chats and paired phones) to a private file, safe while the server runs; default `~/gaca-backups/` |
 | `gaca-api public-url [URL]` | show or set the address phones are told to use (it goes in the pairing QR code) |
 | `gaca-api hermes connect` | redo the Hermes tokens and skills (also after `git pull`) |

@@ -579,3 +579,34 @@ def test_doctor_notes_when_lingering_is_off_but_does_not_fail_for_it(box, tmp_pa
     assert code == 0 and "lingering is off" in out and "sudo loginctl enable-linger alice" in out
     code, out = run_doctor(box, FakeShell(linger="yes"))
     assert code == 0 and "lingering is off" not in out
+
+
+# ── the Hermes helper (the system service's way to run hermes) ──────
+
+def test_the_helper_check_passes_when_the_socket_is_up_and_hermes_answers(monkeypatch):
+    from gaca_api.provisioning import hermes_helper
+    monkeypatch.setattr(hermes_helper, "call_sync", lambda path, args, timeout: (0, "Hermes Agent v0.21.5\n", ""))
+    ok, found, fix = ops.check_hermes_helper(FakeShell(), "gaca-api")
+    assert ok and "Hermes helper answers" in found and "v0.21.5" in found and fix == []
+
+
+def test_the_helper_check_says_to_reinstall_when_its_socket_is_missing():
+    ok, found, fix = ops.check_hermes_helper(FakeShell(unit_active="inactive"), "gaca-api")
+    assert not ok and "gaca-api-hermes.socket" in found and any("install.sh" in line for line in fix)
+
+
+def test_the_helper_check_reports_a_helper_that_cannot_be_reached(monkeypatch):
+    from gaca_api.provisioning import hermes_helper
+
+    def unreachable(path, args, timeout):
+        raise hermes_helper.HelperError("cannot reach the Hermes helper")
+    monkeypatch.setattr(hermes_helper, "call_sync", unreachable)
+    ok, found, fix = ops.check_hermes_helper(FakeShell(), "gaca-api")
+    assert not ok and "cannot reach" in found
+
+
+def test_the_helper_check_reports_hermes_failing_inside_the_helper(monkeypatch):
+    from gaca_api.provisioning import hermes_helper
+    monkeypatch.setattr(hermes_helper, "call_sync", lambda path, args, timeout: (1, "", "Traceback ... boom"))
+    ok, found, _ = ops.check_hermes_helper(FakeShell(), "gaca-api")
+    assert not ok and "failed" in found and "boom" in found

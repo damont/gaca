@@ -53,6 +53,7 @@ from pathlib import Path
 import httpx
 
 from . import cron_runs, skill_sync
+from . import hermes_helper
 from .base import ProfileNameRejected, ProvisioningError
 from .envfile import has_gaca_token, upsert_env
 
@@ -245,7 +246,11 @@ class LocalHermes:
         hermes_home: str | os.PathLike = "~/.hermes",
         hermes_bin: str = "hermes",
         skills_source: str | os.PathLike | None = None,
+        hermes_socket: str | os.PathLike | None = None,
     ):
+        # With a socket, hermes commands go to the installer-managed helper (hermes_helper.py)
+        # instead of being spawned here: gaca-api's sandbox cannot give Hermes what it expects.
+        self._socket = Path(hermes_socket).expanduser() if hermes_socket else None
         self.home = Path(hermes_home).expanduser()
         self._skills_source = Path(skills_source).expanduser() if skills_source else skill_sync.default_source()
         self._bin_setting = hermes_bin
@@ -437,6 +442,18 @@ class LocalHermes:
     async def _hermes(self, *args: str, timeout: float) -> tuple[int, str, str]:
         if not argv_allowed(args):
             raise LocalError("refusing to run a hermes command that is not on the allowlist")
+        if self._socket is None:
+            return await self._spawn(*args, timeout=timeout)
+        try:
+            code, out, err = await hermes_helper.call(self._socket, args, timeout)
+        except hermes_helper.HelperError as error:
+            raise LocalError(str(error)) from None
+        return code, out[:_OUTPUT_LIMIT], err[:_OUTPUT_LIMIT]
+
+    async def _spawn(self, *args: str, timeout: float) -> tuple[int, str, str]:
+        """Run hermes here. Only reached directly by the helper, which is not sandboxed."""
+        if not argv_allowed(args):
+            raise LocalError("refusing to run a hermes command that is not on the allowlist")
         exe = self._resolve_bin()
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -517,6 +534,12 @@ class LocalHermes:
             await asyncio.to_thread(upsert_env, directory / ".env", values)
         except ValueError as error:
             raise LocalError(str(error)) from error
+
+    def _profile_exists(self, name: str) -> bool:
+        try:
+            return self._profile_dir(name) is not None
+        except LocalError:
+            return False
 
     def _named_profiles(self) -> list[str]:
         profiles = self._root / "profiles"
@@ -607,8 +630,17 @@ class LocalHermes:
         self, name: str, api_key: str, extra_env: dict[str, str] | None = None
     ) -> tuple[int, str]:
         default_port = await asyncio.to_thread(self._read_default_gateway_port)
+        existed = await asyncio.to_thread(self._profile_exists, name)
         code, out, err = await self._hermes("profile", "create", name, "--no-alias", timeout=120)
         if code != 0:
+            # Hermes can make the profile and then fail on a later step. Take back what this
+            # attempt made, or a retry would only find "already exists" -- never a profile that
+            # was there before.
+            if not existed and await asyncio.to_thread(self._profile_exists, name):
+                try:
+                    await self._hermes("profile", "delete", name, "-y", timeout=120)
+                except LocalError:
+                    logger.warning("could not remove the half-made profile %r", name)
             # Hermes prints most of its reasons on stdout, not stderr: keep both.
             reason = " ".join(f"{err}\n{out}".split())
             if _NAME_REJECTED.search(reason):

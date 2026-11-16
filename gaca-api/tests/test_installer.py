@@ -2,6 +2,7 @@
 
 Nothing here touches the real system: a FakeShell records every command and answers from a script,
 and everything lives in tmp dirs."""
+import re
 import asyncio
 import json
 import os
@@ -21,7 +22,7 @@ from gaca_api.installer.envconfig import ensure_env
 from gaca_api.installer.privilege import NeedsRoot, run_as_root
 from gaca_api.installer.run import Options, Say, choose_service, print_setup_info
 from gaca_api.installer.shell import Shell
-from gaca_api.installer.units import render, system_install_script
+from gaca_api.installer.units import helper_unit_files, render, system_install_script
 from gaca_api.services import auth as auth_service
 
 REPO = Path(__file__).resolve().parents[2]
@@ -129,7 +130,8 @@ def test_hermes_bin_is_recorded_when_found(tmp_path):
 # ── units ────────────────────────────────────────────────────────────
 
 VALUES = dict(USER="alice", HOME="/home/alice", REPO="/home/alice/gaca", DATA_DIR="/home/alice/gaca-data",
-              HERMES_HOME="/home/alice/.hermes", CONFIG_DIR="/home/alice/.config/gaca")
+              HERMES_HOME="/home/alice/.hermes", CONFIG_DIR="/home/alice/.config/gaca", NAME="gaca-api",
+              HERMES_SOCKET="/home/alice/gaca-data/hermes.sock", HERMES_BIN="/home/alice/.local/bin/hermes")
 
 
 def test_the_system_unit_renders_with_the_sandbox_and_optional_paths():
@@ -139,6 +141,35 @@ def test_the_system_unit_renders_with_the_sandbox_and_optional_paths():
     assert "ProtectHome=tmpfs" in unit and "ProtectSystem=strict" in unit and "NoNewPrivileges=yes" in unit
     assert "BindReadOnlyPaths=/home/alice/gaca -/home/alice/.hermes -/home/alice/.local -/home/alice/.config/gaca/secrets" in unit
     assert "BindPaths=/home/alice/gaca-data -/home/alice/.hermes/profiles" in unit  # optional paths won't break a Hermes-less box
+
+
+HELPER_VALUES = VALUES
+
+
+def test_the_system_unit_reaches_hermes_through_the_helper_socket():
+    unit = render((REPO / "deploy" / "gaca-api.service").read_text(), **HELPER_VALUES)
+    assert "Environment=GACA_HERMES_SOCKET=/home/alice/gaca-data/hermes.sock" in unit
+    assert "Wants=network-online.target gaca-api-hermes.socket" in unit
+
+
+def test_the_helper_units_render_and_are_unsandboxed_but_get_no_secrets_file():
+    socket = render((REPO / "deploy" / "gaca-api-hermes.socket").read_text(), **HELPER_VALUES)
+    service = render((REPO / "deploy" / "gaca-api-hermes@.service").read_text(), **HELPER_VALUES)
+    assert "ListenStream=/home/alice/gaca-data/hermes.sock" in socket and "SocketMode=0600" in socket
+    assert "Accept=yes" in socket and "SocketUser=alice" in socket and "Service=gaca-api-hermes@.service" in socket
+    assert "ExecStart=/home/alice/gaca/gaca-api/.venv/bin/gaca-api hermes-helper" in service
+    body = "".join(l for l in service.splitlines() if not l.startswith("#"))
+    assert "StandardInput=socket" in body and "EnvironmentFile" not in body and "ProtectHome" not in body
+    assert "User=alice" in service
+
+
+def test_the_root_script_installs_the_helper_units_with_the_service():
+    templates, socket = helper_unit_files("gaca-api")
+    assert socket == "gaca-api-hermes.socket"
+    script = system_install_script("[Unit]\n", "gaca-api", {"gaca-api-hermes.socket": "[Socket]\n", "gaca-api-hermes@.service": "[Service]\n"})
+    assert script.index("cat > /etc/systemd/system/gaca-api-hermes.socket") < script.index("daemon-reload")
+    assert script.index("daemon-reload") < script.index("restart gaca-api-hermes.socket") < script.index("restart gaca-api\n")
+    assert "cat > /etc/systemd/system/gaca-api-hermes@.service" in script
 
 
 def test_the_user_unit_is_honest_about_having_no_sandbox():
@@ -337,7 +368,7 @@ def test_the_pairing_info_shows_the_address_code_and_a_qr(capsys):
 def flow(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     (repo / "deploy").mkdir(parents=True)
-    for name in ("gaca-api.service", "gaca-api.user.service"):
+    for name in ("gaca-api.service", "gaca-api.user.service", "gaca-api-hermes.socket", "gaca-api-hermes@.service"):
         (repo / "deploy" / name).write_text((REPO / "deploy" / name).read_text())
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     (tmp_path / "home").mkdir()
@@ -1028,7 +1059,8 @@ def first_pass_then_the_person_runs_the_sudo_command(flow, etc):
     flow.service = "system"
     assert run_mod.run(flow, FakeShell(tty=False)) == run_mod.EXIT_NEEDS_ROOT
     script = (flow.config_dir / "install-service.sh").read_text()
-    (etc / "gaca-api.service").write_text(script.split("<<'GACA_UNIT'\n", 1)[1].split("GACA_UNIT\n", 1)[0])
+    for file_name, text in re.findall(r"cat > /etc/systemd/system/(\S+) <<'GACA_UNIT'\n(.*?)GACA_UNIT\n", script, re.S):
+        (etc / file_name).write_text(text)
 
 
 def test_after_the_sudo_command_the_rerun_carries_on_without_asking_for_root_again(flow, etc, capsys):
@@ -1049,6 +1081,12 @@ def test_a_service_that_is_not_running_still_needs_root(flow, etc):
 def test_a_changed_unit_still_needs_root(flow, etc):
     first_pass_then_the_person_runs_the_sudo_command(flow, etc)
     (etc / "gaca-api.service").write_text((etc / "gaca-api.service").read_text() + "# edited\nRestart=never\n")
+    assert run_mod.run(flow, FakeShell(tty=False, started_at=_time.time() + 60)) == run_mod.EXIT_NEEDS_ROOT
+
+
+def test_an_install_from_before_the_helper_existed_is_brought_up_to_date(flow, etc):
+    first_pass_then_the_person_runs_the_sudo_command(flow, etc)
+    (etc / "gaca-api-hermes.socket").unlink()  # the service alone was installed by an older release
     assert run_mod.run(flow, FakeShell(tty=False, started_at=_time.time() + 60)) == run_mod.EXIT_NEEDS_ROOT
 
 
