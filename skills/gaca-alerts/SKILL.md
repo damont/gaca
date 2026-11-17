@@ -72,9 +72,22 @@ Create alerts using the live `AlertCreate` schema. At the time this skill was au
 - `title`: concise and decision-oriented; make sense on a phone notification by itself.
 - `body`: state what happened, why it matters, what was already tried, and the exact response or decision needed. Include safe identifiers and paths when useful, but never secrets.
 - `data`: structured, non-secret context that a client or delegated agent may use.
-- `suggested_actions`: actionable choices whose `prompt` stands on its own because it may be handed to an agent without the button label.
+- `suggested_actions`: what the person can tap to have you do it, one button per thing — see **Actions** below. Each is `{"label", "prompt", "kind"?, "params"?}`; the `prompt` stands on its own because it is handed to an agent without the button label.
 - `links`: web pages the operator should open to act on this alert, as `[{"url": "https://…", "label": "Open family calendar"}]` (up to 10; `http(s)` only; a short label is better than none). Pass them here instead of only pasting a URL into `body` — GACA shows each as a tappable button under the alert and includes them in the text the agent receives when the alert is taken to a chat. Link the most specific page (the exact calendar week, the email thread, the pull request or dashboard) and never one that contains a token or other secret. Links are part of the alert's content, so a re-post with the same `dedupe_key` replaces them: restate the ones you still want.
 - `artifact_id`: the id of an HTML page you published with the gaca-artifacts skill (a checklist, comparison, planner…) that goes with this alert. GACA shows it as an "Open page" button on the alert. Publish the page first, then pass its id here; like `links`, a re-post with the same `dedupe_key` replaces it, so restate it.
+
+### Actions
+
+A tap on an action runs an agent with that action's `prompt`; the person never types anything. The agent is also given the whole alert, so the prompt only needs to say what to do, but it must still make sense by itself. When the run succeeds the alert closes as "done by GACA" and your short answer is shown under the button, so **an alert's actions are the real way it gets handled** — design them first, and the body second.
+
+- **One action per thing.** If an alert mentions three possible calendar events, post three actions ("Add 'Dentist, Thu 3pm'", "Add 'Concert, Fri 6pm'", …), not one "Add these". The person should be able to take just one. When several make sense together, also add an "Add all 3" action whose prompt lists all of them.
+- **Label** is what the button says: a verb and the specific thing ("Add 'Dentist, Thu 3pm'", "Draft a reply to Dana"), short enough for a phone.
+- **`kind`** (optional) names what it does, for an icon: `calendar.add`, `email.draft`, `email.reply`, `task.add`, `list.add`, `reminder`, or your own dotted name.
+- **`params`** (optional) holds structured details a client can preview (`{"title": "Dentist", "start": "2026-11-19T15:00"}`). They are never interpreted: the `prompt` is what runs, so put every detail the agent needs in the prompt.
+- **Prompts must not send or pay.** An action may create or change things the person can undo (a calendar event, a draft, a list item). Anything irreversible — sending an email, spending money, deleting — is a draft or a proposal the person confirms, never something the tap does by itself.
+- **Ask for what you will report.** The agent's reply becomes the result line, so end the prompt with what to confirm ("…and tell me the event link").
+- Not every alert needs actions. If the only sensible response is "go look", give `links` instead. A "Chat about this" button is always offered by the app, so don't add one.
+- A re-post with the same `dedupe_key` replaces the actions and clears what was tried, so restate every action you still want.
 
 ### Dedupe
 

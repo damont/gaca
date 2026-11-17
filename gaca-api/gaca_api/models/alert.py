@@ -13,12 +13,19 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .base import new_id, utcnow
 
-# The triage states. `new` is the inbox. `completed` is Hermes finishing a
-# delegated run — NOT terminal, and grouped with `new` in the client's
-# "needs attention" view, since finishing isn't the same as being closed out.
-# Only a user action (`act`/`dismiss`) can reach the two truly terminal
-# states, `acted` and `dismissed`.
-STATUSES = ("new", "snoozed", "delegated", "completed", "acted", "dismissed")
+# An alert is open (`new`) or closed, and a closed alert says HOW it ended — that
+# reason is what the heartbeat learns from:
+#   done_by_gaca  an action ran and succeeded, or the alert was taken to chat
+#   done_by_me    the person handled it themselves (the "an action could do this" gap)
+#   noted         useful, nothing to do
+#   not_useful    the person doesn't want this kind of thing
+# Running an action is a RUN on the alert (AlertRun), not a status of it.
+STATUSES = ("new", "done_by_gaca", "done_by_me", "noted", "not_useful")
+CLOSED_STATUSES = ("done_by_gaca", "done_by_me", "noted", "not_useful")
+# Reasons a PERSON can close an alert with. done_by_gaca is only ever set by the system.
+PERSON_CLOSE_REASONS = ("done_by_me", "noted", "not_useful")
+
+RUN_STATES = ("running", "done", "failed")
 
 # Drives how loudly the client presents the alert. Unlike `kind`, this IS a
 # closed set — clients switch on it.
@@ -34,6 +41,31 @@ class SuggestedAction(BaseModel):
 
     label: str
     prompt: str
+    # What sort of thing this does ("calendar.add", "email.draft", "reply"…). Open-ended like an
+    # alert's `kind`: the client uses it for an icon and may ignore a kind it doesn't know.
+    kind: str | None = None
+    # Structured details (event title and time, a recipient…) a client can preview before the tap.
+    # Never interpreted by the API; `prompt` is what the agent is actually given.
+    params: dict = Field(default_factory=dict)
+
+
+class AlertRun(BaseModel):
+    """One time the person tapped an action (or typed a one-off instruction) and an agent
+    went off to do it. The alert keeps these as its history of what was tried."""
+
+    id: str = Field(default_factory=new_id)
+    # Which of the alert's suggested actions this ran; None for a free-text instruction.
+    action_index: int | None = None
+    label: str
+    state: str = "running"
+    started_at: datetime = Field(default_factory=utcnow)
+    finished_at: datetime | None = None
+    # The agent's answer, short — what the app shows under the button.
+    summary: str | None = None
+    links: list["AlertLink"] = Field(default_factory=list)
+    error: str | None = None
+    # The chat that did the work. Opening it is how the person continues or inspects.
+    session_id: str | None = None
 
 
 class AlertLink(BaseModel):
@@ -86,9 +118,11 @@ class AlertDoc(BaseModel):
 
     status: str = "new"
     status_changed_at: datetime = Field(default_factory=utcnow)
-    snooze_until: datetime | None = None
-    # The chat session running a delegation, once there is one.
+    # The chat tied to this alert, once there is one (a run or take-to-chat opens it). The chat
+    # always gets this alert as context.
     session_id: str | None = None
+    # What was tried on this alert, oldest first.
+    runs: list[AlertRun] = Field(default_factory=list)
     resolution_note: str | None = None
     # Set on a clarification raised against another alert.
     parent_alert_id: str | None = None
@@ -104,16 +138,32 @@ class AlertDoc(BaseModel):
             data["crew"] = data["agent"]
         return data
 
-    @field_validator("created_at", "status_changed_at", "snooze_until")
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_status(cls, data):
+        """Read rows written before alert actions (2026-11): the old six states fold into
+        the new five. Nothing is rewritten in storage; a row is normalised whenever it is read
+        and saved in the new vocabulary the next time it changes.
+
+        snoozed / delegated / completed were all "still open" -> new. `acted` meant the person
+        or Hermes dealt with it: done_by_gaca when a chat or run was involved (including
+        take-to-chat, the "Taken to chat" note), else done_by_me. dismissed -> not_useful.
+        """
+        if isinstance(data, dict):
+            status = data.get("status")
+            if status in ("snoozed", "delegated", "completed"):
+                data = {**data, "status": "new"}
+            elif status == "acted":
+                involved = bool(data.get("session_id")) or data.get("resolution_note") == "Taken to chat"
+                data = {**data, "status": "done_by_gaca" if involved else "done_by_me"}
+            elif status == "dismissed":
+                data = {**data, "status": "not_useful"}
+        return data
+
+    @field_validator("created_at", "status_changed_at")
     @classmethod
     def _ensure_aware(cls, value: datetime | None) -> datetime | None:
-        """Force UTC on any naive datetime.
-
-        Effective status compares snooze_until against now, and comparing a
-        naive datetime with an aware one raises TypeError — which would be a 500
-        on the most-called endpoint in the app. Normalizing on the way in means
-        the comparison can never hit that.
-        """
+        """Force UTC on any naive datetime, so a naive/aware comparison can never raise."""
         if value is not None and value.tzinfo is None:
             return value.replace(tzinfo=timezone.utc)
         return value

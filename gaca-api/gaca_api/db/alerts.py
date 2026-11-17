@@ -64,10 +64,9 @@ async def find_by_dedupe_key(user_id: str, dedupe_key: str) -> AlertDoc | None:
 async def find_by_user(user_id: str) -> list[AlertDoc]:
     """Every alert for a user, newest first.
 
-    Status filtering happens in the service, not here: an alert's *effective*
-    status depends on whether its snooze has elapsed, and keeping that rule in
-    one place in Python beats duplicating it in SQL where the two can drift.
-    Revisit if a single user's inbox ever gets large enough to matter.
+    Status filtering happens in the service, not here: stored rows can still carry the
+    pre-2026-11 status words, which AlertDoc normalises on read, so the `status` column is
+    not reliable for old rows. Revisit if a single user's inbox ever gets large enough to matter.
     """
     async with connection().execute(
         "SELECT doc FROM alerts WHERE user_id = ? ORDER BY created_at DESC, id DESC",

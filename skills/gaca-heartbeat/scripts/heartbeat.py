@@ -9,7 +9,7 @@ memory of what the user did with earlier alerts. Deciding what is worth saying i
   gate                          should this run happen? prints {"run": bool, "reason": ...}.
                                 Counts the run. If "run" is false, stop and reply [SILENT].
   context [--days N]            what you already told the user lately and what they did with it
-                                (acted / dismissed / snoozed / still new), plus today's budget.
+                                (done_by_gaca / done_by_me / noted / not_useful / still new), plus today's budget.
   alert                         post one alert (JSON on stdin) through the caps. Refuses (exit 3)
                                 when the cap or a gap says to hold it, or the user already dismissed it.
   done --outcome O [--note T]   record how the run ended: quiet | alerted | error | rate_limited.
@@ -231,6 +231,18 @@ def recent_alerts(days: int) -> list[dict]:
     return mine
 
 
+# How an alert ended, as the user told GACA. "new" is still open. The older words (acted, dismissed,
+# completed) come from a GACA that predates alert actions and are treated the same way.
+CLOSED = ("done_by_gaca", "done_by_me", "noted", "not_useful", "acted", "dismissed", "completed")
+MEANING = {
+    "done_by_gaca": "an action you offered ran for them (it helped: offer that action again)",
+    "done_by_me": "they handled it themselves (useful, but you offered no action that did it for them)",
+    "noted": "good to know, nothing to do (belongs in the daily briefing, not an interruption)",
+    "not_useful": "not worth their time (raise the bar for this kind of thing)",
+    "new": "still open",
+}
+
+
 def status_of(alert: dict) -> str:
     return str(alert.get("effective_status") or alert.get("status") or "new")
 
@@ -282,7 +294,10 @@ def cmd_context(args) -> int:
     for alert in alerts[:40]:
         print(f"  [{status_of(alert):9}] {str(alert.get('created_at', ''))[:16]}  {alert.get('kind')}  "
               f"{alert.get('title')}  (key: {alert.get('dedupe_key') or '-'})")
-    print("\nBy kind (acted = they did something with it; dismissed = it was not worth their time):")
+    print("\nWhat each outcome means:")
+    for status, meaning in MEANING.items():
+        print(f"  {status}: {meaning}")
+    print("\nBy kind:")
     for kind, counts in sorted(by_kind.items()):
         print(f"  {kind}: " + ", ".join(f"{n} {status}" for status, n in sorted(counts.items())))
     return 0
@@ -313,7 +328,7 @@ def cmd_alert(_args) -> int:
     existing = None
     if key:
         existing = next((a for a in recent_alerts(config["remember_days"]) if a.get("dedupe_key") == key), None)
-    if existing and status_of(existing) in ("dismissed", "acted", "completed"):
+    if existing and status_of(existing) in CLOSED:
         print(f"HOLD: the user already {status_of(existing)} an alert with key {key!r}. Do not raise it again "
               "unless something materially new happened, and then use a new key.", file=sys.stderr)
         return 3

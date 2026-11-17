@@ -92,7 +92,7 @@ def test_old_failures_and_successes_and_unnamed_runs_are_ignored(world):
     assert run_in_db(lambda owner: watch.check(owner, NOW)) == 0
 
 
-def test_a_dismissed_alert_stays_dismissed(world):
+def test_a_dismissed_alert_stays_closed(world):
     world["automations"] = [automation(marks=[failed_at(10)])]
 
     async def go(owner):
@@ -103,7 +103,7 @@ def test_a_dismissed_alert_stays_dismissed(world):
         [after] = await alerts_db.find_by_user(owner.id)
         return again, after.status
 
-    assert run_in_db(go) == (0, "dismissed")
+    assert run_in_db(go) == (0, "not_useful")
 
 
 def test_the_next_failure_is_a_new_alert(world):
