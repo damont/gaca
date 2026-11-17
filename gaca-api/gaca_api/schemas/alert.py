@@ -11,11 +11,11 @@ import json
 import re
 from datetime import datetime
 from typing import Any, Literal
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from ..models.alert import AlertLink, AlertRun, SuggestedAction
+from ..models.alert import AlertDraft, AlertLink, AlertRun, SuggestedAction
 from .artifact import ArtifactRefOut
 
 
@@ -103,6 +103,99 @@ class AlertCreate(BaseModel):
         return (value.strip() or None) if value else None
 
 
+_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+
+
+class AlertDraftOut(AlertDraft):
+    """A draft as a client shows it: the parts, plus what the two buttons need, built here so an app
+    only opens a link or copies a string."""
+
+    # Everything for "Copy text": the subject line and the body.
+    copy_text: str = ""
+    # A mailto: link that opens the person's mail app with the recipient, subject and body filled
+    # in. They review and send it themselves; GACA never does.
+    mailto: str = ""
+
+    @model_validator(mode="after")
+    def _derived(self) -> "AlertDraftOut":
+        self.copy_text = f"Subject: {self.subject}\n\n{self.body}" if self.subject else self.body
+        address = _EMAIL.search(self.to or "")
+        query = []
+        if self.subject:
+            query.append(f"subject={quote(self.subject, safe='')}")
+        query.append(f"body={quote(self.body, safe='')}")
+        self.mailto = f"mailto:{address.group(0) if address else ''}?{'&'.join(query)}"
+        return self
+
+
+class ActionResultOut(BaseModel):
+    """What an action did, once it has run."""
+
+    summary: str | None = None
+    links: list[AlertLink] = []
+    draft: AlertDraftOut | None = None
+    error: str | None = None
+
+
+class AlertActionOut(BaseModel):
+    """One thing the person can tap, with where it stands. `state` is idle / running / done /
+    failed. `label` is what to show now (an "Add all" button offers the rest once some have run).
+    The client shows this and posts `POST /alerts/{id}/actions/{index}/run`; it decides nothing."""
+
+    index: int
+    kind: str | None = None
+    label: str
+    params: dict = {}
+    # The line under the label for an action not yet run (from `params`, e.g. date and place).
+    detail: str | None = None
+    # The word on its button: "Add", "Draft", "Do it".
+    cta: str = "Do it"
+    # An "Add all" action: show it as the one big button below the rows, not as a row.
+    prominent: bool = False
+    # A line saying where it stands while it is running ("Hermes is on it").
+    note: str | None = None
+    state: str = "idle"
+    can_run: bool = False
+    result: ActionResultOut | None = None
+
+
+class CloseOption(BaseModel):
+    """A button for closing the alert. Post `reason` to `/alerts/{id}/close`."""
+
+    reason: str
+    label: str
+    # The one to show strongest.
+    primary: bool = False
+
+
+class ChatEntry(BaseModel):
+    """How the "chat about this" control reads."""
+
+    hint: str
+    # True when chat is the only route (no actions): show it as the main button.
+    prominent: bool = False
+
+
+class AlertWorkflow(BaseModel):
+    """Everything a client needs to lay the screen out, decided by the API so every app behaves
+    the same. `phase`: open / working / waiting_on_you / closed."""
+
+    phase: str = "open"
+    # Short status for the top of the screen ("Draft ready · waiting for you", "Done by Hermes").
+    phase_label: str | None = None
+    # Heading over the actions ("Hermes can add these", "Hermes did this"); null with no actions.
+    actions_heading: str | None = None
+    # "1 of 3 added" while an alert with several actions is part-way.
+    progress_label: str | None = None
+    chat: ChatEntry = ChatEntry(hint="Hermes already has this alert")
+    # Empty once closed.
+    close_heading: str | None = None
+    close_options: list[CloseOption] = []
+    close_hint: str | None = None
+    # Why a closed alert closed, when it is worth saying.
+    closed_note: str | None = None
+
+
 class AlertOut(BaseModel):
     """An alert as returned to the client."""
 
@@ -141,6 +234,11 @@ class AlertOut(BaseModel):
     session_id: str | None = None
     # What was tried on it, oldest first; each run carries its short result.
     runs: list[AlertRun] = []
+    # The latest email draft, if an agent wrote one.
+    draft: AlertDraftOut | None = None
+    # The actions with their state and result, and the layout decisions. See AlertWorkflow.
+    actions: list[AlertActionOut] = []
+    workflow: AlertWorkflow = AlertWorkflow()
     resolution_note: str | None = None
     parent_alert_id: str | None = None
 

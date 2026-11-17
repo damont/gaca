@@ -11,8 +11,9 @@ from ..models.alert import PERSON_CLOSE_REASONS, AlertDoc, AlertLink, AlertRun
 from ..models.base import utcnow
 from ..models.user import UserDoc
 from ..schemas.alert import AlertCreate, AlertOut, render_value
+from ..utils import drafts
 from ..schemas.event import GacaEvent, RunCompleted, RunFailed
-from . import artifact_refs
+from . import alert_view, artifact_refs
 from ..db import cloud as cloud_db
 from . import auth as auth_service
 from . import push as push_service
@@ -113,6 +114,8 @@ async def to_out(user_id: str, alerts: list[AlertDoc]) -> list[AlertOut]:
         AlertOut(
             **a.model_dump(),
             effective_status=a.status,
+            actions=alert_view.actions_out(a),
+            workflow=alert_view.workflow_out(a),
             crew_removed=a.crew in removed,
             artifact=refs.get(a.artifact_id) if a.artifact_id else None,
         )
@@ -139,14 +142,16 @@ async def close(
     user_id: str, alert_id: str, reason: str, note: str | None = None
 ) -> AlertDoc:
     """The person closes an open alert and says how it ended (`done_by_me`, `noted` or
-    `not_useful`). `done_by_gaca` is never chosen by hand — only a successful run or take-to-chat
-    sets it.
+    `not_useful`). `done_by_gaca` is the system's to set (a successful run, or take-to-chat), with
+    one exception: once an action has succeeded the person may say so too — "I sent it" after a
+    draft Hermes wrote, which is Hermes helping even though the sending was theirs.
 
     The reason is what the heartbeat learns from, so it is required, not defaulted.
     """
-    if reason not in PERSON_CLOSE_REASONS:
-        raise InvalidRequest(f"reason must be one of {', '.join(PERSON_CLOSE_REASONS)}")
     alert = await get(user_id, alert_id)
+    allowed = PERSON_CLOSE_REASONS + (("done_by_gaca",) if any(r.state == "done" for r in alert.runs) else ())
+    if reason not in allowed:
+        raise InvalidRequest(f"reason must be one of {', '.join(allowed)}")
     if not is_open(alert):
         raise InvalidTransition("alert", alert_id, alert.status, reason)
     updated = alert.model_copy(
@@ -178,6 +183,20 @@ RUN_CONTRACT = (
 )
 
 
+# For an action that drafts an email: the same short-answer rule, but the answer IS the draft.
+DRAFT_CONTRACT = (
+    "The person tapped this action in the GACA app. Write the draft now. You can only read their "
+    "mail, so you are not sending anything: they will review it and send it themselves. "
+    + drafts.FORMAT_INSTRUCTION
+)
+
+
+def _contract_for(alert: AlertDoc, action_index: int | None) -> str:
+    if action_index is not None and alert_view.is_draft_action(alert.suggested_actions[action_index]):
+        return DRAFT_CONTRACT
+    return RUN_CONTRACT
+
+
 def _alert_context(alert: AlertDoc) -> str:
     """The alert as plain text for an agent: what it said, what it carries, what was offered and
     what has already been tried. Sent ahead of every turn in a chat tied to the alert, so the
@@ -203,6 +222,15 @@ def _alert_context(alert: AlertDoc) -> str:
         for run in alert.runs:
             detail = run.summary or run.error or ""
             lines.append(f"- {run.label} — {run.state}{': ' + detail if detail else ''}")
+    if alert.draft is not None:
+        d = alert.draft
+        lines.append("The current email draft (not sent; the person sends it themselves):")
+        lines.append(f"To: {d.to or ''}\nSubject: {d.subject or ''}\n\n{d.body}")
+    if alert.draft is not None or any(alert_view.is_draft_action(a) for a in alert.suggested_actions):
+        lines.append(
+            "If the person asks you to write or change an email draft, reply with the whole draft "
+            "in this shape so the app can show it as a draft: " + drafts.FORMAT_INSTRUCTION
+        )
     return "\n".join(lines)
 
 
@@ -221,7 +249,7 @@ def _action_prompt(alert: AlertDoc, instruction: str | None, action_index: int |
     """(label for the run, prompt for the agent)."""
     prompt = _delegate_prompt(alert, instruction, action_index)
     if action_index is not None:
-        label = alert.suggested_actions[action_index].label
+        label = alert_view.effective_label(alert, action_index)
     else:
         label = re.split(r"\r\n|\r|\n", (instruction or alert.title).strip(), maxsplit=1)[0][:_TITLE_MAX]
     return label, prompt
@@ -244,7 +272,7 @@ def _delegate_prompt(
                 f"suggested_action_index {suggested_action_index} is out of "
                 f"range for alert {alert.id!r} ({len(actions)} action(s))"
             )
-        parts.append(actions[suggested_action_index].prompt)
+        parts.append(alert_view.effective_prompt(alert, suggested_action_index))
     if instruction:
         parts.append(instruction)
     if not parts:
@@ -315,7 +343,7 @@ async def run_action(
             session_id,
             prompt,
             on_settled=_on_settled,
-            agent_context=f"{_alert_context(updated)}\n\n{RUN_CONTRACT}",
+            agent_context=f"{_alert_context(updated)}\n\n{_contract_for(updated, suggested_action_index)}",
         )
     except Exception as error:
         # The run never started, so don't leave it "running" forever.
@@ -336,7 +364,7 @@ def _links_in(text: str) -> list[AlertLink]:
 
 async def _finish_run(
     alert_id: str, run_id: str, *, state: str, summary: str | None = None,
-    links: list[AlertLink] | None = None, error: str | None = None,
+    links: list[AlertLink] | None = None, error: str | None = None, draft=None,
 ) -> AlertDoc | None:
     """Record how a run ended. Reads the row fresh: the alert may have been closed, deduped
     or deleted since the run started, and a settlement must never clobber that. Returns the
@@ -350,7 +378,7 @@ async def _finish_run(
             runs[i] = r.model_copy(
                 update={
                     "state": state, "finished_at": utcnow(), "summary": summary,
-                    "links": links or [], "error": error,
+                    "links": links or [], "error": error, "draft": draft,
                 }
             )
             break
@@ -370,20 +398,34 @@ async def _settle_run(alert_id: str, run_id: str, event: GacaEvent) -> None:
 
     if isinstance(event, RunCompleted):
         text = artifact_links.strip(event.output or "")
-        summary = tidy(text, RUN_SUMMARY_MAX) or "Done."
-        updated = await _finish_run(
-            alert_id, run_id, state="done", summary=summary, links=_links_in(event.output or "")
+        current = await alerts_db.find(alert_id)
+        run = next((r for r in current.runs if r.id == run_id), None) if current else None
+        action = (
+            current.suggested_actions[run.action_index]
+            if run and run.action_index is not None and run.action_index < len(current.suggested_actions)
+            else None
         )
+        draft = drafts.parse_draft(text) if action is not None and alert_view.is_draft_action(action) else None
+        if draft is not None:
+            summary = f"Draft ready: {draft.subject}" if draft.subject else "Draft ready"
+            links = []
+        else:
+            summary = tidy(text, RUN_SUMMARY_MAX) or "Done."
+            links = _links_in(event.output or "")
+        updated = await _finish_run(alert_id, run_id, state="done", summary=summary, links=links, draft=draft)
         if updated is None:
             return
-        if is_open(updated):
+        if draft is not None:
+            updated = updated.model_copy(update={"draft": draft})
+        finished = next(r for r in updated.runs if r.id == run_id)
+        if is_open(updated) and alert_view.should_close(updated, finished):
             updated = updated.model_copy(
                 update={"status": "done_by_gaca", "status_changed_at": utcnow(), "resolution_note": summary}
             )
-            await alerts_db.replace(updated)
+        await alerts_db.replace(updated)
         await push_service.notify(
-            updated.user_id, title=f"Done: {updated.title}", body=summary,
-            alert_id=updated.id, severity=updated.severity,
+            updated.user_id, title=(f"Draft ready: {updated.title}" if draft else f"Done: {updated.title}"),
+            body=summary, alert_id=updated.id, severity=updated.severity,
         )
     elif isinstance(event, RunFailed):
         updated = await _finish_run(alert_id, run_id, state="failed", error=event.error)
@@ -394,6 +436,28 @@ async def _settle_run(alert_id: str, run_id: str, event: GacaEvent) -> None:
             body=event.error or "The action failed. It is still in your inbox.",
             alert_id=updated.id, severity=updated.severity,
         )
+
+
+async def record_chat_reply(alert_id: str | None, event: GacaEvent) -> None:
+    """A chat turn about this alert finished. If the agent's reply contains an email draft (the
+    person asked it to change one), that becomes the alert's current draft, so "Open in Gmail" on
+    the alert always opens the latest. Anything else about the reply is left alone."""
+    if not alert_id or not isinstance(event, RunCompleted):
+        return
+    from ..utils import artifact_links
+
+    _, found = drafts.extract_draft(artifact_links.strip(event.output or ""))
+    if found is None:
+        return
+    alert = await alerts_db.find(alert_id)
+    if alert is None:
+        return
+    runs = list(alert.runs)
+    for i in range(len(runs) - 1, -1, -1):  # the card on the action that wrote the first draft follows along
+        if runs[i].draft is not None:
+            runs[i] = runs[i].model_copy(update={"draft": found})
+            break
+    await alerts_db.replace(alert.model_copy(update={"draft": found, "runs": runs}))
 
 
 MANUAL_DELEGATION_KIND = "manual.delegation"

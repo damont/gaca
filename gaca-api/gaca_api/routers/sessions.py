@@ -72,6 +72,18 @@ async def get_session(
     return detail.model_copy(update={"crew_removed": _crew_gone(user, detail.crew)})
 
 
+def _chat_settled(user_id: str, session_id: str, crew_name: str | None, alert_id: str | None):
+    """The usual "your agent replied" push, plus — for a chat tied to an alert — noticing an email
+    draft in the reply and keeping it on the alert."""
+    notify = run_service.chat_reply_notifier(user_id, session_id, crew_name)
+
+    async def settled(event):
+        await alert_service.record_chat_reply(alert_id, event)
+        await notify(event)
+
+    return settled
+
+
 @router.post("/{session_id}/messages", status_code=202)
 async def post_message(
     session_id: str,
@@ -95,7 +107,7 @@ async def post_message(
         backend,
         session_id,
         body.content,
-        on_settled=run_service.chat_reply_notifier(user.id, session_id, crew_member.name),
+        on_settled=_chat_settled(user.id, session_id, crew_member.name, session.alert_id),
         attachments=photos,
         # A chat tied to an alert always carries it, so nobody retypes it.
         agent_context=await alert_service.chat_context(user.id, session.alert_id),

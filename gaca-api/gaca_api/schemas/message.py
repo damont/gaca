@@ -11,7 +11,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from ..utils import artifact_links
+from ..utils import artifact_links, drafts
+from .alert import AlertDraftOut
 from .artifact import ArtifactRefOut
 
 MAX_ATTACHMENTS_PER_MESSAGE = 4
@@ -91,12 +92,20 @@ class MessageOut(BaseModel):
     # straight from a MessageDoc it's empty.
     artifacts: list[ArtifactRefOut] = []
     activity: MessageActivity | None = None
+    # An email draft the agent wrote in this reply (see utils/drafts.py). When set,
+    # `display_content` is only the words before it: show them, then the draft as a card.
+    draft: AlertDraftOut | None = None
 
     @model_validator(mode="after")
     def _derived(self) -> "MessageOut":
         for a in self.attachments:
             a.url = f"sessions/{self.session_id}/attachments/{a.id}"
         self.display_content = artifact_links.strip(self.content)
+        if self.role == "assistant":
+            intro, found = drafts.extract_draft(self.display_content)
+            if found is not None:
+                self.draft = AlertDraftOut(**found.model_dump())
+                self.display_content = intro
         return self
 
 
