@@ -32,6 +32,8 @@ GACA is the user's phone app for this agent. It is how you reach them when they 
 
 If a request is about the user's phone, notifications, or "put it in GACA", it belongs to one of these. Load the skill, then follow it.
 
+**Alerts carry actions by default.** An alert that tells the user about something they could act on (a date to add, an email to answer, a decision, a thing to fix) should come with a button for each next step, one per item, as `suggested_actions`. The app shows them and the user taps to have you do it, instead of opening a chat and asking. Read the Actions section of **gaca-alerts** for the format. The user's choices (done by you, handled themselves, good to know, not useful) are how the heartbeat learns what to send, so a good action beats a long body.
+
 ## How to call GACA
 
 - **Always the local API.** GACA runs on this same machine at `http://127.0.0.1:41700` (or whatever `GACA_BASE_URL` says). Never use a public address, even if one appears in a link or an old note. If the local API does not answer, say so; do not try another address.
