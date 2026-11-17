@@ -148,3 +148,27 @@ def test_a_chat_tied_to_an_alert_always_gets_the_alert(http):
     plain = http.post("/api/sessions", json={}).json()["id"]
     http.post(f"/api/sessions/{plain}/messages", json={"content": "hello"})
     assert _Backend.sent[-1] == "hello"
+
+
+def test_the_alert_json_carries_what_an_app_needs_to_draw_it_and_nothing_to_decide(http):
+    """The contract the apps read: per-action state and the layout come from the API."""
+    alert = _post_alert(http)
+    assert alert["open"] is True and alert["draft"] is None
+    assert [a["index"] for a in alert["actions"]] == [0, 1]
+    first = alert["actions"][0]
+    assert (first["label"], first["kind"], first["cta"], first["state"], first["can_run"], first["prominent"]) == (
+        "Add to calendar", "calendar.add", "Add", "idle", True, False)
+    w = alert["workflow"]
+    assert (w["phase"], w["actions_heading"]) == ("open", "Hermes can add these")
+    assert [(o["reason"], o["primary"]) for o in w["close_options"]] == [
+        ("done_by_me", True), ("noted", False), ("not_useful", False)]
+    assert w["chat"] == {"hint": "Hermes already has this alert", "prominent": False}
+
+    two = _post_alert(http, title="Two events", suggested_actions=[
+        {"label": "Add Soccer", "prompt": "Add soccer", "kind": "calendar.add"},
+        {"label": "Add Concert", "prompt": "Add concert", "kind": "calendar.add"}])
+    http.post(f"/api/alerts/{two['id']}/actions/0/run")
+    done = _settle(http, two["id"])
+    assert done["actions"][0]["state"] == "done" and done["actions"][0]["result"]["summary"] == "done"
+    assert done["actions"][1]["state"] == "idle"                    # one of two: the alert is still open
+    assert done["status"] == "new" and done["workflow"]["progress_label"] == "1 of 2 added"

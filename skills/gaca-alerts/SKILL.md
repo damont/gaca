@@ -78,16 +78,23 @@ Create alerts using the live `AlertCreate` schema. At the time this skill was au
 
 ### Actions
 
-A tap on an action runs an agent with that action's `prompt`; the person never types anything. The agent is also given the whole alert, so the prompt only needs to say what to do, but it must still make sense by itself. When the run succeeds the alert closes as "done by GACA" and your short answer is shown under the button, so **an alert's actions are the real way it gets handled** — design them first, and the body second.
+A tap on an action runs an agent with that action's `prompt`; the person never types anything. The agent is also given the whole alert, so the prompt only needs to say what to do, but it must still make sense by itself. GACA decides everything about how the alert behaves from the actions you post, and the app only shows it: the alert closes as "done by GACA" once its actions are done, your agent's short answer is shown under the button, and the buttons for closing it come from GACA. So **an alert's actions are the real way it gets handled** — design them first, and the body second.
 
-- **One action per thing.** If an alert mentions three possible calendar events, post three actions ("Add 'Dentist, Thu 3pm'", "Add 'Concert, Fri 6pm'", …), not one "Add these". The person should be able to take just one. When several make sense together, also add an "Add all 3" action whose prompt lists all of them.
+- **One action per thing.** If an alert mentions three possible calendar events, post three actions ("Add 'Dentist, Thu 3pm'", "Add 'Concert, Fri 6pm'", …), not one "Add these". The person should be able to take just one. The alert closes by itself when the last of them is done, not before.
+- **"Add all N".** When several make sense together, add one more action whose prompt lists all of them, with `"covers": [0, 1, 2]` (the positions of the actions it stands in for, counting from 0) and `"remaining_label": "Add the other {n}"`. Once some are done GACA offers only the rest, under that label, and tells the agent what to skip; once all are done it disappears. Don't count it among the items.
 - **Label** is what the button says: a verb and the specific thing ("Add 'Dentist, Thu 3pm'", "Draft a reply to Dana"), short enough for a phone.
-- **`kind`** (optional) names what it does, for an icon: `calendar.add`, `email.draft`, `email.reply`, `task.add`, `list.add`, `reminder`, or your own dotted name.
-- **`params`** (optional) holds structured details a client can preview (`{"title": "Dentist", "start": "2026-11-19T15:00"}`). They are never interpreted: the `prompt` is what runs, so put every detail the agent needs in the prompt.
+- **`kind`** names what it does, for an icon and for how GACA treats it: `calendar.add`, `email.draft`, `task.add`, `list.add`, `reminder`, or your own dotted name. Use `email.draft` for any action that writes an email.
+- **`params`** (optional) holds what the app shows under the label: give a `date` (`YYYY-MM-DD`), plus `time`, `location` and `who` if you have them, and it reads "Thu Nov 19 · 5:30 PM · Riverside Park · Libby" (a date with no time reads "all day"). For anything else give `"detail": "one short line"`. `params` are never run: the `prompt` is what runs, so put every detail the agent needs in the prompt.
 - **Prompts must not send or pay.** An action may create or change things the person can undo (a calendar event, a draft, a list item). Anything irreversible — sending an email, spending money, deleting — is a draft or a proposal the person confirms, never something the tap does by itself.
 - **Ask for what you will report.** The agent's reply becomes the result line, so end the prompt with what to confirm ("…and tell me the event link").
-- Not every alert needs actions. If the only sensible response is "go look", give `links` instead. A "Chat about this" button is always offered by the app, so don't add one.
+- Not every alert needs actions. If the only sensible response is "go look", give `links` instead; with no actions the app makes "chat about this" the main button. That button is always offered, so don't add one.
 - A re-post with the same `dedupe_key` replaces the actions and clears what was tried, so restate every action you still want.
+
+#### Email replies
+
+If the person is likely to want to answer an email, offer a draft per sensible answer: `{"label": "Ask for a smaller increase", "kind": "email.draft", "prompt": "Draft a reply to Pat Alvarez's email 'Lease renewal terms' asking to keep the increase to about $50 a month.", "params": {"detail": "Polite ask to keep it near $50 a month"}}` (and "Accept", "Decline"…). Name the email you mean in the prompt (sender and subject).
+
+You can only read their mail, so this never sends anything. When tapped, GACA asks the agent for the draft in a fixed shape (`To:`, `Subject:`, a blank line, the body), keeps the whole draft on the alert, and gives the person a button that opens their mail app with it filled in to review and send. A draft does **not** close the alert: it waits until the person says they sent it. They can ask for changes in the chat, and the latest draft stays on the alert.
 
 ### Dedupe
 

@@ -47,6 +47,23 @@ class SuggestedAction(BaseModel):
     # Structured details (event title and time, a recipient…) a client can preview before the tap.
     # Never interpreted by the API; `prompt` is what the agent is actually given.
     params: dict = Field(default_factory=dict)
+    # Does a successful run of this action finish the alert? Default: yes, except for drafting an
+    # email (`email.draft…`), which still needs the person to send it. See services/alert_view.py.
+    closes: bool | None = None
+    # An "Add all N" action lists the indexes of the actions it stands in for. Once some of those
+    # have run, it offers only the rest (label from `remaining_label`, "{n}" = how many are left)
+    # and its prompt is told what to skip; once all have run it is done.
+    covers: list[int] = Field(default_factory=list)
+    remaining_label: str | None = None
+
+
+class AlertDraft(BaseModel):
+    """An email reply an agent wrote for the person to review and send. GACA never sends it: the
+    agent can only read the mailbox, so the person opens it in their mail app (see AlertDraftOut)."""
+
+    to: str | None = None
+    subject: str | None = None
+    body: str
 
 
 class AlertRun(BaseModel):
@@ -63,6 +80,8 @@ class AlertRun(BaseModel):
     # The agent's answer, short — what the app shows under the button.
     summary: str | None = None
     links: list["AlertLink"] = Field(default_factory=list)
+    # Set when the action was an email draft: the whole draft, not the one-line summary.
+    draft: AlertDraft | None = None
     error: str | None = None
     # The chat that did the work. Opening it is how the person continues or inspects.
     session_id: str | None = None
@@ -123,6 +142,8 @@ class AlertDoc(BaseModel):
     session_id: str | None = None
     # What was tried on this alert, oldest first.
     runs: list[AlertRun] = Field(default_factory=list)
+    # The latest email draft for this alert — from an action run, or from revising it in the chat.
+    draft: AlertDraft | None = None
     resolution_note: str | None = None
     # Set on a clarification raised against another alert.
     parent_alert_id: str | None = None
