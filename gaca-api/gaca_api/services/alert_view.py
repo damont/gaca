@@ -171,6 +171,8 @@ def actions_out(alert: AlertDoc) -> list[AlertActionOut]:
         state = _state(alert, i)
         if _valid_covers(alert, action) and state == "done" and _latest(alert, i, "done") is None:
             continue  # an "Add all" whose items were all done one by one has nothing left to show
+        if state == "done" and _latest(alert, i, "done") is None and _covering_done_run(alert, i) is not None:
+            continue  # done only because an "Add all" covered it: that one result says it, not each row again
         out.append(
             AlertActionOut(
                 index=i, kind=action.kind, label=effective_label(alert, i), params=action.params,
