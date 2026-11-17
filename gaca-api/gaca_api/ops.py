@@ -22,7 +22,7 @@ from .installer import hermes as hermes_mod
 from .installer import push as push_mod
 from .installer.run import SYSTEM_UNIT_DIR, Say, _ask, _ask_valid, _hermes_bin
 from .installer.shell import Shell, user_systemd_env
-from .provisioning import envfile, hermes_connect, skill_sync
+from .provisioning import envfile, hermes_connect, hermes_helper, skill_sync
 
 
 @dataclass
@@ -73,6 +73,28 @@ def _healthy(shell: Shell, wait: float = 20) -> bool:
         waited += 1
 
 
+def helper_socket_path() -> Path:
+    return hermes_helper.socket_path_for(Path(settings.db_path).expanduser().parent)
+
+
+def check_hermes_helper(shell: Shell, name: str) -> tuple[bool, str, list[str]]:
+    """Is the Hermes helper (the socket the system service runs hermes through) installed, listening
+    and answering? (ok, what we found, how to fix it) -- for a system service only."""
+    argv, env = _systemctl("system", "is-active", f"{name}-hermes.socket")
+    state = (shell.run(argv, env=env).stdout or "").strip() or "unknown"
+    if state != "active":
+        return False, f"the Hermes helper ({name}-hermes.socket) is {state}", [
+            "re-run ./install.sh (it installs the helper with the service)", f"journalctl -u {name}-hermes.socket"]
+    try:
+        code, out, err = hermes_helper.call_sync(helper_socket_path(), ("--version",), 30)
+    except hermes_helper.HelperError as error:
+        return False, str(error), [f"journalctl -u '{name}-hermes@*'"]
+    if code != 0:
+        return False, f"the Hermes helper ran hermes and it failed: {(err or out).strip()[-200:]}", [
+            "run `hermes --version` yourself and fix what it says", f"journalctl -u '{name}-hermes@*'"]
+    return True, "the Hermes helper answers (it runs hermes for gaca-api): " + (out.strip().splitlines() or ["ok"])[0], []
+
+
 def service_status(shell: Shell, say: Say, name: str, paths: Paths) -> int:
     mode = service_mode(name, paths)
     if mode is None:
@@ -84,7 +106,11 @@ def service_status(shell: Shell, say: Say, name: str, paths: Paths) -> int:
     (say.ok if state == "active" and healthy else say.warn)(
         f"{name} ({mode} service): {state}; " + (f"answering on 127.0.0.1:{settings.api_port}" if healthy else "NOT answering")
     )
-    return 0 if state == "active" and healthy else 1
+    helper_ok = True
+    if mode == "system":
+        helper_ok, found, _ = check_hermes_helper(shell, name)
+        (say.ok if helper_ok else say.warn)(found)
+    return 0 if state == "active" and healthy and helper_ok else 1
 
 
 def service_restart(shell: Shell, say: Say, name: str, paths: Paths) -> int:
@@ -122,7 +148,9 @@ def service_logs(shell: Shell, name: str, paths: Paths, *, follow: bool, lines: 
     if mode is None:
         print(f"no `{name}` service is installed here (run ./install.sh)")
         return 1
-    argv = ["journalctl", *(["--user"] if mode == "user" else []), "-u", f"{name}.service", "-n", str(lines), "--no-pager"]
+    argv = ["journalctl", *(["--user"] if mode == "user" else []), "-u", f"{name}.service",
+            *(["-u", f"{name}-hermes@*.service", "-u", f"{name}-hermes.socket"] if mode == "system" else []),
+            "-n", str(lines), "--no-pager"]
     if follow:
         argv = [a for a in argv if a != "--no-pager"] + ["-f"]
     env = user_systemd_env() if mode == "user" else None
@@ -319,6 +347,9 @@ def doctor(shell: Shell, say: Say, name: str, paths: Paths) -> int:
             report.ok(f"the {mode} service is running")
         else:
             report.problem(f"the {mode} service is {state}", ["gaca-api service restart", "gaca-api service logs"])
+    if mode == "system":
+        helper_ok, found, fix = check_hermes_helper(shell, name)
+        report.ok(found) if helper_ok else report.problem(found, fix)
     if _healthy(shell, wait=0):
         report.ok(f"the API answers on 127.0.0.1:{settings.api_port}")
     else:

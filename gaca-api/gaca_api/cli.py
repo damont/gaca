@@ -34,6 +34,8 @@ def _parser() -> argparse.ArgumentParser:
     device.add_parser("list", help="list paired devices")
     unpair = device.add_parser("revoke", help="unpair a device by id")
     unpair.add_argument("device_id")
+    # Internal: what the Hermes helper's systemd unit runs (provisioning/hermes_helper.py).
+    sub.add_parser("hermes-helper", help=argparse.SUPPRESS)
     sub.add_parser("status", help="does this server have an owner yet, and how many phones are paired?")
 
     def named(parser):
@@ -420,6 +422,10 @@ def main(argv: list[str] | None = None) -> int:
 
         run()
         return 0
+    if args.command == "hermes-helper":
+        from .provisioning import hermes_helper
+
+        return hermes_helper.serve_stdio()
     if args.command == "install":
         return _install(args)
     if args.command == "uninstall":

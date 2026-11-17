@@ -8,18 +8,23 @@
 # `sudo ./deploy/check-sandbox.sh` proves the sandbox really applies on your machine.
 #
 # What it can touch: read the code, read Hermes' home, write the GACA data directory and
-# Hermes' profiles/ directory (so creating a crew member works). Everything else under your
+# Hermes' profiles/ directory (so creating a crew member works). It never runs hermes itself: Hermes
+# wants to write all over its own home, so `hermes profile create` etc. run in a tiny socket-activated
+# helper (gaca-api-hermes.socket, installed and managed with this service). Everything else under your
 # home directory is invisible to it. A leading '-' means "skip if the path doesn't exist".
 [Unit]
 Description=GACA API
-After=network-online.target
-Wants=network-online.target
+After=network-online.target @NAME@-hermes.socket
+Wants=network-online.target @NAME@-hermes.socket
 
 [Service]
 User=@USER@
 WorkingDirectory=@REPO@/gaca-api
 EnvironmentFile=@REPO@/.env
 Environment=PYTHONDONTWRITEBYTECODE=1
+# hermes commands run in a helper outside this sandbox, reached over this socket (see the header
+# of gaca_api/provisioning/hermes_helper.py).
+Environment=GACA_HERMES_SOCKET=@HERMES_SOCKET@
 ExecStart=@REPO@/gaca-api/.venv/bin/gaca-api
 Restart=on-failure
 RestartSec=3

@@ -382,6 +382,27 @@ def test_a_failing_create_reports_hermes_stderr_and_stdout(box):
         run(box.hermes.create_profile("fresh", 1, KEY))
 
 
+def test_a_create_that_fails_after_making_the_profile_takes_it_back(box):
+    box.stub.write_text(
+        f"#!{sys.executable}\nimport pathlib, sys\n"
+        f"if sys.argv[1:3] == ['profile', 'create']:\n"
+        f"    (pathlib.Path({str(box.home)!r}) / 'profiles' / sys.argv[3]).mkdir()\n"
+        f"    print('created, then the gateway check crashed'); sys.exit(1)\n"
+        f"if sys.argv[1:3] == ['profile', 'delete']:\n"
+        f"    import shutil; shutil.rmtree(pathlib.Path({str(box.home)!r}) / 'profiles' / sys.argv[3])\n")
+    with pytest.raises(LocalError, match="failed at create"):
+        run(box.hermes.create_profile("fresh", 1, KEY))
+    assert not (box.home / "profiles" / "fresh").exists()
+    assert [c["argv"] for c in calls(box)] == []  # (the custom stub does not log)
+
+
+def test_a_create_that_fails_never_deletes_a_profile_that_was_already_there(box):
+    box.stub.write_text(f"#!{sys.executable}\nimport sys\nprint('already exists'); sys.exit(1)\n")
+    with pytest.raises(LocalError):
+        run(box.hermes.create_profile("toolshed", 1, KEY))
+    assert (box.home / "profiles" / "toolshed" / "SOUL.md").exists()
+
+
 # ── structural guard rails ───────────────────────────────────────────
 
 def test_the_module_has_no_shell_or_dynamic_code_paths():

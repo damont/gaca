@@ -80,6 +80,10 @@ class Settings(BaseSettings):
     # The hermes executable for local mode: a name looked up on PATH (and ~/.local/bin) or an
     # absolute path.
     hermes_bin: str = "hermes"
+    # The Unix socket of the installer-managed Hermes helper (provisioning/hermes_helper.py). Set
+    # by the sandboxed system service, whose filesystem rules Hermes cannot run under; empty
+    # (user service, development) = run hermes directly.
+    hermes_socket: str = ""
     # Where GACA's Hermes skills live (the repo's `skills/`). Empty = next to this code. Only used to
     # give a newly created or discovered crew member its skills.
     skills_dir: str = ""

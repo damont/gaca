@@ -1,0 +1,18 @@
+# Where gaca-api asks for hermes commands to be run. Rendered and installed by `./install.sh` next to
+# gaca-api.service (see gaca_api/provisioning/hermes_helper.py for why it exists); you normally never
+# touch it by hand, and `gaca-api service status | doctor` report on it. systemd owns the socket, so
+# there is no extra daemon: a helper process exists only while one request is being answered.
+[Unit]
+Description=GACA: run hermes commands for gaca-api (socket)
+
+[Socket]
+ListenStream=@HERMES_SOCKET@
+SocketUser=@USER@
+SocketGroup=@USER@
+SocketMode=0600
+Accept=yes
+MaxConnections=8
+Service=@NAME@-hermes@.service
+
+[Install]
+WantedBy=sockets.target

@@ -1,0 +1,18 @@
+# One instance per request on gaca-api-hermes.socket: `gaca-api hermes-helper` reads one JSON line,
+# runs the one allowlisted hermes command it names, and answers. Runs as you, NOT sandboxed: Hermes
+# needs to write in its own home. It is given no environment file; hermes itself is started with a scrubbed environment.
+[Unit]
+Description=GACA: run one hermes command for gaca-api
+
+[Service]
+User=@USER@
+WorkingDirectory=@HOME@
+Environment=GACA_HERMES_HOME=@HERMES_HOME@
+Environment=GACA_HERMES_BIN=@HERMES_BIN@
+ExecStart=@REPO@/gaca-api/.venv/bin/gaca-api hermes-helper
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+NoNewPrivileges=yes
+PrivateTmp=yes
+RuntimeMaxSec=200
