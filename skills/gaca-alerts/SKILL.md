@@ -56,6 +56,8 @@ python3 ${HERMES_SKILL_DIR}/scripts/gaca.py me
 
 ## Alert design
 
+**Default to actions.** When there is something the person could have you do about the alert, post it as one or more `suggested_actions` (see **Actions** below) rather than describing it in the body for them to ask about. A bare alert with only text is for things that are purely informational or that only they can do.
+
 Create alerts using the live `AlertCreate` schema. At the time this skill was authored, the useful fields were `source`, `agent`, `kind`, `severity`, `title`, `body`, `data`, `dedupe_key`, `suggested_actions`, and `links`; re-check the schema before use.
 
 ### Severity

@@ -78,7 +78,11 @@ Alert only when **all** of these hold:
 1. **It needs the user, or soon will.** A decision, a reply, a conflict, a deadline, a thing about to go wrong. Information that is merely interesting does not qualify.
 2. **The timing matters.** Waiting for tomorrow's briefing would cost them something (a missed deadline, a lost slot, an annoyed person). If it can wait for the briefing, it waits.
 3. **It is new.** Not already in `context` as an alert that is still `new` or that they have closed in any way. If they marked that kind of thing `not_useful` before, the bar for it is higher still.
-4. **You can make it nearly effortless.** Do the thinking first. Not "an email from the landlord", but "the landlord asks to move the inspection to Thursday 10am; you are free then; reply yes?" Offer the exact next step as `suggested_actions` (each `prompt` must stand on its own, because it may be handed to an agent without the button label). For a reply, give one `email.draft` action per sensible answer ("Accept", "Ask for a smaller increase", …) instead of writing the reply into the body: the app asks for the draft when tapped and the person reviews and sends it. See the Actions section of **gaca-alerts**.
+4. **You can make it nearly effortless, and that means actions.** Do the thinking first. Not "an email from the landlord", but "the landlord asks to move the inspection to Thursday 10am; you are free then; reply yes?" Then give the person a button for each next step, as `suggested_actions`: **an alert that someone could act on carries actions by default**, one per thing, and the app shows them as buttons the person taps to have you do it. Without them they have to go to a chat and ask, which is what this is meant to save them. Concretely:
+   - A dated event to add: one `calendar.add` action per event (plus an "Add all N" with `covers`).
+   - An email to answer: one `email.draft` action per sensible answer ("Accept", "Ask for a smaller increase", …) instead of writing the reply into the body. The person reviews the draft and sends it themselves; you can only read their mail.
+   - Each `prompt` must stand on its own, because it is run without the button label. Details of the format (`kind`, `params`, `covers`) are in the Actions section of **gaca-alerts**; read it before posting.
+   - Only when there is genuinely nothing to do but look, post links instead, or no actions.
 
 Signals that raise the bar: a real person (not a mailing list) waiting on them; a hard date inside about 48 hours; money or health or travel; something that changed from what they were last told. Signals that lower it: newsletters, receipts, marketing, automated notices that need nothing, anything they have marked not useful before.
 
@@ -92,10 +96,15 @@ python3 ${HERMES_SKILL_DIR}/scripts/heartbeat.py alert <<'JSON'
   "kind": "reply.needed",
   "severity": "info",
   "title": "Landlord wants to move Thursday's inspection",
-  "body": "…what, why it matters, what you propose…",
+  "body": "…what it is and why it matters, in a sentence or two; the actions carry the detail…",
   "dedupe_key": "mail:<thread id>:reply",
   "suggested_actions": [
-    {"label": "Draft yes", "prompt": "Draft a short reply to the landlord's email (thread …) accepting Thursday 10am."}
+    {"label": "Say yes to Thursday 10am", "kind": "email.draft",
+     "prompt": "Draft a short reply to the landlord's email (sender …, subject '…') accepting Thursday 10am.",
+     "params": {"detail": "Accept the new time"}},
+    {"label": "Suggest Friday instead", "kind": "email.draft",
+     "prompt": "Draft a short reply to the landlord's email (sender …, subject '…') asking if Friday morning would work instead.",
+     "params": {"detail": "Offer another day"}}
   ]
 }
 JSON
