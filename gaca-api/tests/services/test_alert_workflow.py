@@ -134,7 +134,23 @@ def test_add_all_after_one_is_told_what_to_skip_and_then_closes_the_alert(tmp_pa
     assert out.workflow.phase == "closed" and out.workflow.phase_label == "Done by Hermes"
     assert out.workflow.actions_heading == "Hermes did this" and out.workflow.close_options == []
     assert "Closed automatically" in out.workflow.closed_note
-    assert [a.state for a in out.actions] == ["done", "done", "done", "done"]
+    # Soccer was done on its own; the other two were done by "Add all", which reports once for both.
+    assert [(a.index, a.state) for a in out.actions] == [(0, "done"), (3, "done")]
+    assert out.actions[1].result.summary == "Added the other two."
+
+
+def test_add_all_straight_away_shows_one_result_not_one_per_row(tmp_path, monkeypatch):
+    _backend(monkeypatch, "Added all three.")
+
+    async def go():
+        alert, _ = await alert_service.create("u1", _events())
+        await alert_service.run_action(_user(), alert.id, suggested_action_index=3)
+        await _drain()
+        return (await alert_service.to_out("u1", [await alert_service.get("u1", alert.id)]))[0]
+
+    out = _run(go, tmp_path)
+    assert [(a.index, a.state, a.label) for a in out.actions] == [(3, "done", "Add all 3")]
+    assert out.status == "done_by_gaca" and out.actions[0].result.summary == "Added all three."
 
 
 def test_doing_each_one_by_one_closes_the_alert_on_the_last_and_hides_the_covering_button(tmp_path, monkeypatch):
