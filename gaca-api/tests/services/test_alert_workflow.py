@@ -93,7 +93,7 @@ def test_an_untouched_alert_offers_every_action_with_a_detail_line(tmp_path):
     w = out.workflow
     assert (w.phase, w.phase_label, w.actions_heading) == ("open", None, "Hermes can add these")
     assert [(o.reason, o.label, o.primary) for o in w.close_options] == [
-        ("done_by_me", "I'll handle it", True), ("noted", "Good to know", False), ("not_useful", "Not useful", False)]
+        ("done_by_me", "I'll handle it", True), ("noted", "Glad to know", False), ("not_useful", "Not useful", False)]
     assert w.close_heading == "Or close it yourself" and "teaches Hermes" in w.close_hint
     assert w.chat.prominent is False
 
@@ -305,7 +305,7 @@ def test_chat_is_the_main_route_when_there_are_no_actions_and_quiet_otherwise():
     assert w.chat.prominent and "No quick action" in w.chat.hint and w.actions_heading is None
 
 
-@pytest.mark.parametrize("status,label", [("done_by_me", "You handled this"), ("noted", "Good to know"),
+@pytest.mark.parametrize("status,label", [("done_by_me", "You handled this"), ("noted", "Glad to know"),
                                           ("not_useful", "Marked not useful")])
 def test_a_closed_alert_says_how_it_closed_and_offers_no_buttons(status, label):
     w = alert_view.workflow_out(AlertDoc(user_id="u", kind="k", title="t", status=status))

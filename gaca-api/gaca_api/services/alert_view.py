@@ -223,7 +223,7 @@ def workflow_out(alert: AlertDoc) -> AlertWorkflow:
         phase = "closed"
         label = {
             "done_by_gaca": "Done by Hermes", "done_by_me": "You handled this",
-            "noted": "Good to know", "not_useful": "Marked not useful",
+            "noted": "Glad to know", "not_useful": "Marked not useful",
         }.get(alert.status)
     elif busy:
         phase, label = "working", "Working…"
@@ -271,7 +271,7 @@ def workflow_out(alert: AlertDoc) -> AlertWorkflow:
             close_heading = "Or close it yourself"
             options = [
                 CloseOption(reason="done_by_me", label="I'll handle it", primary=True),
-                CloseOption(reason="noted", label="Good to know"),
+                CloseOption(reason="noted", label="Glad to know"),
                 CloseOption(reason="not_useful", label="Not useful"),
             ]
             close_hint = (
