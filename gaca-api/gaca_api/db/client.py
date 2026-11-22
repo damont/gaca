@@ -14,6 +14,7 @@ column holding the full Pydantic model as JSON. Objects stay natural — dump wi
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import aiosqlite
@@ -340,6 +341,39 @@ async def _scrub_old_credentials(conn: aiosqlite.Connection) -> None:
     )
 
 
+# The scopes every agent token got by default before `reminders` existed. A token holding all of them
+# was minted with the defaults (not narrowed on purpose), so it is given the new one.
+_SCOPES_BEFORE_REMINDERS = {"alerts", "briefings", "artifacts", "heartbeat"}
+_WIDEN_FOR_REMINDERS = "migration:token-scope-reminders"
+
+
+async def _widen_tokens_for_reminders(conn: aiosqlite.Connection) -> None:
+    """ONCE, at the first start after reminders arrived: give `reminders` to every live token that has
+    the old default scopes, so the Hermes tokens already on a box work with the new skill without being
+    re-minted. A token someone narrowed on purpose (it lacks one of the old defaults) and a revoked one are
+    left alone. It runs once, recorded in server_meta, so a token made later with exactly those four scopes
+    on purpose is not widened behind the owner's back."""
+    async with conn.execute("SELECT 1 FROM server_meta WHERE key = ?", (_WIDEN_FOR_REMINDERS,)) as cursor:
+        if await cursor.fetchone():
+            return
+    widened = 0
+    async with conn.execute("SELECT id, scopes FROM api_tokens WHERE revoked_at IS NULL") as cursor:
+        rows = await cursor.fetchall()
+    for row in rows:
+        try:
+            scopes = json.loads(row["scopes"])
+        except ValueError:
+            continue
+        if isinstance(scopes, list) and _SCOPES_BEFORE_REMINDERS <= set(scopes) and "reminders" not in scopes:
+            await conn.execute("UPDATE api_tokens SET scopes = ? WHERE id = ?", (json.dumps([*scopes, "reminders"]), row["id"]))
+            widened += 1
+    await conn.execute(
+        "INSERT INTO server_meta (key, value) VALUES (?, ?)", (_WIDEN_FOR_REMINDERS, json.dumps({"widened": widened}))
+    )
+    if widened:
+        logging.getLogger(__name__).info("gave the reminders scope to %d existing agent token(s)", widened)
+
+
 async def connect() -> None:
     """Open the shared connection and ensure the schema exists (startup).
 
@@ -355,6 +389,7 @@ async def connect() -> None:
     await _add_missing_columns(_conn)
     await _backfill_session_user_ids(_conn)
     await _scrub_old_credentials(_conn)
+    await _widen_tokens_for_reminders(_conn)
     await _conn.executescript(_LATE_INDEXES)
     await _conn.commit()
 
