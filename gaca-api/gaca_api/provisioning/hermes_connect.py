@@ -14,7 +14,7 @@ from ..models.api_token import ApiTokenDoc
 from ..models.user import UserDoc
 from ..services import tokens as token_service
 from ..utils import tokens as token_utils
-from . import skill_sync
+from . import skill_sync, soul_block
 from .envfile import has_gaca_token, upsert_env
 from .local import PROFILE_NAME
 
@@ -102,7 +102,13 @@ def install_skills(home: Path, source: Path | None = None) -> dict[str, skill_sy
     results: dict[str, skill_sync.SyncResult | str] = {}
     for profile, env_path in profile_env_paths(home).items():
         try:
-            results[profile] = skill_sync.sync(source, env_path.parent / "skills", create_skills_dir=True)
+            results[profile] = skill_sync.sync(
+                source, env_path.parent / "skills", create_skills_dir=True, default_profile=profile == "default"
+            )
+            try:
+                soul_block.apply(env_path.parent)
+            except (soul_block.SoulBlockError, OSError):
+                pass  # a SOUL.md we cannot touch must not hide that the skills went in
         except skill_sync.SkillSyncError as error:
             results[profile] = str(error)
     return results

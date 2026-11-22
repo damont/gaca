@@ -52,7 +52,7 @@ from pathlib import Path
 
 import httpx
 
-from . import cron_runs, skill_sync
+from . import cron_runs, skill_sync, soul_block
 from . import hermes_helper
 from .base import ProfileNameRejected, ProvisioningError
 from .envfile import has_gaca_token, upsert_env
@@ -565,7 +565,8 @@ class LocalHermes:
             await asyncio.to_thread(
                 skill_sync.sync, self._skills_source, directory / "skills", create_skills_dir=True
             )
-        except skill_sync.SkillSyncError as error:
+            await asyncio.to_thread(soul_block.apply, directory)
+        except (skill_sync.SkillSyncError, soul_block.SoulBlockError) as error:
             raise LocalError(f"installing skills into {name!r} failed: {error}") from error
 
     async def _expects_multiplex(self) -> bool:
