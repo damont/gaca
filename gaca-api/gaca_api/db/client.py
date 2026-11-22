@@ -87,6 +87,17 @@ CREATE INDEX IF NOT EXISTS ix_alerts_inbox
 -- check-then-insert — is what makes a duplicate impossible.
 CREATE UNIQUE INDEX IF NOT EXISTS ux_alerts_dedupe
     ON alerts (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL;
+-- Reminders (docs/reminders.md): a time to nudge the owner, or a "later" note with no time. `due_at`
+-- is always UTC to the second so it compares as text; the heartbeat asks for what is due.
+CREATE TABLE IF NOT EXISTS reminders (
+    id      TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    state   TEXT NOT NULL,
+    due_at  TEXT,
+    doc     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_reminders_due
+    ON reminders (user_id, state, due_at);
 CREATE TABLE IF NOT EXISTS push_tokens (
     id         TEXT PRIMARY KEY,
     user_id    TEXT NOT NULL,

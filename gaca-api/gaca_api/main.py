@@ -21,7 +21,7 @@ from .db import client
 from .provisioning.base import ProfileNameRejected, ProvisioningError
 from .config import settings
 from .security import BodyLimitMiddleware, SecurityHeadersMiddleware, cors_origins
-from .routers import agent, alerts, artifacts, auth, automations, briefings, artifact_publish, cloud, cloud_gacabits, crew, devices, heartbeat, push, sessions, setup, tokens
+from .routers import agent, alerts, artifacts, auth, automations, briefings, artifact_publish, cloud, cloud_gacabits, crew, devices, heartbeat, push, reminders, sessions, setup, tokens
 from .services import automation_watch, cloud_client, cloud_move
 from .services import push as push_service
 from .services.exceptions import (
@@ -247,6 +247,7 @@ app.include_router(cloud.router, prefix="/api")
 app.include_router(cloud_gacabits.router, prefix="/api")
 app.include_router(artifact_publish.router, prefix="/api")
 app.include_router(heartbeat.router, prefix="/api")
+app.include_router(reminders.router, prefix="/api")
 
 
 def run() -> None:

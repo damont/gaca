@@ -196,7 +196,7 @@ is printed. Non-interactive: `--fcm-credentials FILE`, or `--apns-key FILE --apn
 Two things connect Hermes to GACA, both done by the installer and redone by `gaca-api hermes connect`:
 
 - **A token per profile.** Each Hermes profile gets its own scoped, revocable token (alerts, briefings,
-  artifacts only) in its `.env`. Hermes talks to GACA over `127.0.0.1`, never the public address.
+  artifacts, reminders) in its `.env`. Hermes talks to GACA over `127.0.0.1`, never the public address.
 - **Skills.** GACA's skills (the repo's `skills/`) are copied into every profile's `skills/gaca/` folder so the
   agent knows how to use GACA:
 

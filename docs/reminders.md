@@ -1,6 +1,6 @@
 # Reminders
 
-Status: design, agreed 2026-11-22. Nothing here is built yet; the PRs at the end implement it.
+Status: agreed 2026-11-22. PRs 1 to 3 below are done (design, skill sync, API); the rest are not built yet.
 
 ## Why
 
@@ -53,7 +53,8 @@ timezone from the heartbeat settings, which the API already holds. The API never
 
 ## API
 
-Plain REST under the existing token auth, scope `reminders`:
+Plain REST under the existing token auth, scope `reminders` (in the default token scopes; tokens minted before it
+existed need re-minting or the scope added, or the skill gets a 403):
 
 - `POST /api/reminders`: `{text, due_at?, explicit_time?, source?, expires_at?}`. Before creating, the API
   returns the existing pending reminder when the text and time are near-identical (the agent can also check

@@ -41,6 +41,9 @@ SCOPE_RULES: dict[str, list[tuple[str, str]]] = {
         ("GET", r"/api/cloud/templates"),
         ("GET", r"/api/cloud/templates/[^/]+"),
     ],
+    # The agent keeps the owner's reminders (docs/reminders.md): make, list, reschedule, cancel, and the
+    # heartbeat's `fire-due`. They are the owner's own, so nothing here needs the app.
+    "reminders": [("*", r"/api/reminders(/.*)?")],
     # Read-only on purpose: the heartbeat may learn its limits but never change them.
     "heartbeat": [("GET", r"/api/heartbeat/settings")],
 }
