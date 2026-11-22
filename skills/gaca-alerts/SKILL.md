@@ -98,6 +98,10 @@ If the person is likely to want to answer an email, offer a draft per sensible a
 
 You can only read their mail, so this never sends anything. When tapped, GACA asks the agent for the draft in a fixed shape (`To:`, `Subject:`, a blank line, the body), keeps the whole draft on the alert, and gives the person a button that opens their mail app with it filled in to review and send. A draft does **not** close the alert: it waits until the person says they sent it. They can ask for changes in the chat, and the latest draft stays on the alert.
 
+#### Reminders
+
+If the alert carries a real date or deadline (a bill due, a delivery window, an event, a form deadline), you may offer **one** action to be reminded: `{"label": "Remind me Thursday 9am", "kind": "reminder", "prompt": "Use the gaca-reminders skill to create a reminder: text 'Pay the water bill', at 2026-11-26T09:00, kind alert, alert id from this alert. Then tell me the time it is set for.", "params": {"date": "2026-11-26", "time": "9:00 AM"}}`. Pick the time for the reason (the morning before it is due), and put the exact ISO time in the prompt. Never add a generic "Remind me later" to every alert: that is snooze again, and snooze was removed because nobody used it. See **gaca-reminders**.
+
 ### Dedupe
 
 Use a deterministic `dedupe_key` for a condition that can recur. Compose it from stable scope and condition, for example:

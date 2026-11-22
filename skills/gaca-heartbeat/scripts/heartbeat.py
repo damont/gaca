@@ -6,6 +6,7 @@ what is worth interrupting them for. This helper owns the parts that must not de
 mood: whether to run at all (quiet hours, daily budget, back-off), the daily alert cap, and the
 memory of what the user did with earlier alerts. Deciding what is worth saying is the agent's job.
 
+  reminders                     fire the user's due reminders (GACA raises the alerts). Always the first step, before gate.
   gate                          should this run happen? prints {"run": bool, "reason": ...}.
                                 Counts the run. If "run" is false, stop and reply [SILENT].
   context [--days N]            what you already told the user lately and what they did with it
@@ -249,6 +250,37 @@ def status_of(alert: dict) -> str:
 
 # ── commands ────────────────────────────────────────────────────────
 
+def cmd_reminders(_args) -> int:
+    """Ask GACA to fire whatever reminders are due. This is the one step that must happen every run
+    whatever the gate says: the gate is about whether the heartbeat should go looking around, and a
+    reminder is something the user asked for. GACA decides what may fire now (a time the user named
+    always; a vague one waits out quiet hours and a pause) and raises the alerts itself, so nothing
+    here depends on the model. Never fails the run: an older GACA, a token without the `reminders`
+    scope or no answer is reported and the heartbeat carries on."""
+    value = os.environ.get("GACA_API_TOKEN", "").strip()
+    if not value or "\n" in value or "\r" in value:
+        print("reminders: skipped (no usable GACA_API_TOKEN)")
+        return 0
+    req = urllib.request.Request(f"{GACA_BASE}/api/reminders/fire-due", data=b"{}", method="POST", headers={
+        "Accept": "application/json", "Content-Type": "application/json", "User-Agent": USER_AGENT,
+        "Authorization": f"Bearer {value}"})
+    try:
+        with urllib.request.build_opener(NoRedirects).open(req, timeout=30) as response:
+            body = json.loads(response.read().decode("utf-8", errors="replace"))
+    except urllib.error.HTTPError as error:
+        note = "this token lacks the reminders scope (run `gaca-api hermes connect --rotate`)" if error.code == 403 else (
+            "this GACA has no reminders yet" if error.code == 404 else f"GACA answered {error.code}")
+        print(f"reminders: skipped ({note})")
+        return 0
+    except (urllib.error.URLError, OSError, ValueError) as error:
+        print(f"reminders: skipped ({getattr(error, 'reason', error)})")
+        return 0
+    fired = [r.get("text", "?") for r in (body or {}).get("fired", []) if isinstance(r, dict)]
+    print(json.dumps({"fired": len(fired), "texts": [t[:80] for t in fired[:10]],
+                      "held": (body or {}).get("held", 0), "expired": (body or {}).get("expired", 0)}))
+    return 0
+
+
 def cmd_gate(_args) -> int:
     config, state, moment = load_config(), load_state(), now()
     reason = None
@@ -397,6 +429,7 @@ def cmd_config(args) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Budget, memory and posting for the GACA heartbeat")
     sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("reminders", help="fire the user's due reminders (first step of every run)")
     sub.add_parser("gate", help="should this run happen?")
     context = sub.add_parser("context", help="what you told the user lately and how they reacted")
     context.add_argument("--days", type=int)
@@ -407,7 +440,7 @@ def main() -> int:
     config = sub.add_parser("config", help="show or change the budget settings")
     config.add_argument("--set", action="append", metavar="key=value")
     args = parser.parse_args()
-    return {"gate": cmd_gate, "context": cmd_context, "alert": cmd_alert,
+    return {"reminders": cmd_reminders, "gate": cmd_gate, "context": cmd_context, "alert": cmd_alert,
             "done": cmd_done, "config": cmd_config}[args.command](args)
 
 

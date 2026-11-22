@@ -27,10 +27,11 @@ You only suggest. You never send, reply, delete, accept, pay, book or change any
 
 Load the **gaca** skill first if you have not, and use **gaca-alerts** for the alert fields and severity rules. This skill adds the judgment about *whether* to alert.
 
-Helper: `python3 ${HERMES_SKILL_DIR}/scripts/heartbeat.py <command>` (`-h` lists them: `gate`, `context`, `alert`, `done`, `config`). It reads the token from the environment and never prints it.
+Helper: `python3 ${HERMES_SKILL_DIR}/scripts/heartbeat.py <command>` (`-h` lists them: `reminders`, `gate`, `context`, `alert`, `done`, `config`). It reads the token from the environment and never prints it.
 
 ## Every run, in this order
 
+0. **Reminders.** `heartbeat.py reminders`, before anything else, **every** run, even one the gate is about to stop. It asks GACA to fire the reminders that are due; GACA raises those alerts itself, so there is nothing for you to decide or post. It never needs a judgment from you and it does not count against the daily run or alert budgets. If it says it was skipped, carry on: do not retry it and do not work around it.
 1. **Gate.** `heartbeat.py gate`. If it prints `"run": false`, stop and reply exactly `[SILENT]`. It covers the user's quiet hours, the on/off switch and any pause they set in the app, the daily run budget, and a pause after the model provider ran out of budget. Do not argue with it and do not look at anything first.
 2. **Remember.** `heartbeat.py context`. It lists what you told the user lately and what they did with each: `done_by_gaca` (an action you offered ran for them), `done_by_me` (they handled it themselves), `noted` (good to know, nothing to do), `not_useful` (not worth their time), or still `new`. This is how you learn what they care about: `not_useful` raises the bar for that kind of thing, `noted` means it belongs in the briefing rather than an interruption, and `done_by_me` means they did something an action of yours could have done, so offer that action next time. Read it before you look at anything.
 3. **Look.** Check the sources below. Keep it cheap: scan, do not research. Open something in full only when the scan says it might clear the bar.
