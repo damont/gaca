@@ -210,3 +210,55 @@ def test_the_repos_skills_install_cleanly(tmp_path, skills):
     result = sync(REPO_SKILLS, skills)
     assert {"gaca", "gaca-alerts", "gaca-briefing", "gaca-artifacts"} <= {r.split("/")[0] for r in result.written}
     assert not result.left_alone
+
+
+# ── skills that belong to the default profile alone ──────────────────
+
+def test_the_heartbeat_goes_to_the_default_profile_only(tmp_path, skills):
+    src = make_source(tmp_path, {"gaca-heartbeat/SKILL.md": "hb", "gaca-heartbeat/scripts/heartbeat.py": "x", "gaca-alerts/SKILL.md": "al"})
+    other = tmp_path / "other" / "skills"
+    other.mkdir(parents=True)
+    sync(src, skills, default_profile=True)
+    sync(src, other)
+    assert (skills / "gaca" / "gaca-heartbeat" / "SKILL.md").is_file()
+    assert (other / "gaca" / "gaca-alerts" / "SKILL.md").is_file()
+    assert not (other / "gaca" / "gaca-heartbeat").exists()
+
+
+def test_an_unmodified_heartbeat_already_in_another_profile_is_removed_with_its_folders(tmp_path, skills):
+    src = make_source(tmp_path, {"gaca-heartbeat/SKILL.md": "hb", "gaca-heartbeat/scripts/heartbeat.py": "x", "gaca-alerts/SKILL.md": "al"})
+    sync(src, skills, default_profile=True)  # how every profile used to be filled
+    result = sync(src, skills)
+    assert sorted(result.removed) == ["gaca-heartbeat/SKILL.md", "gaca-heartbeat/scripts/heartbeat.py"]
+    assert not (skills / "gaca" / "gaca-heartbeat").exists()
+    assert (skills / "gaca" / "gaca-alerts" / "SKILL.md").read_text() == "al"
+
+
+def test_an_edited_heartbeat_in_another_profile_is_kept(tmp_path, skills):
+    src = make_source(tmp_path, {"gaca-heartbeat/SKILL.md": "hb", "gaca-alerts/SKILL.md": "al"})
+    sync(src, skills, default_profile=True)
+    (skills / "gaca" / "gaca-heartbeat" / "SKILL.md").write_text("mine")
+    result = sync(src, skills)
+    assert result.left_alone == ["gaca-heartbeat/SKILL.md"] and not result.removed
+    assert (skills / "gaca" / "gaca-heartbeat" / "SKILL.md").read_text() == "mine"
+
+
+def test_the_repos_heartbeat_is_marked_default_only():
+    assert "gaca-heartbeat" in skill_sync.DEFAULT_PROFILE_ONLY
+    assert (REPO_SKILLS / "gaca-heartbeat" / "SKILL.md").is_file()
+
+
+def test_installing_across_profiles_gives_the_heartbeat_to_default_and_the_soul_block_to_all(tmp_path):
+    from gaca_api.provisioning import hermes_connect, soul_block
+
+    home = tmp_path / "hermes"
+    for directory in (home, home / "profiles" / "toolshed"):
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "SOUL.md").write_text("Mine.\n")
+    results = hermes_connect.install_skills(home, REPO_SKILLS)
+    assert set(results) == {"default", "toolshed"}
+    assert (home / "skills" / "gaca" / "gaca-heartbeat" / "SKILL.md").is_file()
+    assert (home / "profiles" / "toolshed" / "skills" / "gaca" / "gaca-alerts" / "SKILL.md").is_file()
+    assert not (home / "profiles" / "toolshed" / "skills" / "gaca" / "gaca-heartbeat").exists()
+    for directory in (home, home / "profiles" / "toolshed"):
+        assert soul_block.BLOCK in (directory / "SOUL.md").read_text()

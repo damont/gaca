@@ -18,6 +18,7 @@ import re
 
 import yaml
 
+from ...provisioning import soul_block
 from ...schemas.crew_profile import PurposeInfo
 
 # Hermes' untouched-default persona texts, known by version. The installed Hermes reports its own
@@ -71,7 +72,8 @@ def custom_instructions(soul: str | None, stock: tuple[str, ...] | list[str] = (
     """
     if not soul:
         return None
-    text = re.sub(r"<!--.*?-->", "", soul, flags=re.S)  # the old scaffold is all comments
+    text = soul_block.strip(soul)  # GACA's own paragraph is not something the person wrote
+    text = re.sub(r"<!--.*?-->", "", text, flags=re.S)  # the old scaffold is all comments
     text = re.sub(r"^\s*#\s*Hermes Agent Persona\s*$", "", text, flags=re.M | re.I)
     # Longest first, so a text that extends another is matched whole.
     for candidate in sorted({*stock, *KNOWN_STOCK_SOULS}, key=len, reverse=True):

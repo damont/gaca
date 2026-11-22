@@ -34,6 +34,11 @@ _MAX_TOTAL = 4 * 1024 * 1024
 _SKIP_DIRS = {"__pycache__"}
 _SKIP_SUFFIXES = {".pyc", ".pyo"}
 
+# Skills that belong to the default profile alone. The heartbeat is the person's own check-in (their
+# mail, calendar and watch list) and its cron job is made on that profile only; another crew member's
+# heartbeat would be a different job, written for what that member does, so it is not inherited.
+DEFAULT_PROFILE_ONLY = frozenset({"gaca-heartbeat"})
+
 
 class SkillSyncError(Exception):
     """The source or target is not something we will read from or write to."""
@@ -169,11 +174,33 @@ def _write_atomic(path: Path, data: bytes, mode: int) -> None:
         raise
 
 
-def sync(source: Path, skills_dir: Path, *, create_skills_dir: bool = False, dry_run: bool = False) -> SyncResult:
+def _prune_empty(folder: Path, root: Path) -> None:
+    """Remove `folder` and its parents up to (not including) `root` while they are empty, so a retired
+    skill does not leave an empty directory behind."""
+    while folder != root and root in folder.parents:
+        try:
+            os.rmdir(folder)
+        except OSError:
+            return
+        folder = folder.parent
+
+
+def sync(
+    source: Path,
+    skills_dir: Path,
+    *,
+    create_skills_dir: bool = False,
+    dry_run: bool = False,
+    default_profile: bool = False,
+) -> SyncResult:
     """Install the skills under `source` into `<skills_dir>/gaca/`. `skills_dir` is a Hermes
     profile's own skills folder: it must already exist unless `create_skills_dir` (a profile that
-    was only just made may not have one yet). `dry_run` reports what would change and writes nothing."""
+    was only just made may not have one yet). `dry_run` reports what would change and writes nothing.
+    `default_profile` says this is the default profile's folder; only it gets DEFAULT_PROFILE_ONLY
+    skills, and an unmodified copy already in another profile is removed like any retired skill."""
     wanted = read_source(source)
+    if not default_profile:
+        wanted = {rel: v for rel, v in wanted.items() if rel.split("/", 1)[0] not in DEFAULT_PROFILE_ONLY}
     if dry_run and not skills_dir.exists():
         return SyncResult(written=list(wanted))
     _real_dir(skills_dir, create=create_skills_dir and not dry_run)
@@ -226,6 +253,7 @@ def sync(source: Path, skills_dir: Path, *, create_skills_dir: bool = False, dry
         if current == old_hash:
             if not dry_run:
                 os.unlink(target)
+                _prune_empty(target.parent, root)
             result.removed.append(relative)
         else:
             result.left_alone.append(relative)

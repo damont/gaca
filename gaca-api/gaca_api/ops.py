@@ -388,7 +388,9 @@ def doctor(shell: Shell, say: Say, name: str, paths: Paths) -> int:
 
     for profile, env_path in hermes_connect.profile_env_paths(home).items():
         try:
-            plan = skill_sync.sync(skill_sync.default_source(), env_path.parent / "skills", dry_run=True)
+            plan = skill_sync.sync(
+                skill_sync.default_source(), env_path.parent / "skills", dry_run=True, default_profile=profile == "default"
+            )
         except skill_sync.SkillSyncError as error:
             report.problem(f"GACA skills in Hermes profile {profile!r}: {error}")
             continue
