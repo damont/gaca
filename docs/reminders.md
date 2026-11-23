@@ -1,6 +1,8 @@
 # Reminders
 
-Status: agreed 2026-11-22. PRs 1 to 3 below are done (design, skill sync, API); the rest are not built yet.
+Status: agreed 2026-11-22. PRs 1 to 4 below are done (design, skill sync, API, skills). Android (5) is in review; iOS, the
+briefing notes (6) and the optional extras (7) are not built. Wording and app UI revised 2026-11-22: no Scheduled
+list, no reschedule buttons, and the person only ever sees "alerts".
 
 ## Why
 
@@ -18,10 +20,13 @@ reminders screen. They say it (or accept a suggestion), and later it shows up wh
   Hermes does not store them in its own memory or cron.
 - **Hermes reaches them through a skill**, `gaca-reminders`, like `gaca-alerts` and `gaca-briefing`.
 - **The existing heartbeat drives delivery.** No new scheduler (see "Delivery" for the limits).
-- **A reminder that fires is an alert.** Same inbox, same push, same close choices.
+- **To the person, these are alerts.** The word "reminder" stays in the API, the skill and the code; nothing the
+  person reads says it. Setting one says "Alert set for tomorrow at 10:00", and a note with no time says "Saved
+  for later". When it goes off it is an alert like any other: same inbox, same push, same close choices.
 - **Single owner only.** No shared reminders, no "remind both of us".
 - **No recurring reminders and no location triggers**, for now.
-- **No new tab.** The only new UI is a quiet "Scheduled" list (see "In the app").
+- **No new tab, and no list of them in the app.** The API organizes, holds and expires them. The app shows only
+  a small card in chat with Undo (see "In the app"). Nothing to manage.
 
 ## The model
 
@@ -59,16 +64,17 @@ existed need re-minting or the scope added, or the skill gets a 403):
 - `POST /api/reminders`: `{text, due_at?, explicit_time?, source?, expires_at?}`. Before creating, the API
   returns the existing pending reminder when the text and time are near-identical (the agent can also check
   first); the response says `duplicate: true` and nothing new is made.
-- `GET /api/reminders?state=pending`: for the app's Scheduled list and for the skill.
-- `PATCH /api/reminders/{id}`: reschedule (`due_at`), edit `text`, or `state: cancelled`. Used by the app's
-  "Undo" and by the reschedule presets.
+- `GET /api/reminders?state=pending`: for the skill. The app reads `state=open` after a chat reply, only to show
+  the card for what that reply set.
+- `PATCH /api/reminders/{id}`: reschedule (`due_at`), edit `text`, or `state: cancelled`. The app uses it only
+  for "Undo". Changing the time is done in chat, with the agent.
 - `POST /api/reminders/fire-due`: fires everything due now and returns what it fired. This is what the
   heartbeat calls. It is idempotent: a reminder is claimed with one atomic update (`pending` to `fired`),
   so two overlapping runs cannot both fire it.
 
-Presets (in an hour, this evening, tomorrow morning) are computed by the API from the user's timezone and
-quiet hours, so Android and iOS only render them, the same rule as close options in
-`services/alert_view.py`.
+The API can also compute presets (in an hour, this evening, tomorrow morning) from the user's timezone and quiet
+hours. **No app uses them**: we decided a fired alert carries only the usual options, and wanting another time
+means taking it to chat.
 
 ## Delivery: the heartbeat
 
@@ -79,8 +85,8 @@ one new first step, before the gate:
    choice about whether to fire.
 
 Firing a reminder means the API creates an alert (title is the text, source is the crew member who made
-it, close choices Done, Glad to know, Not useful, plus the reschedule presets as per-item actions the API
-runs itself) and sends the push through the existing FCM and APNs paths. Hermes never posts the alert, so
+it, the usual close choices Done, Glad to know and Not useful, and no reschedule buttons: "Chat about this"
+is how to ask for another time) and sends the push through the existing FCM and APNs paths. Hermes never posts the alert, so
 a reminder does not depend on the heartbeat model run succeeding, only on the heartbeat waking up.
 
 It runs **before the gate** because the gate suppresses runs for the user's quiet hours, pauses, the daily
@@ -96,8 +102,8 @@ inside `fire-due`:
 ### Limits we are accepting, and the escape hatch
 
 - **Precision is the heartbeat's half hour.** "At 10:00" can arrive at 10:30. The skill tells the person
-  the real time in its confirmation ("Reminder set for 10:00, delivered within half an hour"), and the
-  presets round to the half hour.
+  the real time in its confirmation ("Alert set for 10:00, delivered within half an hour"), and any time it
+  picks is rounded to the half hour.
 - **It needs the Hermes cron job to run.** A provider that is out of credit stops the job from running the
   model at all. If that proves a problem in practice, a small API-side timer that calls `fire-due` itself is
   about twenty lines and does not change anything else in this design.
@@ -107,21 +113,26 @@ inside `fire-due`:
 ## Creating reminders
 
 1. **In chat.** "Remind me to call the dentist tomorrow at 10." The agent already knows the date and the
-   user's timezone, calls `gaca-reminders create`, and replies with one line: "Reminder set for tomorrow at
-   10:00." The chat shows it as a small chip with Undo (`PATCH state: cancelled`).
+   user's timezone, calls `gaca-reminders create`, and replies with one line: "Alert set for tomorrow at
+   10:00." The chat shows a small card under the reply with Undo (`PATCH state: cancelled`).
 2. **From an alert.** A poster that writes an alert containing a date or a deadline (a bill, an event, a
-   package) may attach one suggested reminder as an ordinary alert action: "Remind me Thursday 9am". One tap
-   runs it (`source.kind: alert`, linked to the alert). Posters must not add a generic "remind me later" to
+   package) may attach one suggested alert as an ordinary alert action: "Alert me Thursday 9am". One tap
+   runs it (`source.kind: alert`, linked to the alert), and the action row offers Undo. Posters must not add a generic "alert me later" to
    every alert. That is snooze again, and snooze was removed because nobody used it.
 3. **By the agent on its own**, via the same skill, labelled with who made it. The skill checks for a
    similar pending reminder first.
 
 ## In the app
 
-- **Nothing new in chat or the alert list.** A fired reminder is just an alert.
-- **A quiet "Scheduled (3)" row** at the bottom of the Alerts tab (and on Today) opens a plain list of
-  pending reminders and notes, each with swipe-to-cancel and a tap to reschedule. Hidden when empty.
-- Android and iOS render what the API sends; the API supplies labels, presets and the "was due" wording.
+- **A small card in chat.** Under the agent's reply: what, when ("Alert set for tomorrow 10:00 AM, delivered
+  within half an hour") and Undo. A note with no time says "Saved for later, kept 30 days, won't alert you".
+  After it has gone off the card says "Already sent. Find it in Alerts."
+- **The alert, when it goes off.** An ordinary alert with a clock instead of the severity dot, "Was due 10:00"
+  when late, and the usual options. "Chat about this" is how to ask for another time.
+- **A suggested alert on another alert** ("Alert me Thursday 9am") is a normal action: tap, and the row says it
+  is set, with Undo.
+- **No Scheduled list, row or tab, on either platform.** The API handles all of that in the backend.
+- Android and iOS render what the API sends; the API supplies the "was due" wording.
 
 ## Hermes side
 
@@ -176,6 +187,7 @@ skill; a one-off pass can move the pending ones across.
 3. **API: reminders table, endpoints, `fire-due`, fire as alert, push.** Tests for atomic claiming,
    quiet-hours rules, `late`, duplicates, owner isolation.
 4. **Hermes skills: `gaca-reminders`, and the heartbeat's first step.** Ships with the deploy.
-5. **Android and iOS: the Scheduled list, Undo chip, suggested-reminder action, presets.**
+5. **Android and iOS: the card in chat with Undo, the clock on a fired alert, Undo on a suggested alert.** Android is
+   gaca-android #38; iOS is not done.
 6. **Later notes in the briefing and as agent context.**
 7. **Later, if wanted:** recurring reminders, an API-side timer, per-profile heartbeats.

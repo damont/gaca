@@ -100,7 +100,7 @@ You can only read their mail, so this never sends anything. When tapped, GACA as
 
 #### Reminders
 
-If the alert carries a real date or deadline (a bill due, a delivery window, an event, a form deadline), you may offer **one** action to be reminded: `{"label": "Remind me Thursday 9am", "kind": "reminder", "prompt": "Use the gaca-reminders skill to create a reminder: text 'Pay the water bill', at 2026-11-26T09:00, kind alert, alert id from this alert. Then tell me the time it is set for.", "params": {"date": "2026-11-26", "time": "9:00 AM"}}`. Pick the time for the reason (the morning before it is due), and put the exact ISO time in the prompt. Never add a generic "Remind me later" to every alert: that is snooze again, and snooze was removed because nobody used it. See **gaca-reminders**.
+If the alert carries a real date or deadline (a bill due, a delivery window, an event, a form deadline), you may offer **one** action to be alerted again: `{"label": "Alert me Thursday 9am", "kind": "reminder", "prompt": "Use the gaca-reminders skill to create a reminder: text 'Pay the water bill', at 2026-11-26T09:00, kind alert, alert id from this alert. Then tell me the time it is set for.", "params": {"date": "2026-11-26", "time": "9:00 AM"}}`. Pick the time for the reason (the morning before it is due), and put the exact ISO time in the prompt. Never add a generic "Alert me later" to every alert: that is snooze again, and snooze was removed because nobody used it. See **gaca-reminders**.
 
 ### Dedupe
 

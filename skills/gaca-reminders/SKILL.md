@@ -48,11 +48,15 @@ python3 ${HERMES_SKILL_DIR}/scripts/reminders.py create \
 - `--kind`: `chat` when they asked you in a conversation, `alert` when they tapped a "Remind me" button, `agent` when you are making it on your own initiative.
 - `--alert-id`, `--session`: link it back to the alert or chat it came from, when you know them.
 
-3. **Tell them in one line**, using the `confirm` text the helper prints, e.g. "Reminder set for tomorrow at 10:00 AM (delivered within half an hour of that time)." Do not explain how reminders work. Do not offer to set another unless they might want one.
+3. **Tell them in one line**, using the `confirm` text the helper prints, e.g. "Alert set for tomorrow at 10:00 AM (delivered within half an hour of that time)." Do not explain how reminders work. Do not offer to set another unless they might want one.
 
 If the helper says `"duplicate": true` they already had that reminder; say so, and do not make another.
 
 If they only said "later" with no sense of when, that is a **note**, not a guess at a time: make it with no `--at`. If they gave a vague time and it matters when (a deadline, a bill), ask one short question rather than inventing one.
+
+## What you call it
+
+To the person these are **alerts**, never "reminders": "Alert set for tomorrow at 10:00", "I'll alert you Thursday". It is an alert from the moment it is set to the moment it goes off. The word reminder stays in this skill's name and in what they say to you ("remind me"); you do not say it back. A note with no time is "saved for later", and it does not alert them.
 
 ## Changing and undoing
 
@@ -65,9 +69,9 @@ You need the reminder's `id` from the helper's output or from `list`. Do not mak
 
 ## Offering one
 
-An alert you post that carries a date or a deadline (a bill due, a delivery window, an event, a form deadline) may carry **one** suggested action to be reminded, with a specific time and the reason: a `reminder` action, label "Remind me Thursday 9am", whose prompt tells the agent exactly what to create (the text, the time as an ISO time, and `--kind alert --alert-id …`). See the Actions section of **gaca-alerts**.
+An alert you post that carries a date or a deadline (a bill due, a delivery window, an event, a form deadline) may carry **one** suggested action to be reminded, with a specific time and the reason: a `reminder` action, label "Alert me Thursday 9am", whose prompt tells the agent exactly what to create (the text, the time as an ISO time, and `--kind alert --alert-id …`). See the Actions section of **gaca-alerts**.
 
-Do not add "Remind me later" to every alert. A reminder button that is always there is the old snooze under another name, and snooze was removed because nobody used it. Offer one only when there is a real date and the person is likely to need the nudge.
+Do not add "Alert me later" to every alert. A button that is always there is the old snooze under another name, and snooze was removed because nobody used it. Offer one only when there is a real date and the person is likely to need the nudge.
 
 ## Rules
 

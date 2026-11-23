@@ -82,7 +82,7 @@ def test_a_time_with_no_offset_means_the_users_own_zone(gaca):
     assert body == {"text": "Call the dentist", "due_at": "2026-11-23T16:00:00Z", "explicit_time": True,
                     "source": {"kind": "chat", "crew": "trading", "session_id": "s9"}}  # 10:00 CST is 16:00 UTC
     out = json.loads(r.stdout)
-    assert out["confirm"] == "Reminder set for Monday Nov 23 at 10:00 AM (delivered within half an hour of that time)."
+    assert out["confirm"] == "Alert set for Monday Nov 23 at 10:00 AM (delivered within half an hour of that time)."
     assert Fake.seen[-1][2] == f"Bearer {TOKEN}"
 
 
@@ -98,7 +98,7 @@ def test_no_time_makes_a_later_note_with_no_due_at(gaca):
     r = gaca(HELPER, "create", "--text", "Look into a standing desk")
     [(_, _, body)] = posted()
     assert "due_at" not in body and "explicit_time" not in body
-    assert "will not ping" in json.loads(r.stdout)["confirm"]
+    assert "won't alert you" in json.loads(r.stdout)["confirm"]
 
 
 def test_a_duplicate_is_reported_as_one(gaca):
