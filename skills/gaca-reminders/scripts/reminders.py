@@ -160,9 +160,9 @@ def cmd_create(args) -> None:
     out = summary(made)
     out["duplicate"] = bool(made.get("duplicate"))
     if due:
-        out["confirm"] = f"Reminder set for {out['when']} ({DELIVERY_NOTE})."
+        out["confirm"] = f"Alert set for {out['when']} ({DELIVERY_NOTE})."
     else:
-        out["confirm"] = "Noted for later. It will not ping you."
+        out["confirm"] = "Saved for later. It won't alert you."
     if out["duplicate"]:
         out["confirm"] = "You already had that one: " + out["confirm"]
     print(json.dumps(out, indent=2))
