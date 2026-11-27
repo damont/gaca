@@ -6,7 +6,7 @@ Every artifact page gets `window.app` before its own script runs. **A page is a 
 
 - **Self-contained.** One HTML file: inline `<style>` and `<script>`, no CDN scripts, no external fonts, no remote images. Inline SVG, canvas, CSS and `data:` URIs are fine. Charts: draw with SVG/canvas yourself.
 - **Mobile first.** It opens full-screen on a phone. No hover-only UI, no horizontal page scrolling (a wide table scrolls inside an `overflow-x:auto` box), no fixed pixel widths. `<meta viewport>` is already set. Rows are compact (about 32px), but **the whole row is the tap target**, not just a small checkbox or icon.
-- **Use the app's look, and don't restyle it.** The page already ships a stylesheet (see *Look* below): plain elements are styled, and a few classes cover the repeated shapes. Colors are CSS variables (`--bg`, `--text`, `--muted`, `--faint`, `--accent`, `--on-accent`, `--border`, `--rule`, `--danger`, `--ok`, `--radius`, `--font`, `--mono`); never hard-code a color, because the same variables flip for dark mode.
+- **Start from the app's look, then design for the content.** The page already ships a stylesheet (see *Look* below): plain elements are styled, and a few classes cover the repeated shapes, so a plain page looks right with no CSS. Go further whenever the content deserves it (see *Look*). Colors come from CSS variables (`--bg`, `--surface`, `--text`, `--muted`, `--faint`, `--accent`, `--on-accent`, `--border`, `--rule`, `--chip`, `--danger`, `--ok`, `--radius`, `--font`, `--mono`); when you add colors of your own, define them as variables with a dark version too (see *Your own colors*), because the page flips to dark mode.
 - **Never size a page with `vh`, `dvh`, `svh` or `height: 100%`.** In the Android app's WebView they all resolve to **0**, so a full-screen page collapses to nothing and shows blank. The SDK keeps a CSS variable `--app-h` (the real height of the page area, in px, updated on resize and keyboard): use `height: var(--app-h, 600px)`. Width units (`vw`, `100%` width) are fine. Pages that just flow and scroll don't need any of this.
 - **No title, no intro.** The app shows the title above the page. Do not start with an `<h1>`, a subtitle, a description or "how to use this". The page opens on its content and must be self-explanatory. The one-line description goes in `--description` at publish time and nowhere else.
 - **Never use `localStorage`/`sessionStorage`/cookies.** They are off; if touched they are a throwaway in-memory stand-in that loses everything when the page closes. Anything the user would be upset to lose goes through `app.*`.
@@ -87,18 +87,36 @@ Use `app.emit` for "the agent should know" (a form submitted, a decision made) a
 
 ## Look
 
-The style is flat and dense: **hairlines, not boxes**. Text 14px, rows about 32px, 4px radius, no shadows, no gradients, no emoji. Write as little CSS as you can; most pages need none.
+**The baseline is the app's "Ledger" look**: flat, calm, hairline dividers, 14px text, compact rows, the slate palette. Plain elements are already styled in it, so a list, a table or a form needs almost no CSS and should usually just use it. Treat it as the default and the guideline, **not a cage**: when a page is something the user will enjoy looking at or use every day (a trip, a habit tracker, a countdown, a dashboard, a game, a family board), design it properly. Make it feel like it was made for this one purpose.
 
-**Plain elements are already styled**: `h2` is a small uppercase section label, `table` has a heavy header rule and hairline rows, `input`/`select`/`textarea` are underline-only, `a` and a bare `button` are underlined text links, `input[type=checkbox]` takes the accent. `button.primary` is the single solid button; use at most one per page (Save, Choose).
+**Plain elements are already styled**: `h2` is a small uppercase section label, `table` has a heavy header rule and hairline rows, `input`/`select`/`textarea` are underline-only, `a` and a bare `button` are underlined text links, `input[type=checkbox]` takes the accent. `button.primary` is the solid button.
 
-**Classes** (all optional): `.row` (a flex line with a hairline under it; `.row.top` aligns to the top), `.grow`, `.sub` (second line, small and muted), `.muted`, `.faint`, `.ok`, `.bad` (a status as one coloured word, never a pill), `.done` (struck through and dimmed), `.num` (right-aligned tabular numbers), `.tabs` (underlined text tabs; mark the active one with `aria-current`), `.stats` > `.stat` > `<b>` number + `<span>` label, `label.field` (small label above an input), `.kv` (a label/value pair on one line), `.note` (a callout set off by two hairlines, not a box), `.seg` (a segmented choice: buttons with `aria-pressed`), `.empty`.
+**Classes** (all optional): `.row` (a flex line with a hairline under it; `.row.top` aligns to the top), `.grow`, `.sub` (second line, small and muted), `.muted`, `.faint`, `.ok`, `.bad` (a status as one coloured word), `.done` (struck through and dimmed), `.num` (right-aligned tabular numbers), `.tabs` (underlined text tabs; mark the active one with `aria-current`), `.stats` > `.stat` > `<b>` number + `<span>` label, `label.field` (small label above an input), `.kv` (a label/value pair on one line), `.note` (a callout set off by two hairlines), `.seg` (a segmented choice: buttons with `aria-pressed`), `.empty`.
 
-**Rules**
-- **Structure is optional.** Group only when the data really has groups. A flat list is the default; a section label (`h2`) appears only when it adds meaning.
-- **Separate with hairlines**, never cards or filled panels. Emphasis is weight or the accent colour, not a background.
-- **Actions are text links**; at most one `button.primary`.
-- **Pick the layout that fits the content**, not a list by default: a table for records and comparisons, a time column for schedules, label/value pairs for facts, `.stats` plus a table for trackers, a grid for a week. See `templates/`.
-- **Dark mode is automatic** if you only use the variables.
+**What you may do** (all of it is fine; use judgement, not all at once):
+- **Panels and cards** on `--surface` with `--radius` or a larger radius, when grouping really reads better as blocks (a card per day of a trip, a tile per habit). Soft shadows are fine if subtle.
+- **Colour beyond the accent**: a small palette for categories, people or status, a tinted header band, a gentle gradient behind a hero number. Keep text readable (contrast) in light and dark.
+- **Visual weight**: big numbers, a hero area at the top (a countdown, today's total, the next event), larger type for what matters most. Still no page title: the app shows it.
+- **Drawing**: inline SVG for icons, progress rings, sparklines, charts, simple illustrations; canvas for anything drawn or animated.
+- **Motion**: short transitions (150-250ms) when something changes, a check animating in. Respect `@media (prefers-reduced-motion: reduce)`.
+- **Emoji** sparingly as icons or category marks where they help scanning (a packing list by person, a meal plan). Not as decoration in every row.
+- **More than one button style**: a primary action, secondary outlined or tinted buttons, icon buttons with an `aria-label`.
+
+**What still holds**
+- **Readable on a phone first**: generous tap targets (the whole row or tile is the target), no horizontal page scroll, works at 360px wide.
+- **Colours through variables**, with a dark version (below). Never a hard-coded colour that only works on white.
+- **Content first**: no intro, no "how to use this", no filler. Every element earns its place; decoration supports the content, it does not replace it.
+- **Pick the layout that fits the content**, not a list by default: a table for records and comparisons, a time column for schedules, label/value pairs for facts, stats plus a table for trackers, a grid for a week, cards when the items are few and rich. See `templates/`.
+- **Consistency inside one page**: one radius, one spacing scale (4/8/12/16/24), one or two type sizes besides body text.
+
+**Your own colors.** Define them once on `:root` and again for dark mode, then use only the variables:
+
+```css
+:root { --c-plan: #4E7093; --c-food: #B0923F; --c-fun: #8A6A9E; --tint: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
+:root[data-dark] { --c-plan: #8FB0D3; --c-food: #D9BE72; --c-fun: #C0A3D4; }
+```
+
+The GACA "crew" colours (slate blue `#4E7093`, gold `#B0923F`, plum `#8A6A9E`, teal `#3F8E93`) are a good starting palette that matches the app. `templates/tracker.html` shows a richer page done this way.
 
 ## Building something richer than a list (a canvas, a map, a board)
 
