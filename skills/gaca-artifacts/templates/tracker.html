@@ -133,7 +133,7 @@
     if ((e.key === 'Enter' || e.key === ' ') && e.target.classList.contains('card')) { e.preventDefault(); e.target.click(); }
   });
 
-  // A click and Enter, not a <form> submit: shared pages run in a sandbox where submit events never fire.
+  // The add row is a button plus Enter (no <form> needed for a single field).
   function addHabit() {
     var name = document.getElementById('name'), emoji = document.getElementById('emoji');
     if (!name.value.trim()) return;
