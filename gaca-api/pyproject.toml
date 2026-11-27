@@ -20,6 +20,7 @@ dependencies = [
     # Encrypts the stored cloud token (services/cloud_crypto.py). Already installed via pyjwt[crypto].
     "cryptography>=42",
     "jsonschema>=4.26.0",
+    "pillow>=11.3",
 ]
 
 # Console entry point. `gaca-api` on PATH starts the server (via cli.main -> main.run) and

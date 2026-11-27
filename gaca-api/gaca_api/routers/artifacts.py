@@ -5,12 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, Path, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 
 from ..models.user import UserDoc
 from ..schemas import artifact as s
 from ..schemas import cloud as cloud_schemas
-from ..services import artifact_page, cloud_forward, cloud_list, cloud_move
+from ..services import artifact_page, artifact_photos, cloud_forward, cloud_list, cloud_move
 from ..services import artifacts as svc
 from ..utils.auth import Caller, get_caller, get_current_user, get_session_user
 
@@ -35,6 +35,7 @@ router = APIRouter(prefix=_PREFIX, tags=["artifacts"], dependencies=[Depends(for
 
 _COLLECTION = Path(pattern=s.NAME_PATTERN, description="Collection name, e.g. 'items'")
 _DOC_ID = Path(pattern=s.DOC_ID_PATTERN)
+_PHOTO_ID = Path(pattern=s.PHOTO_ID_PATTERN)
 
 
 @router.post("", status_code=201)
@@ -327,3 +328,45 @@ async def mark_handled(
 ) -> s.HandledResult:
     """Mark events up to `upto` as handled, so the next `unhandled` read skips them."""
     return await svc.mark_events_handled(user.id, artifact_id, body.upto)
+
+
+# ── photos ───────────────────────────────────────────────────────────────────
+@router.post("/{artifact_id}/photos", status_code=201)
+async def add_photo(artifact_id: str, request: Request, caller: Caller = Depends(get_caller)) -> s.PhotoOut:
+    """Add a photo to the page: the raw image bytes as the body (JPEG, PNG, WebP or GIF, up to 15 MB). It is
+    re-encoded (at most 2048 px, no EXIF/location) and gets an id; put that id in the page's data where the page
+    expects it (e.g. PATCH a document with {"photo": id}). Photos no data mentions for 7 days are removed."""
+    return await artifact_photos.add(caller.user.id, artifact_id, await request.body(),
+                                     "agent" if caller.is_agent else "app")
+
+
+@router.post("/{artifact_id}/photos/from-attachment", status_code=201)
+async def add_photo_from_attachment(
+    artifact_id: str, body: s.PhotoFromAttachment, caller: Caller = Depends(get_caller)
+) -> s.PhotoOut:
+    """Add a photo that was sent in a chat (its attachment id) to the page. Same result as uploading it."""
+    return await artifact_photos.add_from_attachment(caller.user.id, artifact_id, body.attachment_id,
+                                                     "agent" if caller.is_agent else "app")
+
+
+@router.get("/{artifact_id}/photos")
+async def list_photos(artifact_id: str, user: UserDoc = Depends(get_current_user)) -> s.PhotoList:
+    """The page's photos, oldest first."""
+    return await artifact_photos.list_photos(user.id, artifact_id)
+
+
+@router.get("/{artifact_id}/photos/{photo_id}")
+async def get_photo(
+    artifact_id: str, photo_id: str = _PHOTO_ID, thumb: bool = False, user: UserDoc = Depends(get_current_user)
+) -> Response:
+    """The image itself (`?thumb=true` for the small copy, at most 480 px)."""
+    _, data, content_type = await artifact_photos.get(user.id, artifact_id, photo_id, thumb=thumb)
+    return Response(data, media_type=content_type, headers={
+        "X-Content-Type-Options": "nosniff", "Cache-Control": "private, max-age=86400",
+        "Content-Security-Policy": "default-src 'none'"})
+
+
+@router.delete("/{artifact_id}/photos/{photo_id}", status_code=204)
+async def delete_photo(artifact_id: str, photo_id: str = _PHOTO_ID, user: UserDoc = Depends(get_current_user)) -> None:
+    """Remove a photo now (also take its id out of the page's data, or the page shows a missing photo)."""
+    await artifact_photos.delete(user.id, artifact_id, photo_id)

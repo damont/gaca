@@ -7,6 +7,7 @@ along with rate-limiting the one endpoint a stranger can reach without credentia
 from __future__ import annotations
 
 import ipaddress
+import re
 import time
 from collections import deque
 from collections.abc import Callable
@@ -47,6 +48,12 @@ class SecurityHeadersMiddleware:
 
 # ── request size ─────────────────────────────────────────────────────
 
+# Photo uploads to a page (POST /api/artifacts/{id}/photos) may be bigger than any other request. Keep in step with
+# services/artifact_photos.MAX_UPLOAD_BYTES (plus a little slack).
+PHOTO_UPLOAD_MAX_BYTES = 15 * 1024 * 1024 + 64 * 1024
+_PHOTO_UPLOAD = re.compile(r"^/api/artifacts/[^/]+/photos/?$")
+
+
 class BodyLimitMiddleware:
     """Rejects request bodies over `max_bytes` with 413 — by Content-Length when it is declared,
     and by counting when it is streamed, so a missing or lying header does not get past.
@@ -68,6 +75,8 @@ class BodyLimitMiddleware:
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
         limit = self._limit()
+        if scope.get("method") == "POST" and _PHOTO_UPLOAD.match(scope.get("path", "")):
+            limit = max(limit, PHOTO_UPLOAD_MAX_BYTES)  # a full-size phone photo; services/artifact_photos.py shrinks it
         declared = dict(scope["headers"]).get(b"content-length")
         if declared and declared.isdigit() and int(declared) > limit:
             return await self._reject(send)

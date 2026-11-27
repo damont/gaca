@@ -112,7 +112,7 @@ async def start_turn(
         session_id=session_id,
         history=history,
         user_message=f"{agent_context}\n\n{content}" if agent_context else content,
-        images=[ImageInput(a.doc.content_type, a.data) for a in attachments],
+        images=[ImageInput(a.doc.content_type, a.data, a.doc.id) for a in attachments],
     )
 
     # Registered here, not only once the task gets scheduled, so a client that

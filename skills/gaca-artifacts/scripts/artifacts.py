@@ -19,6 +19,11 @@ writes the data they keep. Standard library only.
   events REF [--unhandled] [--after N]         what the page told the agent (button presses...)
   handled REF UPTO                             mark events up to seq UPTO as handled
   versions REF  /  restore REF VERSION  /  archive REF  /  delete REF --yes
+  photos REF                                   the page's photos (ids, sizes, who added them)
+  photo-add REF --file F | --attachment ID     add a photo (an image file, or a photo sent in the chat by its
+                                               attachment id); prints its id: put that id in the page's data
+  photo REF PHOTO_ID --out F [--thumb]         download a photo (to look at it)
+  photo-remove REF PHOTO_ID                    delete a photo now (also take its id out of the data)
   preview [REF] [--html-file F] [--state-file F] [--collection NAME=FILE]... [--dark] [--out PNG]
                                                render a page on a phone-sized screen WITHOUT saving anything:
                                                prints errors and layout problems, saves a screenshot. With REF it
@@ -74,7 +79,8 @@ def token() -> str:
     return value
 
 
-def api(method: str, path: str, payload: object | None = None, raw: bool = False):
+def api(method: str, path: str, payload: object | None = None, raw: bool = False, *,
+        body_bytes: bytes | None = None, binary: bool = False):
     parsed = urllib.parse.urlparse(BASE)
     if parsed.scheme != "https" and parsed.hostname not in ("localhost", "127.0.0.1"):
         die("GACA_BASE_URL must be https (http is only allowed for localhost)")
@@ -84,11 +90,16 @@ def api(method: str, path: str, payload: object | None = None, raw: bool = False
     if payload is not None:
         body = json.dumps(payload, separators=(",", ":")).encode()
         headers["Content-Type"] = "application/json"
+    elif body_bytes is not None:
+        body = body_bytes
+        headers["Content-Type"] = "application/octet-stream"
     for attempt in range(3):
         req = urllib.request.Request(f"{BASE}/api{path}", data=body, headers=headers, method=method)
         try:
             with urllib.request.urlopen(req, timeout=30) as response:
                 data = response.read()
+                if binary:
+                    return data
                 if raw:
                     return data.decode("utf-8")
                 return json.loads(data) if data else None
@@ -377,6 +388,59 @@ def cmd_delete(args):
     print(f"Deleted {a['title']!r}.")
 
 
+# ── Photos ───────────────────────────────────────────────────────────────────
+PHOTO_ID_RE = re.compile(r"^ph_[0-9a-f]{16}$")
+
+
+def photo_id(value: str) -> str:
+    if not PHOTO_ID_RE.match(value):
+        die(f"{value!r} is not a photo id (they look like ph_ and 16 hex characters)")
+    return value
+
+
+def cmd_photos(args):
+    aid = resolve(args.ref)
+    photos = api("GET", f"/artifacts/{aid}/photos")["photos"]
+    if not photos:
+        print("No photos.")
+    for p in photos:
+        print(f"{p['id']}  {p['width']}x{p['height']}  {p['size'] // 1024} KB  added by {p['added_by']}  {p['created_at'][:16]}")
+
+
+def cmd_photo_add(args):
+    aid = resolve(args.ref)
+    if bool(args.file) == bool(args.attachment):
+        die("Give exactly one of --file F or --attachment ID")
+    if args.file:
+        try:
+            with open(os.path.expanduser(args.file), "rb") as f:
+                data = f.read()
+        except OSError as error:
+            die(f"Cannot read {args.file}: {error.strerror}")
+        out = api("POST", f"/artifacts/{aid}/photos", body_bytes=data)
+    else:
+        out = api("POST", f"/artifacts/{aid}/photos/from-attachment", {"attachment_id": args.attachment})
+    print(f"photo: {out['id']}  ({out['width']}x{out['height']})")
+    print("Now put this id where the page keeps its photos, e.g. patch REF meals tacos --json "
+          f"'{{\"photo\":\"{out['id']}\"}}'. A photo no data mentions is removed after 7 days.")
+
+
+def cmd_photo(args):
+    aid = resolve(args.ref)
+    data = api("GET", f"/artifacts/{aid}/photos/{photo_id(args.photo_id)}?thumb={'true' if args.thumb else 'false'}",
+               binary=True)
+    out = os.path.expanduser(args.out)
+    with open(out, "wb") as f:
+        f.write(data)
+    print(f"saved {len(data) // 1024} KB to {out}")
+
+
+def cmd_photo_remove(args):
+    aid = resolve(args.ref)
+    api("DELETE", f"/artifacts/{aid}/photos/{photo_id(args.photo_id)}")
+    print("Removed. Take its id out of the page's data too, or the page shows a missing photo.")
+
+
 # ── Preview ──────────────────────────────────────────────────────────────────
 BROWSERS = ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "chrome", "microsoft-edge",
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -584,6 +648,11 @@ def main():
     sp = add("restore", cmd_restore, "ref", "version")
     add("archive", cmd_archive, "ref")
     sp = add("delete", cmd_delete, "ref"); sp.add_argument("--yes", action="store_true")
+    add("photos", cmd_photos, "ref")
+    sp = add("photo-add", cmd_photo_add, "ref"); sp.add_argument("--file"); sp.add_argument("--attachment")
+    sp = add("photo", cmd_photo, "ref", "photo_id"); sp.add_argument("--out", required=True)
+    sp.add_argument("--thumb", action="store_true")
+    add("photo-remove", cmd_photo_remove, "ref", "photo_id")
     sp = sub.add_parser("preview"); sp.set_defaults(fn=cmd_preview); sp.add_argument("ref", nargs="?")
     for flag in ("--html-file", "--state-file", "--out"):
         sp.add_argument(flag)

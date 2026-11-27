@@ -170,7 +170,7 @@ async def delete(user_id: str, artifact_id: str) -> bool:
     cursor = await conn.execute("DELETE FROM artifacts WHERE id = ? AND user_id = ?", (artifact_id, user_id))
     deleted = cursor.rowcount > 0
     if deleted:
-        for table in ("artifact_versions", "artifact_docs", "artifact_events"):
+        for table in ("artifact_versions", "artifact_docs", "artifact_events", "artifact_photos"):
             await conn.execute(f"DELETE FROM {table} WHERE artifact_id = ?", (artifact_id,))
     await conn.commit()
     return deleted

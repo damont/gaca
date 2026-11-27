@@ -85,6 +85,32 @@ app.artifact  // {id, title}      app.theme  // {dark, accent}      app.uid()  /
 
 Use `app.emit` for "the agent should know" (a form submitted, a decision made) and `app.ask` for "the user wants to say something to the agent". Neither sends anything by itself to the user's chat.
 
+## Photos
+
+A page can show photos and let the person add them, but **the page never handles a camera or a file**: the app does. Photos are stored by GACA; the page keeps only their **ids** in its own data, wherever its data model says (`meals/tacos.photo`, `photos: [...]` on a trip day, one document per photo in a `shots` collection...).
+
+```js
+// Only from a tap: the app shows its own "Take photo / Choose photos" sheet and uploads what the person picks.
+addBtn.onclick = async function () {
+  try {
+    const picked = await app.photos.add({ multiple: false })   // [{id, width, height, ...}], [] if they cancel
+    if (picked.length) await meals.patch(meal.id, { photo: picked[0].id })   // YOU save the id; nothing else does
+  } catch (err) { app.toast(err.message) }   // e.g. an app that can't add photos yet
+}
+// Showing one: bytes come over the bridge (the page has no network), so the URL arrives asynchronously.
+img.src = await app.photos.url(meal.photo, { thumb: true })   // thumb (480 px) for cards and grids; omit for full size
+app.photos.list()   // every photo this page has, oldest first (rarely needed: your data says which go where)
+```
+
+Rules:
+- **Call `app.photos.add()` only straight from a tap/click handler** (it is refused otherwise), and save the returned ids in the same handler. A photo no state or document mentions is **removed after 7 days**.
+- **Store ids, never image data**: no base64 in documents or state (they have size limits, and every change re-sends them).
+- **Every photo is async and can fail.** Give the image box its size up front (`aspect-ratio`, a background colour) so nothing jumps while it loads, and on a rejected `url()` (a removed photo) show an empty placeholder, not a broken image. Keep the URL you got for an id rather than asking again on every render; it never changes.
+- Think about the shape: one photo per thing is a field (`photo: "ph_..."`); several is an array (`photos: [...]`) or a collection with one document per photo (when each has its own caption, date or order). Put it in the schema (`"photo": {"type": "string"}`).
+- To remove a photo from something, remove its id from the data (and `app.toast` an undo if you like); the photo itself goes once nothing mentions it.
+- The agent adds photos too (see SKILL.md, *Photos*): it gets an id the same way and writes it into the same field.
+- In `preview`, `add` returns placeholder photos and every id shows as a grey placeholder, so you can check the layout with fake ids in the seed data.
+
 ## Libraries and fonts (the shelf)
 
 GACA ships a fixed set of pinned libraries and fonts. Ask for one with a single empty tag, **in `<head>`, before your own script**:
