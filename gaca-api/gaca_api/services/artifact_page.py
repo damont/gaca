@@ -172,12 +172,12 @@ def inline_libraries(html: str) -> str:
     return _LIB_TAG.sub(sub, html)
 
 
-def build(html: str, artifact_id: str, title: str) -> str:
+def build(html: str, artifact_id: str, title: str, *, dark: bool = False) -> str:
     """The agent's HTML with the prelude inserted right after <head> (or a <head> added after
     <html>, or a whole document around it if it's a bare fragment), and its library markers inlined.
     Libraries are inlined LAST, so a `<head` inside a library's code can't move where the prelude goes."""
     init = json.dumps(
-        {"artifact": {"id": artifact_id, "title": title}, "theme": {"dark": False, "accent": "#2D3C4C"}},
+        {"artifact": {"id": artifact_id, "title": title}, "theme": {"dark": dark, "accent": "#2D3C4C"}},
         separators=(",", ":"),
         ensure_ascii=False,
     ).replace("</", "<\\/")  # can't close the script tag early
@@ -195,6 +195,22 @@ def build(html: str, artifact_id: str, title: str) -> str:
     else:
         page = f'<!doctype html><html><head><meta charset="utf-8">{prelude}</head><body>{html}</body></html>'
     return inline_libraries(page)
+
+
+@cache
+def preview_shim() -> str:
+    return resources.files("gaca_api").joinpath("static/artifact-preview.js").read_text(encoding="utf-8")
+
+
+def preview(html: str, title: str, state: dict[str, Any], collections: dict[str, dict[str, Any]], *, dark: bool = False) -> str:
+    """A page to LOOK at, not to use: the same wrapping as a real page, plus the preview shim (an in-memory
+    stand-in for the app's bridge, seeded with this data, and an error/layout reporter) placed before the SDK.
+    Nothing it does is saved. Built for the skill's `preview` command, which renders it in a headless browser."""
+    built = build(html, "preview", title, dark=dark)
+    seed = json.dumps({"state": state, "collections": collections}, separators=(",", ":"), ensure_ascii=False)
+    shim = (f"<script>window.__GACA_PREVIEW_SEED={seed.replace('</', '<\\/')};</script>"
+            f"<script>{preview_shim().replace('</script', '<\\/script')}</script>")
+    return built.replace("<script>window.__GACA_INIT=", shim + "<script>window.__GACA_INIT=", 1)
 
 
 async def page(user_id: str, artifact_id: str) -> str:

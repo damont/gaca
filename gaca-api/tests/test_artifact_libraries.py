@@ -77,3 +77,32 @@ def test_the_skill_documents_every_library_on_the_shelf():
     doc = (Path(__file__).resolve().parents[2] / "skills" / "gaca-artifacts" / "references" / "sdk.md").read_text()
     for name in artifact_page.libraries():
         assert f"| `{name}` |" in doc, f"{name} is on the shelf but not in references/sdk.md"
+
+
+# ── preview ──────────────────────────────────────────────────────────────────
+def test_preview_wraps_the_page_with_the_stand_in_bridge_before_the_sdk_and_saves_nothing(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from gaca_api.config import settings
+    from gaca_api.main import app
+    from gaca_api.models.user import UserDoc
+    from gaca_api.utils.auth import get_current_user
+
+    settings.db_path = str(tmp_path / "t.db")
+    monkeypatch.setattr(settings, "agent_engine", "hermes")
+    app.dependency_overrides[get_current_user] = lambda: UserDoc(id="u1", email="u1@example.com", display_name="T")
+    try:
+        with TestClient(app) as http:
+            r = http.post("/api/artifacts/preview", json={
+                "html": '<html><head><script data-gaca-lib="confetti"></script></head><body>hi</body></html>',
+                "collections": {"items": {"milk": {"text": "Milk </script>"}}}, "dark": True,
+            })
+            assert r.status_code == 200
+            assert r.headers["content-security-policy"] == artifact_page.CSP
+            page = r.text
+            assert page.index("window.__GACA_PREVIEW_SEED") < page.index("window.GacaBridge = {") < page.index("window.__GACA_INIT")
+            assert '"dark":true' in page and "Milk <\\/script>" in page and "/* confetti:" in page
+            assert http.get("/api/artifacts").json()["artifacts"] == []          # nothing was stored
+            assert http.post("/api/artifacts/preview", json={"html": ""}).status_code == 422
+    finally:
+        app.dependency_overrides.clear()

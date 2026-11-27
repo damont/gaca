@@ -59,8 +59,18 @@
     var f = $('add'); f.hidden = !f.hidden;
     if (!f.hidden) { if (!$('date').value) $('date').value = new Date().toISOString().slice(0, 10); $('amount').focus(); }
   });
-  $('add').addEventListener('submit', function (e) {
-    e.preventDefault();
+  // Shared (cloud) pages run in a sandbox where a form's submit event never fires, so the Save button and Enter
+  // are handled here instead of with a submit listener.
+  function onSave(form, fn) {
+    form.addEventListener('click', function (e) {
+      var b = e.target.closest('button');
+      if (b && b.type === 'submit') { e.preventDefault(); if (form.reportValidity()) fn(); }
+    });
+    form.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && e.target.tagName === 'INPUT') { e.preventDefault(); if (form.reportValidity()) fn(); }
+    });
+  }
+  onSave($('add'), function () {
     entries.add({ date: $('date').value, amount: Number($('amount').value), note: $('note').value.trim() || null });
     $('amount').value = ''; $('note').value = ''; $('add').hidden = true;
   });
