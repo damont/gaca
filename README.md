@@ -110,13 +110,15 @@ git clone <this repo> gaca && cd gaca
 The installer is safe to re-run (it keeps your data and settings):
 
 - checks Hermes (above) and puts GACA's skills into it (see [Hermes](#hermes));
+- installs Chromium if there is no Chrome/Chromium yet (needs `sudo`; on Ubuntu it is the snap): the agent uses it
+  headless to preview the pages it writes before you see them;
 - installs `uv` and the dependencies, writes `.env`, and starts `gaca-api` as a systemd service
   (sandboxed system service by default, which needs `sudo`; `--service user` needs no root and has no sandbox);
 - brings up the tunnel: paste a Cloudflare tunnel token for a permanent address, or choose a temporary one;
 - prints a **QR code**, waits for you to pair your phone, then gives Hermes its token for GACA.
 
 Useful options: `--tunnel token|quick|none`, `--hostname gaca.example.com`, `--service system|user`,
-`--install-hermes`, `--no-push`, `--no-hermes` (set up only the server, e.g. to try it without an agent). `./install.sh --help`
+`--install-hermes`, `--no-push`, `--no-browser`, `--no-hermes` (set up only the server, e.g. to try it without an agent). `./install.sh --help`
 lists them all.
 
 ### Handing the install to an agent

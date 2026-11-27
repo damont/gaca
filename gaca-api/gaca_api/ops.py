@@ -18,6 +18,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .config import settings
+from .installer import browser as browser_mod
 from .installer import hermes as hermes_mod
 from .installer import push as push_mod
 from .installer.run import SYSTEM_UNIT_DIR, Say, _ask, _ask_valid, _hermes_bin
@@ -400,6 +401,12 @@ def doctor(shell: Shell, say: Say, name: str, paths: Paths) -> int:
             report.note(f"GACA skills in {profile!r}: {len(plan.left_alone)} file(s) were edited by you or an agent and are kept")
         else:
             report.ok(f"GACA skills are up to date in Hermes profile {profile!r}")
+
+    if path := browser_mod.find(shell):
+        report.ok(f"a browser for page previews is installed ({path})")
+    else:
+        report.problem("no Chrome/Chromium here, so the agent can't preview pages before you see them",
+                       ["re-run ./install.sh (it installs Chromium)"])
 
     env = push_mod.read_env(paths.env_file)
     for label, line in (("Android", push_mod.describe_android(env)), ("iPhone", push_mod.describe_ios(env))):

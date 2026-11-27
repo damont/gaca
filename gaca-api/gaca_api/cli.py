@@ -87,6 +87,7 @@ def _parser() -> argparse.ArgumentParser:
     install.add_argument("--hermes-home", default=None, help="default: ~/.hermes")
     install.add_argument("--no-hermes", action="store_true", help="skip the Hermes requirements check (the server alone is useless to the app: it needs an agent)")
     install.add_argument("--install-hermes", action="store_true", help="if Hermes is missing, run its official installer (you still run `hermes setup` yourself)")
+    install.add_argument("--no-browser", action="store_true", help="do not install Chromium (the agent uses it to preview pages before you see them)")
     install.add_argument("--no-push", action="store_true", help="do not ask about push notifications")
     install.add_argument("--fcm-credentials", metavar="FILE", help="Android push: your Firebase service-account key (JSON)")
     install.add_argument("--apns-key", metavar="FILE", help="iPhone push: your Apple APNs key (.p8); also needs the next three")
@@ -375,7 +376,7 @@ def _install(args) -> int:
         repo_root=Path(args.repo_root).resolve(), service=args.service, name=args.name,
         data_dir=maybe(args.data_dir), port=args.port, hostname=args.hostname, tunnel=args.tunnel,
         tunnel_token_file=maybe(args.tunnel_token_file), hermes_home=maybe(args.hermes_home),
-        use_hermes=not args.no_hermes, install_hermes=args.install_hermes, no_push=args.no_push, fcm_credentials=maybe(args.fcm_credentials),
+        use_hermes=not args.no_hermes, install_hermes=args.install_hermes, no_browser=args.no_browser, no_push=args.no_push, fcm_credentials=maybe(args.fcm_credentials),
         apns_key=maybe(args.apns_key), apns_key_id=args.apns_key_id, apns_team_id=args.apns_team_id, apns_topic=args.apns_topic,
         wait_for_claim=not args.no_wait, yes=args.yes,
     ))

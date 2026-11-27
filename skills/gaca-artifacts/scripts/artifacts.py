@@ -420,6 +420,37 @@ def find_browser() -> str | None:
     return None
 
 
+def is_snap(browser: str) -> bool:
+    """Ubuntu ships Chromium only as a snap (`/usr/bin/chromium-browser` is a wrapper that runs it). A snap has its
+    own private /tmp and can't read hidden folders, so it can't open files we put in the system temp folder."""
+    path = shutil.which(browser) or browser
+    real = os.path.realpath(path)
+    if real.startswith("/snap/") or real == "/usr/bin/snap":
+        return True
+    try:
+        with open(real, "rb") as f:
+            return b"/snap/bin/" in f.read(4096)
+    except OSError:
+        return False
+
+
+def work_dir(browser: str | None) -> str:
+    """A scratch folder the browser can read and write: the snap's own common folder (same path inside and outside
+    the snap) for a snap Chromium, the system temp folder otherwise."""
+    if browser and is_snap(browser):
+        base = os.path.expanduser("~/snap/chromium/common/gaca-preview")
+        os.makedirs(base, exist_ok=True)
+        for old in os.listdir(base):  # nothing cleans this folder for us, unlike /tmp: drop previews over a day old
+            path = os.path.join(base, old)
+            try:
+                if time.time() - os.path.getmtime(path) > 86400:
+                    shutil.rmtree(path, ignore_errors=True)
+            except OSError:
+                pass
+        return tempfile.mkdtemp(prefix="gaca-preview-", dir=base)
+    return tempfile.mkdtemp(prefix="gaca-preview-")
+
+
 def run_browser(browser: str, url: str, width: int, height: int, *extra: str) -> str:
     cmd = [browser, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--mute-audio", "--no-first-run",
            "--disable-extensions", f"--window-size={width},{height}", "--virtual-time-budget=4000", *extra, url]
@@ -457,7 +488,8 @@ def cmd_preview(args):
 
     built = api("POST", "/artifacts/preview",
                 {"html": page_html, "title": title, "state": state, "collections": collections, "dark": args.dark}, raw=True)
-    work = tempfile.mkdtemp(prefix="gaca-preview-")
+    browser = find_browser()
+    work = work_dir(browser)
     page_path = os.path.join(work, "page.html")
     with open(page_path, "w", encoding="utf-8") as f:
         f.write(built)
@@ -465,10 +497,9 @@ def cmd_preview(args):
     frame_path = os.path.join(work, "frame.html")
     with open(frame_path, "w", encoding="utf-8") as f:
         f.write(FRAME.replace("WIDTH", str(width)))
-    browser = find_browser()
     if not browser:
-        die("PREVIEW UNAVAILABLE: no headless Chrome/Chromium on this machine. Install one (e.g. `nix profile install "
-            "nixpkgs#chromium` or `sudo apt install chromium`) or set GACA_PREVIEW_BROWSER to its path. "
+        die("PREVIEW UNAVAILABLE: no headless Chrome/Chromium on this machine. `./install.sh` installs one (re-run it "
+            "from the GACA folder), or set GACA_PREVIEW_BROWSER to a browser's path. "
             f"The page to open is at {page_path}")
 
     url = "file://" + frame_path
@@ -483,8 +514,13 @@ def cmd_preview(args):
     report = json.loads(htmllib.unescape(found.group(1)))
     lay = report.get("layout") or {}
     shot_h = max(844, min(int(lay.get("height") or 844), 5000))
-    out = os.path.expanduser(args.out or os.path.join(work, "preview-dark.png" if args.dark else "preview.png"))
-    run_browser(browser, url, 500, shot_h, f"--screenshot={out}")
+    shot = os.path.join(work, "preview-dark.png" if args.dark else "preview.png")
+    run_browser(browser, url, 500, shot_h, f"--screenshot={shot}")
+    out = shot
+    if args.out:  # the browser writes into `work` (a snap can't write just anywhere); copy it where it was asked for
+        out = os.path.expanduser(args.out)
+        if os.path.exists(shot):
+            shutil.copyfile(shot, out)
 
     problems = list(report.get("errors") or []) + list(lay.get("issues") or []) + source_warnings(page_html)
     print(f"Preview at {width}px wide ({'dark' if args.dark else 'light'}), {lay.get('height', '?')}px tall. Nothing was saved.")
