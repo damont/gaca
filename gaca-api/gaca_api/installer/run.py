@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 from ..config import settings
+from . import browser as browser_mod
 from . import hermes as hermes_mod
 from . import push as push_mod
 from . import tunnel as tunnel_mod
@@ -40,6 +41,7 @@ class Options:
     hermes_home: Path | None = None
     use_hermes: bool = True
     install_hermes: bool = False
+    no_browser: bool = False  # skip installing Chromium (the agent's page preview then reports it is unavailable)
     # Push notifications (all optional; see installer/push.py). With none of these and no terminal
     # to ask on, push is simply left off.
     no_push: bool = False
@@ -128,6 +130,15 @@ def install_hermes_skills(opts: Options, say: Say) -> None:
             say.ok(f"installed the GACA skills into Hermes profile {profile!r}")
         elif not outcome.left_alone:
             say.ok(f"GACA skills already up to date in Hermes profile {profile!r}")
+
+
+def setup_browser(opts: Options, shell: Shell, say: Say) -> None:
+    """Hermes previews the pages it writes in a headless Chromium on this machine."""
+    if opts.no_browser:
+        say.warn("skipping Chromium (--no-browser): the agent can't preview pages before showing them to you")
+        return
+    installed, path = browser_mod.ensure(shell, opts.config_dir / "install-browser.sh")
+    say.ok(f"Chromium installed for page previews ({path})" if installed else f"a browser for page previews is installed ({path})")
 
 
 def _ask(prompt: str) -> str:
@@ -522,6 +533,9 @@ def run(opts: Options, shell: Shell | None = None, out=print) -> int:
             install_hermes_skills(opts, say)
         else:
             say.warn("skipping the Hermes checks (--no-hermes). Without Hermes the app has no agent to talk to.")
+
+        say.step("Page previews")
+        setup_browser(opts, shell, say)
 
         say.step("Settings")
         for note in ensure_env(opts.repo_root / ".env", data_dir=opts.data_dir, port=opts.port,

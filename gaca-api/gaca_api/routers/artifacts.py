@@ -45,6 +45,16 @@ async def create_artifact(body: s.ArtifactCreate, user: UserDoc = Depends(get_cu
     return await svc.create(user.id, body)
 
 
+@router.post("/preview", response_class=HTMLResponse)
+async def preview_page(body: s.ArtifactPreview, user: UserDoc = Depends(get_current_user)) -> HTMLResponse:
+    """A page to look at before publishing: `html` wrapped exactly like a real page, with an in-memory stand-in for
+    the app seeded with `state`/`collections`, and a reporter that records errors and layout problems in
+    `<script id="gaca-preview-report">`. Nothing is stored; writes from the page change only that copy."""
+    html = artifact_page.preview(body.html, body.title, body.state, body.collections, dark=body.dark)
+    return HTMLResponse(html, headers={"Content-Security-Policy": artifact_page.CSP, "X-Content-Type-Options": "nosniff",
+                                       "Cache-Control": "no-store"})
+
+
 @router.get("")
 async def list_artifacts(
     include_archived: bool = False,

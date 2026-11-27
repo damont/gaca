@@ -51,7 +51,7 @@ def test_every_script_compiles():
 
 def test_skills_refer_only_to_skills_that_exist():
     for skill in skill_dirs():
-        for ref in re.findall(r"\bgaca-[a-z]+\b", (skill / "SKILL.md").read_text()):
+        for ref in re.findall(r"(?<![\w-])gaca-[a-z]+\b", (skill / "SKILL.md").read_text()):  # not data-gaca-lib
             assert ref in EXPECTED or ref in ("gaca-api",), f"{skill.name} mentions unknown skill {ref}"
 
 

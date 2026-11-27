@@ -19,6 +19,10 @@ writes the data they keep. Standard library only.
   events REF [--unhandled] [--after N]         what the page told the agent (button presses...)
   handled REF UPTO                             mark events up to seq UPTO as handled
   versions REF  /  restore REF VERSION  /  archive REF  /  delete REF --yes
+  preview [REF] [--html-file F] [--state-file F] [--collection NAME=FILE]... [--dark] [--out PNG]
+                                               render a page on a phone-sized screen WITHOUT saving anything:
+                                               prints errors and layout problems, saves a screenshot. With REF it
+                                               uses that page's stored data (and its HTML unless --html-file).
 
 --schema-file F holds {"collection": {"fields": {"name": {"type": "string", "required": true}}}}: the shape each
 collection's documents must have, checked on every write (types: string number integer boolean date datetime array
@@ -34,8 +38,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import html as htmllib
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -369,6 +377,173 @@ def cmd_delete(args):
     print(f"Deleted {a['title']!r}.")
 
 
+# ── Preview ──────────────────────────────────────────────────────────────────
+BROWSERS = ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "chrome", "microsoft-edge",
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/Applications/Chromium.app/Contents/MacOS/Chromium")
+REPORT_RE = re.compile(r'<pre id="gaca-preview-report">(.*?)</pre>', re.S)
+# Headless Chrome won't make a window narrower than 500px, so the page runs inside a phone-width frame: this file.
+# The preview shim in the page posts its report up; the frame writes it where --dump-dom can read it, and grows to
+# the page's height so the screenshot shows the whole page.
+FRAME = """<!doctype html><html><head><meta charset="utf-8"><style>
+html,body{margin:0;background:#dfe3e8}iframe{display:block;border:0;width:WIDTHpx;height:844px;background:#fff}
+</style></head><body><iframe id="f" src="page.html"></iframe><pre id="gaca-preview-report"></pre><script>
+addEventListener('message', function (e) {
+  var r = e.data && e.data.gacaPreviewReport; if (!r) return;
+  document.getElementById('gaca-preview-report').textContent = JSON.stringify(r);
+  if (r.layout && r.layout.height) document.getElementById('f').style.height = Math.min(Math.max(844, r.layout.height), 5000) + 'px';
+});
+</script></body></html>"""
+
+
+# Things that look fine in a desktop browser but break in the apps; checked in the page source.
+SOURCE_CHECKS = (
+    (re.compile(r"(?<![\w-])\d+(?:\.\d+)?[dsl]?vh\b"),
+     "Uses vh/dvh/svh units — they are 0 in the Android app, so the page shows blank. Use height: var(--app-h, 600px)."),
+    (re.compile(r"\b(?:localStorage|sessionStorage|document\.cookie)\b"),
+     "Uses browser storage — it is wiped when the page closes. Keep anything worth keeping in app.state or a collection."),
+)
+
+
+def source_warnings(page_html: str) -> list[str]:
+    return [message for pattern, message in SOURCE_CHECKS if pattern.search(page_html)]
+
+
+def find_browser() -> str | None:
+    configured = os.environ.get("GACA_PREVIEW_BROWSER", "").strip()
+    if configured:
+        return configured if os.path.exists(configured) or shutil.which(configured) else None
+    for name in BROWSERS:
+        found = shutil.which(name) or (name if os.path.isabs(name) and os.path.exists(name) else None)
+        if found:
+            return found
+    return None
+
+
+def is_snap(browser: str) -> bool:
+    """Ubuntu ships Chromium only as a snap (`/usr/bin/chromium-browser` is a wrapper that runs it). A snap has its
+    own private /tmp and can't read hidden folders, so it can't open files we put in the system temp folder."""
+    path = shutil.which(browser) or browser
+    real = os.path.realpath(path)
+    if real.startswith("/snap/") or real == "/usr/bin/snap":
+        return True
+    try:
+        with open(real, "rb") as f:
+            return b"/snap/bin/" in f.read(4096)
+    except OSError:
+        return False
+
+
+def work_dir(browser: str | None) -> str:
+    """A scratch folder the browser can read and write: the snap's own common folder (same path inside and outside
+    the snap) for a snap Chromium, the system temp folder otherwise."""
+    if browser and is_snap(browser):
+        base = os.path.expanduser("~/snap/chromium/common/gaca-preview")
+        os.makedirs(base, exist_ok=True)
+        for old in os.listdir(base):  # nothing cleans this folder for us, unlike /tmp: drop previews over a day old
+            path = os.path.join(base, old)
+            try:
+                if time.time() - os.path.getmtime(path) > 86400:
+                    shutil.rmtree(path, ignore_errors=True)
+            except OSError:
+                pass
+        return tempfile.mkdtemp(prefix="gaca-preview-", dir=base)
+    return tempfile.mkdtemp(prefix="gaca-preview-")
+
+
+def run_browser(browser: str, url: str, width: int, height: int, *extra: str) -> str:
+    cmd = [browser, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--mute-audio", "--no-first-run",
+           "--disable-extensions", f"--window-size={width},{height}", "--virtual-time-budget=4000", *extra, url]
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        cmd.insert(1, "--no-sandbox")  # Chromium refuses to start as root without it
+    try:
+        done = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        die("The browser took too long to render the page (over 60 s) — look for an endless loop on load")
+    except OSError as error:
+        die(f"Could not start the browser {browser}: {error.strerror}")
+    return done.stdout
+
+
+def cmd_preview(args):
+    page_html, state, collections, title = None, {}, {}, "Preview"
+    if args.ref:
+        aid = resolve(args.ref)
+        data = api("GET", f"/artifacts/{aid}/data")
+        state = data.get("state") or {}
+        collections = {name: {d["id"]: d["data"] for d in docs} for name, docs in (data.get("collections") or {}).items()}
+        if not args.html_file:
+            page_html = api("GET", f"/artifacts/{aid}/html", raw=True)
+    if args.html_file:
+        page_html = read_file(args.html_file)
+    if page_html is None:
+        die("Give a page: preview REF, or preview --html-file F (optionally with REF to use that page's data)")
+    if args.state_file:
+        state = json.loads(read_file(args.state_file))
+    for spec in args.collection or []:
+        name, _, path = spec.partition("=")
+        if not name or not path:
+            die("--collection takes NAME=FILE, where FILE holds {\"docId\": {...}, ...}")
+        collections[name] = json.loads(read_file(path))
+
+    built = api("POST", "/artifacts/preview",
+                {"html": page_html, "title": title, "state": state, "collections": collections, "dark": args.dark}, raw=True)
+    browser = find_browser()
+    work = work_dir(browser)
+    page_path = os.path.join(work, "page.html")
+    with open(page_path, "w", encoding="utf-8") as f:
+        f.write(built)
+    width = 390
+    frame_path = os.path.join(work, "frame.html")
+    with open(frame_path, "w", encoding="utf-8") as f:
+        f.write(FRAME.replace("WIDTH", str(width)))
+    if not browser:
+        die("PREVIEW UNAVAILABLE: no headless Chrome/Chromium on this machine. `./install.sh` installs one (re-run it "
+            "from the GACA folder), or set GACA_PREVIEW_BROWSER to a browser's path. "
+            f"The page to open is at {page_path}")
+
+    url = "file://" + frame_path
+    dom = run_browser(browser, url, 500, 844, "--dump-dom")
+    found = REPORT_RE.search(dom)
+    if not found:
+        die("The page did not finish loading in the browser (no preview report). It may have thrown before any "
+            "script ran, or never stopped loading. Check the HTML is complete.")
+    if not found.group(1).strip():
+        die("The page did not finish loading in the browser (no preview report). It may have thrown before any "
+            "script ran, or never stopped loading. Check the HTML is complete.")
+    report = json.loads(htmllib.unescape(found.group(1)))
+    lay = report.get("layout") or {}
+    shot_h = max(844, min(int(lay.get("height") or 844), 5000))
+    shot = os.path.join(work, "preview-dark.png" if args.dark else "preview.png")
+    run_browser(browser, url, 500, shot_h, f"--screenshot={shot}")
+    out = shot
+    if args.out:  # the browser writes into `work` (a snap can't write just anywhere); copy it where it was asked for
+        out = os.path.expanduser(args.out)
+        if os.path.exists(shot):
+            shutil.copyfile(shot, out)
+
+    problems = list(report.get("errors") or []) + list(lay.get("issues") or []) + source_warnings(page_html)
+    print(f"Preview at {width}px wide ({'dark' if args.dark else 'light'}), {lay.get('height', '?')}px tall. Nothing was saved.")
+    if problems:
+        print(f"PROBLEMS ({len(problems)}) — fix these before publishing:")
+        for item in problems:
+            print(f"  - {item}")
+    else:
+        print("No errors, no layout problems found.")
+    for item in report.get("warnings") or []:
+        print(f"  warning: {item}")
+    calls = report.get("calls") or {}
+    print("Page calls: " + (", ".join(f"{k} x{v}" for k, v in sorted(calls.items())) or "none (it never read its data)"))
+    for key, label in (("toasts", "toast"), ("emits", "emit"), ("asks", "ask"), ("urls", "openUrl")):
+        for item in report.get(key) or []:
+            print(f"  {label}: {json.dumps(item, ensure_ascii=False)[:200]}")
+    if os.path.exists(out):
+        print(f"screenshot: {out}")
+        print("Look at the screenshot if you can view images: check spacing, contrast, that nothing overlaps or is cut off.")
+    else:
+        print("(the screenshot could not be taken)")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -409,6 +584,10 @@ def main():
     sp = add("restore", cmd_restore, "ref", "version")
     add("archive", cmd_archive, "ref")
     sp = add("delete", cmd_delete, "ref"); sp.add_argument("--yes", action="store_true")
+    sp = sub.add_parser("preview"); sp.set_defaults(fn=cmd_preview); sp.add_argument("ref", nargs="?")
+    for flag in ("--html-file", "--state-file", "--out"):
+        sp.add_argument(flag)
+    sp.add_argument("--collection", action="append"); sp.add_argument("--dark", action="store_true")
 
     args = p.parse_args()
     for numeric in ("upto", "version"):

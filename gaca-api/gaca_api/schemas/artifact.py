@@ -77,6 +77,24 @@ def _check_schema_names(v: dict[str, CollectionSchema]) -> dict[str, CollectionS
     return v
 
 
+class ArtifactPreview(BaseModel):
+    """A page to render without saving anything (the skill's `preview` command)."""
+    html: str = Field(min_length=1)
+    title: str = Field(default="Preview", min_length=1, max_length=120)
+    state: dict[str, Any] = Field(default_factory=dict)
+    collections: dict[str, dict[str, dict[str, Any]]] = Field(
+        default_factory=dict, description="collection name -> {document id -> document}: the data the page opens with."
+    )
+    dark: bool = False
+
+    @field_validator("html")
+    @classmethod
+    def _preview_html_size(cls, v: str) -> str:
+        if len(v.encode("utf-8")) > MAX_HTML_BYTES:
+            raise ValueError(f"html is over {MAX_HTML_BYTES // 1000} KB")
+        return v
+
+
 class ArtifactCreate(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     html: str = Field(min_length=1)
