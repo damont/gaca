@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tracker</title>
+<style>
+  /* A designed page, not just the house look: a hero, cards with progress rings, a 7-day strip, its own palette.
+     Same rules as every page: colours are variables with a dark version, mobile first, whole tiles are tap targets.
+     Swap the data shape (habits, goals, savings jars, practice minutes) and keep the structure. */
+  :root {
+    --c-blue: #4E7093; --c-gold: #B0923F; --c-plum: #8A6A9E; --c-teal: #3F8E93;
+    --card-r: 14px;
+    --tint: color-mix(in srgb, var(--accent) 7%, var(--surface));
+  }
+  :root[data-dark] { --c-blue: #8FB0D3; --c-gold: #D9BE72; --c-plum: #C0A3D4; --c-teal: #7CC4C8; }
+
+  .hero { display: flex; align-items: center; gap: 18px; padding: 18px; border-radius: var(--card-r);
+    background: linear-gradient(135deg, var(--tint), var(--surface)); border: 1px solid var(--rule); }
+  .hero b { display: block; font-size: 34px; line-height: 1; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .hero span { color: var(--muted); font-size: 13px; }
+  .hero .ring { width: 72px; height: 72px; flex: none; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 14px; }
+  .card { position: relative; display: flex; flex-direction: column; gap: 10px; padding: 14px; text-align: left;
+    border-radius: var(--card-r); background: var(--surface); border: 1px solid var(--rule); color: var(--text);
+    text-decoration: none; cursor: pointer; transition: transform .15s ease, border-color .15s ease, background .15s ease; }
+  .card:active { transform: scale(.98); }
+  .card.today { border-color: color-mix(in srgb, var(--hue) 55%, var(--rule)); background: color-mix(in srgb, var(--hue) 9%, var(--surface)); }
+  .card .top { display: flex; align-items: center; gap: 10px; }
+  .card .ico { font-size: 22px; line-height: 1; width: 36px; height: 36px; display: grid; place-items: center; border-radius: 10px;
+    background: color-mix(in srgb, var(--hue) 16%, var(--surface)); flex: none; }
+  .card .name { font-weight: 600; font-size: 14px; line-height: 1.2; overflow-wrap: anywhere; }
+  .card .goal { font-size: 12px; color: var(--muted); }
+  .card .ring { width: 40px; height: 40px; margin-left: auto; flex: none; }
+  .tick { position: absolute; top: 10px; right: 10px; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+    background: var(--hue); color: var(--surface); font-size: 13px; font-weight: 700; transform: scale(0); transition: transform .2s cubic-bezier(.3,1.6,.6,1); }
+  .card.today .tick { transform: scale(1); }
+  .card.today .ring { visibility: hidden; }
+
+  .week { display: flex; gap: 4px; }
+  .week button { flex: 1; height: 22px; padding: 0; border-radius: 6px; text-decoration: none; font-size: 10px; color: var(--faint);
+    background: color-mix(in srgb, var(--hue) 10%, var(--surface)); }
+  .week button.on { background: var(--hue); color: var(--surface); }
+
+  .add { display: flex; gap: 8px; align-items: end; margin-top: 18px; }
+  .add input { flex: 1; }
+  .add .emoji { flex: 0 0 52px; text-align: center; }
+  .ring circle { fill: none; stroke-width: 4; }
+  .ring .track { stroke: color-mix(in srgb, var(--hue, var(--accent)) 18%, transparent); }
+  .ring .bar { stroke: var(--hue, var(--accent)); stroke-linecap: round; transition: stroke-dasharray .3s ease; }
+  @media (prefers-reduced-motion: reduce) { .card, .tick, .ring .bar { transition: none; } }
+</style>
+</head>
+<body>
+<!-- No title or intro: the app already shows the title. -->
+<div class="hero" id="hero"></div>
+<div class="grid" id="grid"></div>
+<div class="add" id="add">
+  <input class="emoji" id="emoji" maxlength="4" placeholder="🙂" aria-label="Icon (an emoji)">
+  <input id="name" placeholder="New habit" aria-label="New habit" autocomplete="off" enterkeyhint="done">
+  <button class="primary" id="addbtn">Add</button>
+</div>
+<div class="empty" id="empty" hidden>Add a habit to start.</div>
+
+<script>
+  // Collection "habits": {name, emoji?, hue?: 'blue'|'gold'|'plum'|'teal', goal: times per week (1-7)}.
+  // Collection "checks": one document per habit per day, id "<habit id>.<YYYY-MM-DD>", {habit, date}. A tap adds or
+  // removes one small document, so the user and the agent never overwrite each other.
+  // Schema (publish with --schema-file):
+  // {"habits":{"fields":{"name":{"type":"string","required":true,"max_length":60},"emoji":{"type":"string","max_length":8},
+  //   "hue":{"type":"string","enum":["blue","gold","plum","teal"]},"goal":{"type":"integer","min":1,"max":7}}},
+  //  "checks":{"fields":{"habit":{"type":"string","required":true},"date":{"type":"date","required":true}},"strict":true}}
+  var habits = app.collection('habits'), checks = app.collection('checks');
+  var HUES = ['blue', 'gold', 'plum', 'teal'];
+  var DAY = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; }); }
+  function iso(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+  function lastDays(n) { var out = [], d = new Date(); for (var i = n - 1; i >= 0; i--) { var x = new Date(d); x.setDate(d.getDate() - i); out.push(x); } return out; }
+
+  function ring(frac, size) {
+    var r = size / 2 - 3, c = 2 * Math.PI * r, f = Math.max(0, Math.min(1, frac));
+    return '<svg class="ring" viewBox="0 0 ' + size + ' ' + size + '" aria-hidden="true">' +
+      '<circle class="track" cx="' + size / 2 + '" cy="' + size / 2 + '" r="' + r + '"/>' +
+      '<circle class="bar" cx="' + size / 2 + '" cy="' + size / 2 + '" r="' + r + '" stroke-dasharray="' + (f * c) + ' ' + c + '" transform="rotate(-90 ' + size / 2 + ' ' + size / 2 + ')"/></svg>';
+  }
+
+  function toggle(habitId, date, isOn) {
+    var id = habitId + '.' + date;
+    var p = isOn ? checks.remove(id) : checks.set(id, { habit: habitId, date: date });
+    p.catch(function (err) { app.toast(err.message); });
+  }
+
+  function render(snap) {
+    var list = snap.docs('habits'), done = {};
+    snap.docs('checks').forEach(function (c) { done[c.habit + '.' + c.date] = true; });
+    var days = lastDays(7).map(iso), today = days[6];
+    document.getElementById('empty').hidden = list.length > 0;
+
+    var todayCount = list.filter(function (h) { return done[h.id + '.' + today]; }).length;
+    var weekHits = 0, weekGoal = 0;
+    list.forEach(function (h) {
+      weekGoal += h.goal || 7;
+      weekHits += Math.min(h.goal || 7, days.filter(function (d) { return done[h.id + '.' + d]; }).length);
+    });
+    document.getElementById('hero').innerHTML = list.length
+      ? ring(todayCount / list.length, 72) + '<div><b>' + todayCount + ' of ' + list.length + '</b><span>done today · ' +
+        (weekGoal ? Math.round(100 * weekHits / weekGoal) : 0) + '% of this week’s goals</span></div>'
+      : '<div><b>Nothing yet</b><span>Add your first habit below</span></div>';
+
+    document.getElementById('grid').innerHTML = list.map(function (h, i) {
+      var hue = HUES.indexOf(h.hue) >= 0 ? h.hue : HUES[i % HUES.length];
+      var hits = days.filter(function (d) { return done[h.id + '.' + d]; }).length, goal = h.goal || 7;
+      var on = !!done[h.id + '.' + today];
+      var strip = days.map(function (d) {
+        var dd = new Date(d + 'T12:00:00'), hit = !!done[h.id + '.' + d];
+        return '<button type="button" class="' + (hit ? 'on' : '') + '" data-h="' + esc(h.id) + '" data-d="' + d + '" aria-pressed="' + hit + '" aria-label="' + esc(h.name) + ' on ' + d + '">' + DAY[dd.getDay()] + '</button>';
+      }).join('');
+      return '<div class="card' + (on ? ' today' : '') + '" style="--hue: var(--c-' + hue + ')" role="button" tabindex="0" data-h="' + esc(h.id) + '" data-d="' + today + '" aria-pressed="' + on + '">' +
+        '<span class="tick" aria-hidden="true">✓</span>' +
+        '<div class="top"><span class="ico" aria-hidden="true">' + esc(h.emoji || '•') + '</span>' + ring(hits / goal, 40) + '</div>' +
+        '<div><div class="name">' + esc(h.name) + '</div><div class="goal">' + hits + ' / ' + goal + ' this week</div></div>' +
+        '<div class="week">' + strip + '</div></div>';
+    }).join('');
+  }
+
+  // One listener: a day in the strip toggles that day; anywhere else on the card toggles today.
+  document.getElementById('grid').addEventListener('click', function (e) {
+    var el = e.target.closest('[data-h]');
+    if (el) toggle(el.dataset.h, el.dataset.d, el.getAttribute('aria-pressed') === 'true');
+  });
+  document.getElementById('grid').addEventListener('keydown', function (e) {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.classList.contains('card')) { e.preventDefault(); e.target.click(); }
+  });
+
+  // The add row is a button plus Enter (no <form> needed for a single field).
+  function addHabit() {
+    var name = document.getElementById('name'), emoji = document.getElementById('emoji');
+    if (!name.value.trim()) return;
+    habits.add({ name: name.value.trim(), emoji: emoji.value.trim() || undefined, goal: 7 }, app.uid())
+      .then(function () { name.value = ''; emoji.value = ''; }, function (err) { app.toast(err.message); });
+  }
+  document.getElementById('addbtn').addEventListener('click', addHabit);
+  document.getElementById('name').addEventListener('keydown', function (e) { if (e.key === 'Enter') addHabit(); });
+
+  app.subscribe(render);
+</script>
+</body>
+</html>
