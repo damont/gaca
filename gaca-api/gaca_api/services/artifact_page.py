@@ -17,6 +17,8 @@ args are whitelisted per method, and names/ids are checked before they reach the
 """
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import re
 from functools import cache
@@ -102,9 +104,78 @@ def sdk() -> str:
     return resources.files("gaca_api").joinpath("static/artifact-sdk.js").read_text(encoding="utf-8")
 
 
+# ── the library shelf ────────────────────────────────────────────────────────
+# Pages can't load anything from the network, so GACA ships a fixed set of pinned libraries and fonts
+# (static/libs/manifest.json) that a page opts into with a marker tag:
+#     <script data-gaca-lib="chart"></script>
+# At build time the marker is replaced, in place, by the library's own code (or a @font-face rule with the
+# font as a data: URI), so script order is the page's and the CSP stays network-free. The stored HTML keeps
+# only the marker: it stays small, and the cloud's scanners see the page's own code, not the library's.
+# Every file is checked against its sha256 in the manifest before it is used.
+_LIB_TAG = re.compile(
+    r"""<script\b[^>]*?\bdata-gaca-lib\s*=\s*["']?([A-Za-z0-9_-]{1,40})["']?[^>]*>\s*</script\s*>""", re.IGNORECASE
+)
+
+
+class LibraryError(RuntimeError):
+    """A vendored library file is missing or doesn't match its pinned hash (a packaging bug, not the page's)."""
+
+
+@cache
+def libraries() -> dict[str, dict[str, Any]]:
+    """The shelf's manifest: name -> {version, license, use, scripts?|font?, sha256, bytes}."""
+    raw = resources.files("gaca_api").joinpath("static/libs/manifest.json").read_text(encoding="utf-8")
+    return json.loads(raw)["libraries"]
+
+
+def _lib_file(path: str, expected_sha256: str) -> bytes:
+    data = resources.files("gaca_api").joinpath("static/libs", path).read_bytes()
+    if hashlib.sha256(data).hexdigest() != expected_sha256:
+        raise LibraryError(f"library file {path} does not match its pinned hash")
+    return data
+
+
+@cache
+def library_markup(name: str) -> str:
+    """The inline markup that replaces one library's marker tag."""
+    lib = libraries()[name]
+    if font := lib.get("font"):
+        b64 = base64.b64encode(_lib_file(font["file"], lib["sha256"][font["file"]])).decode("ascii")
+        return (
+            f"<style>@font-face{{font-family:'{font['family']}';font-style:normal;font-display:swap;"
+            f"font-weight:{font['weight']};src:url(data:font/woff2;base64,{b64}) format('woff2')}}</style>"
+        )
+    parts = []
+    for path in lib["scripts"]:
+        code = _lib_file(path, lib["sha256"][path]).decode("utf-8")
+        parts.append(f"<script>/* {name}: {path} */\n{code.replace('</script', '<\\/script')}\n</script>")
+    if after := lib.get("after"):  # a one-line adapter for this page sandbox (e.g. no workers under the CSP)
+        parts.append(f"<script>{after}</script>")
+    return "".join(parts)
+
+
+def inline_libraries(html: str) -> str:
+    """Replace each `<script data-gaca-lib="NAME"></script>` with that library's code, once per library.
+    An unknown name becomes a console error that lists what is available, so a page fails loudly, not silently."""
+    seen: set[str] = set()
+
+    def sub(m: re.Match[str]) -> str:
+        name = m.group(1).lower()
+        if name in seen:
+            return ""
+        seen.add(name)
+        if name not in libraries():
+            msg = f"GACA: unknown library {name!r}. Available: {', '.join(sorted(libraries()))}"
+            return f"<script>console.error({json.dumps(msg)})</script>"
+        return library_markup(name)
+
+    return _LIB_TAG.sub(sub, html)
+
+
 def build(html: str, artifact_id: str, title: str) -> str:
     """The agent's HTML with the prelude inserted right after <head> (or a <head> added after
-    <html>, or a whole document around it if it's a bare fragment)."""
+    <html>, or a whole document around it if it's a bare fragment), and its library markers inlined.
+    Libraries are inlined LAST, so a `<head` inside a library's code can't move where the prelude goes."""
     init = json.dumps(
         {"artifact": {"id": artifact_id, "title": title}, "theme": {"dark": False, "accent": "#2D3C4C"}},
         separators=(",", ":"),
@@ -118,10 +189,12 @@ def build(html: str, artifact_id: str, title: str) -> str:
         f"<script>{sdk().replace('</script', '<\\/script')}</script>"
     )
     if head := _HEAD.search(html):
-        return html[: head.end()] + prelude + html[head.end() :]
-    if root := _HTML.search(html):
-        return html[: root.end()] + "<head>" + prelude + "</head>" + html[root.end() :]
-    return f'<!doctype html><html><head><meta charset="utf-8">{prelude}</head><body>{html}</body></html>'
+        page = html[: head.end()] + prelude + html[head.end() :]
+    elif root := _HTML.search(html):
+        page = html[: root.end()] + "<head>" + prelude + "</head>" + html[root.end() :]
+    else:
+        page = f'<!doctype html><html><head><meta charset="utf-8">{prelude}</head><body>{html}</body></html>'
+    return inline_libraries(page)
 
 
 async def page(user_id: str, artifact_id: str) -> str:

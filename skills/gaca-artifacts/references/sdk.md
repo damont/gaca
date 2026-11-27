@@ -4,7 +4,7 @@ Every artifact page gets `window.app` before its own script runs. **A page is a 
 
 ## Page rules
 
-- **Self-contained.** One HTML file: inline `<style>` and `<script>`, no CDN scripts, no external fonts, no remote images. Inline SVG, canvas, CSS and `data:` URIs are fine. Charts: draw with SVG/canvas yourself.
+- **Self-contained.** One HTML file: inline `<style>` and `<script>`, no CDN scripts, no external fonts, no remote images (the page has no network). For libraries and fonts use the **library shelf** below: one tag and GACA puts the code in for you. Inline SVG, canvas, CSS and `data:` URIs are fine.
 - **Mobile first.** It opens full-screen on a phone. No hover-only UI, no horizontal page scrolling (a wide table scrolls inside an `overflow-x:auto` box), no fixed pixel widths. `<meta viewport>` is already set. Rows are compact (about 32px), but **the whole row is the tap target**, not just a small checkbox or icon.
 - **Start from the app's look, then design for the content.** The page already ships a stylesheet (see *Look* below): plain elements are styled, and a few classes cover the repeated shapes, so a plain page looks right with no CSS. Go further whenever the content deserves it (see *Look*). Colors come from CSS variables (`--bg`, `--surface`, `--text`, `--muted`, `--faint`, `--accent`, `--on-accent`, `--border`, `--rule`, `--chip`, `--danger`, `--ok`, `--radius`, `--font`, `--mono`); when you add colors of your own, define them as variables with a dark version too (see *Your own colors*), because the page flips to dark mode.
 - **Never size a page with `vh`, `dvh`, `svh` or `height: 100%`.** In the Android app's WebView they all resolve to **0**, so a full-screen page collapses to nothing and shows blank. The SDK keeps a CSS variable `--app-h` (the real height of the page area, in px, updated on resize and keyboard): use `height: var(--app-h, 600px)`. Width units (`vw`, `100%` width) are fine. Pages that just flow and scroll don't need any of this.
@@ -84,6 +84,37 @@ app.artifact  // {id, title}      app.theme  // {dark, accent}      app.uid()  /
 ```
 
 Use `app.emit` for "the agent should know" (a form submitted, a decision made) and `app.ask` for "the user wants to say something to the agent". Neither sends anything by itself to the user's chat.
+
+## Libraries and fonts (the shelf)
+
+GACA ships a fixed set of pinned libraries and fonts. Ask for one with a single empty tag, **in `<head>`, before your own script**:
+
+```html
+<script data-gaca-lib="chart"></script>
+<script data-gaca-lib="font-fraunces"></script>
+```
+
+When the page opens, GACA replaces the tag with the library's code (or the font), in that spot, so your script below it can use it straight away. Nothing is fetched; it works offline. Only names from this list work; any other name leaves an error in the console naming what is available.
+
+| Name | What it's for | Size |
+|---|---|---|
+| `preact` | Components and state without a build step: const {h, render} = preact; const {useState, useEffect} = preactHooks; const html = htm.bind(h). | 16 KB |
+| `chart` | Line, bar, doughnut, radar charts with tooltips and animation: new Chart(canvas, {type, data, options}). | 203 KB |
+| `d3` | Custom SVG charts, scales, shapes, layouts (tree, pack, force), transitions. d3.csvParse/tsvParse are not available (they need eval). | 273 KB |
+| `markdown` | Render Markdown text safely: el.innerHTML = DOMPurify.sanitize(marked.parse(text)). | 61 KB |
+| `sortable` | Drag to reorder lists and move items between lists, touch friendly: Sortable.create(el, {onEnd}). | 44 KB |
+| `confetti` | A celebration burst: confetti({particleCount: 80, spread: 70}). | 24 KB |
+| `icons` | 1,600+ line icons: <i data-lucide="calendar"></i> then lucide.createIcons() after each render. | 348 KB |
+| `font-inter` | A clean UI sans: font-family: Inter, var(--font). | 47 KB |
+| `font-fraunces` | A warm display serif for headings and big numbers: font-family: Fraunces, Georgia, serif. | 36 KB |
+| `font-caveat` | A handwritten face for notes and playful labels: font-family: Caveat, cursive. | 48 KB |
+
+- **Use one when it makes the page clearly better**, not by habit: a real chart with tooltips (`chart`), a custom visual (`d3`), drag to reorder (`sortable`), formatted notes (`markdown`), icons (`icons`), a celebration when a goal is hit (`confetti`), a page with a lot of interactive state (`preact`). A list or a table still needs none.
+- Each one adds its size to the page every time it opens, so take only what you use (`icons` is the largest).
+- Fonts set a family name you then use in CSS: `font-family: Fraunces, Georgia, serif`. Keep body text on `var(--font)`; use a shelf font for headings, big numbers or a deliberate voice.
+- `preact` without a build step: `const {h, render} = preact; const {useState, useEffect} = preactHooks; const html = htm.bind(h);` then ``render(html`<${App} />`, document.getElementById('root'))``. Re-render from `app.subscribe` by putting the snapshot in state.
+- Colours in charts come from the theme: read them with `getComputedStyle(document.documentElement).getPropertyValue('--accent')` (and your own variables), so dark mode works.
+- `icons`: write `<i data-lucide="calendar"></i>` (names from lucide.dev) and call `lucide.createIcons()` after every render.
 
 ## Look
 

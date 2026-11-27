@@ -1,0 +1,145 @@
+{
+ "_note": "Pinned libraries pages can opt into with <script data-gaca-lib=\"NAME\"></script>. The page builder inlines these exact files (checked against sha256). Update a library by replacing its file AND its hash here; licenses/ holds each license. Keep in step with gaca-cloud (PARITY.md).",
+ "libraries": {
+  "preact": {
+   "version": "10.26.9 (+ hooks, htm 3.1.1)",
+   "license": "MIT (preact), Apache-2.0 (htm)",
+   "scripts": [
+    "preact/preact.umd.js",
+    "preact/hooks.umd.js",
+    "preact/htm.umd.js"
+   ],
+   "globals": "preact, preactHooks, htm",
+   "use": "Components and state without a build step: const {h, render} = preact; const {useState, useEffect} = preactHooks; const html = htm.bind(h).",
+   "sha256": {
+    "preact/preact.umd.js": "c97a23bef8301eb7bd7c912f4d7cc39df283270f6f4daaedcea7069992408839",
+    "preact/hooks.umd.js": "c2a0121123419a0788e7a3e0adde79f9f9dc9d455c918abbfe6f74651b4be054",
+    "preact/htm.umd.js": "7a31776e04bd4afde0d4308177d26f377716fcf7e4bd70be590746d6aa594f08"
+   },
+   "bytes": 16586
+  },
+  "chart": {
+   "version": "chart.js 4.5.0",
+   "license": "MIT",
+   "scripts": [
+    "chart/chart.umd.js"
+   ],
+   "globals": "Chart",
+   "use": "Line, bar, doughnut, radar charts with tooltips and animation: new Chart(canvas, {type, data, options}).",
+   "sha256": {
+    "chart/chart.umd.js": "b7929ad4d5323b8244f85d79bba0b3d1495e66f79a2f0023be7f4de5ba4fbac8"
+   },
+   "bytes": 208337
+  },
+  "d3": {
+   "version": "7.9.0",
+   "license": "ISC",
+   "scripts": [
+    "d3/d3.min.js"
+   ],
+   "globals": "d3",
+   "use": "Custom SVG charts, scales, shapes, layouts (tree, pack, force), transitions. d3.csvParse/tsvParse are not available (they need eval).",
+   "sha256": {
+    "d3/d3.min.js": "f2094bbf6141b359722c4fe454eb6c4b0f0e42cc10cc7af921fc158fceb86539"
+   },
+   "bytes": 279706
+  },
+  "markdown": {
+   "version": "marked 15.0.12, DOMPurify 3.2.6",
+   "license": "MIT (marked), Apache-2.0 OR MPL-2.0 (DOMPurify)",
+   "scripts": [
+    "markdown/marked.min.js",
+    "markdown/purify.min.js"
+   ],
+   "globals": "marked, DOMPurify",
+   "use": "Render Markdown text safely: el.innerHTML = DOMPurify.sanitize(marked.parse(text)).",
+   "sha256": {
+    "markdown/marked.min.js": "3e7e7d7feb3e5d58cb6c804f68ab5c24cc7e5eb6270fd6e5cbb9124739217d0c",
+    "markdown/purify.min.js": "89e1fa7647cb495370d3a997ace4387f5d15d9f4c5af12352c53daa400956287"
+   },
+   "bytes": 62208
+  },
+  "sortable": {
+   "version": "sortablejs 1.15.6",
+   "license": "MIT",
+   "scripts": [
+    "sortable/Sortable.min.js"
+   ],
+   "globals": "Sortable",
+   "use": "Drag to reorder lists and move items between lists, touch friendly: Sortable.create(el, {onEnd}).",
+   "sha256": {
+    "sortable/Sortable.min.js": "6d0a831fc19b4bae851797ad3393157e861afb7862459c11226359b27e2c4337"
+   },
+   "bytes": 45092
+  },
+  "confetti": {
+   "version": "canvas-confetti 1.9.3",
+   "license": "ISC",
+   "scripts": [
+    "confetti/confetti.browser.js"
+   ],
+   "globals": "confetti",
+   "use": "A celebration burst: confetti({particleCount: 80, spread: 70}).",
+   "sha256": {
+    "confetti/confetti.browser.js": "e103ab02784339d56c93ca3debe2c5a299372cafc5215148d55283de046e86d1"
+   },
+   "bytes": 24906,
+   "after": "window.confetti = confetti.create(null, { resize: true, useWorker: false, disableForReducedMotion: true });"
+  },
+  "icons": {
+   "version": "lucide 0.511.0",
+   "license": "ISC",
+   "scripts": [
+    "icons/lucide.min.js"
+   ],
+   "globals": "lucide",
+   "use": "1,600+ line icons: <i data-lucide=\"calendar\"></i> then lucide.createIcons() after each render.",
+   "sha256": {
+    "icons/lucide.min.js": "333ec22f7cab33d8cc36367add323645237ebe54b52213772f99162001fc06b3"
+   },
+   "bytes": 356332
+  },
+  "font-inter": {
+   "version": "Inter (variable, latin)",
+   "license": "OFL-1.1",
+   "font": {
+    "family": "Inter",
+    "file": "fonts/inter-latin-wght-normal.woff2",
+    "weight": "100 900"
+   },
+   "use": "A clean UI sans: font-family: Inter, var(--font).",
+   "sha256": {
+    "fonts/inter-latin-wght-normal.woff2": "3100e775e8616cd2611beecfa23a4263d7037586789b43f035236a2e6fbd4c62"
+   },
+   "bytes": 48256
+  },
+  "font-fraunces": {
+   "version": "Fraunces (variable, latin)",
+   "license": "OFL-1.1",
+   "font": {
+    "family": "Fraunces",
+    "file": "fonts/fraunces-latin-wght-normal.woff2",
+    "weight": "100 900"
+   },
+   "use": "A warm display serif for headings and big numbers: font-family: Fraunces, Georgia, serif.",
+   "sha256": {
+    "fonts/fraunces-latin-wght-normal.woff2": "7f9d191d999336d3b9790afa72e1358e50a13b06d4f289341e92a311967a80f9"
+   },
+   "bytes": 36620
+  },
+  "font-caveat": {
+   "version": "Caveat 400 (latin)",
+   "license": "OFL-1.1",
+   "font": {
+    "family": "Caveat",
+    "file": "fonts/caveat-latin-400-normal.woff2",
+    "weight": "400"
+   },
+   "use": "A handwritten face for notes and playful labels: font-family: Caveat, cursive.",
+   "sha256": {
+    "fonts/caveat-latin-400-normal.woff2": "4028680aa9aed26669a53302246731951b7bcc57c08048436b0c90e10497abb4"
+   },
+   "bytes": 48796
+  }
+ }
+}
