@@ -55,18 +55,8 @@
     else if (e.target.matches('input[type=checkbox]')) items.patch(id, { done: e.target.checked });
     else items.patch(id, { done: !r.querySelector('input').checked });   // the whole row is the tap target
   });
-  // Shared (cloud) pages run in a sandbox where a form's submit event never fires, so the Save button and Enter
-  // are handled here instead of with a submit listener.
-  function onSave(form, fn) {
-    form.addEventListener('click', function (e) {
-      var b = e.target.closest('button');
-      if (b && b.type === 'submit') { e.preventDefault(); if (form.reportValidity()) fn(); }
-    });
-    form.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' && e.target.tagName === 'INPUT') { e.preventDefault(); if (form.reportValidity()) fn(); }
-    });
-  }
-  onSave(document.getElementById('add'), function () {
+  document.getElementById('add').addEventListener('submit', function (e) {
+    e.preventDefault();
     var input = document.getElementById('text'), text = input.value.trim();
     if (!text) return;
     input.value = '';

@@ -402,8 +402,6 @@ SOURCE_CHECKS = (
      "Uses vh/dvh/svh units — they are 0 in the Android app, so the page shows blank. Use height: var(--app-h, 600px)."),
     (re.compile(r"\b(?:localStorage|sessionStorage|document\.cookie)\b"),
      "Uses browser storage — it is wiped when the page closes. Keep anything worth keeping in app.state or a collection."),
-    (re.compile(r"addEventListener\(\s*['\"]submit['\"]|onsubmit\s*="),
-     "Relies on a form submit event — it never fires on shared (cloud) pages. Use a button click and Enter key instead."),
 )
 
 

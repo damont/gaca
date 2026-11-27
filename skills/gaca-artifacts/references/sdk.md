@@ -11,7 +11,6 @@ Every artifact page gets `window.app` before its own script runs. **A page is a 
 - **No title, no intro.** The app shows the title above the page. Do not start with an `<h1>`, a subtitle, a description or "how to use this". The page opens on its content and must be self-explanatory. The one-line description goes in `--description` at publish time and nowhere else.
 - **Never use `localStorage`/`sessionStorage`/cookies.** They are off; if touched they are a throwaway in-memory stand-in that loses everything when the page closes. Anything the user would be upset to lose goes through `app.*`.
 - **Escape anything you put into `innerHTML`** (item text is user data). The template has an `esc()` helper.
-- **No form submit events.** On a shared (cloud) page the page runs in a sandbox where a `<form>`'s `submit` event never fires. A `<form>` is fine for layout, but handle the Save button's click and Enter yourself (the templates' `onSave(form, fn)` does both and still checks `required` fields).
 - **Render from data, not from clicks.** On a click, write with `app.*`; `app.subscribe` re-renders when the change lands. That is also how an agent's edits show up. Don't rebuild a form while the user is typing in it.
 
 ## Reading
