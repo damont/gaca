@@ -10,9 +10,13 @@ the same way: it gets an id and writes it into the data.
 | | where | phase |
 |---|---|---|
 | a page on your server | `artifact_photos` table in `~/gaca-data/gaca.db` (bytes in BLOB columns, like chat attachments); covered by `gaca-api backup` | 1 (this) |
-| a page in GACA Cloud | a private, encrypted S3 bucket (`photos/<account>/<page>/<photo id>`), metadata in MongoDB | 4 |
+| a page in GACA Cloud | a private, encrypted, versioned S3 bucket (`photos/<gacabit id>/<photo id>[.thumb]`), metadata in MongoDB (`gacabit_photos`); gaca-cloud `services/gacabit_photos.py` | 4 |
 
-Until phase 4, a page with photos can't be moved to the cloud (`has_photos`).
+For a cloud page the same `/api/artifacts/{id}/photos...` routes and `photo.*` bridge calls work through the
+forwarder (`services/cloud_forward.py`): this server re-encodes an upload (or a chat photo) BEFORE sending it, so it
+always fits the cloud's 4 MiB request cap and carries no EXIF, and tells the cloud whether the app or the agent added
+it. Moving a page that has photos between here and the cloud (either way) is refused (`has_photos`) until the move
+bundle carries photos.
 
 Every upload is decoded and re-encoded (`services/artifact_photos.py`): upright (EXIF orientation applied), at most
 2048 px on the long side, plus a 480 px thumbnail, JPEG (or WebP when it has transparency), **no EXIF or other

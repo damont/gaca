@@ -24,7 +24,13 @@ Route map (local -> cloud, same id):
   GET html, versions      -> same paths;   POST restore, opened -> same paths
   GET data (since_rev, wait), state, batch, collections/..., events, events/handled -> same paths
   GET page                -> cloud html wrapped HERE with the local SDK/CSP (artifact_page.build)
-  POST call               -> the SDK operations mapped to the data routes above
+  POST call               -> the SDK operations mapped to the data routes above (photo.get answers the
+                             photo's bytes as base64, like the local bridge)
+  GET photos, photos/{id}, DELETE photos/{id} -> same paths
+  POST photos, photos/from-attachment -> POST /gacabits/{id}/photos with the bytes RE-ENCODED HERE
+                             (artifact_photos.process: at most 2048 px, no EXIF), so an upload always fits
+                             the cloud's 4 MiB cap; a chat attachment is read locally and sent as bytes.
+                             X-Gaca-Photo-Source says app or agent (from the caller, never from a header).
 """
 from __future__ import annotations
 
@@ -102,6 +108,12 @@ for _m in ("GET", "PUT", "PATCH", "DELETE"):
 _r("GET", "events", "plain", query=("after", "unhandled", "limit"))
 _r("POST", "events", "plain")
 _r("POST", "events/handled", "plain")
+_r("GET", "photos", "plain")
+_r("POST", "photos", "photo_upload")
+_r("POST", "photos/from-attachment", "photo_upload")
+_PHOTO = s.PHOTO_ID_PATTERN.strip("^$")
+for _m in ("GET", "DELETE"):
+    _ROUTES.append((_m, re.compile(rf"photos/({_PHOTO})"), "plain", "/photos/{0}", ("thumb",)))
 
 
 def _match(method: str, tail: str):
@@ -176,6 +188,8 @@ async def forward_if_pointer(
                 await _page(user_id, pointer, inbound)
             case "call":
                 await _call(user_id, pointer, inbound)
+            case "photo_upload":
+                await _photo_upload(user_id, pointer, inbound, is_agent)
     except CloudReply as reply:
         reply.headers.setdefault("x-request-id", inbound.request_id)
         raise
@@ -209,6 +223,8 @@ async def _plain(user_id: str, gid: str, suffix: str, allowed: tuple[str, ...], 
         headers=inbound.headers, request_id=inbound.request_id, timeout=timeout, long_poll=timeout is not None,
     )
     reply = cloud_link.reply_from(resp)
+    if inbound.tail.startswith("photos/") and inbound.method == "GET":
+        reply.headers.update({"x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; sandbox"})
     if inbound.tail == "html":
         reply.headers.update({
             "content-security-policy": HTML_CSP, "x-content-type-options": "nosniff", "cache-control": "no-store",
@@ -342,6 +358,13 @@ def map_call(method: str, a: dict[str, Any]) -> tuple[str, str, dict | None, dic
             return "POST", "/batch", None, _arg_body(s.Batch, a, "ops")
         case "emit":
             return "POST", "/events", None, _arg_body(s.EventIn, a, "name", "payload")
+        case "photo.list":
+            return "GET", "/photos", None, None
+        case "photo.get":
+            query = {"thumb": "true"} if a.get("thumb") is True else None
+            return "GET", f"/photos/{artifact_page._photo_id(a)}", query, None
+        case "photo.add":  # the app's own sheet answers it; an app that forwards it is too old (same as local)
+            raise BadRequest(artifact_page.PHOTO_ADD_UNSUPPORTED)
         case _:
             raise BadRequest(f"unknown method {method}")
 
@@ -363,5 +386,50 @@ async def _call(user_id: str, pointer, inbound: Inbound) -> None:
         headers=_JSON if payload is not None else None, request_id=inbound.request_id, timeout=timeout,
         long_poll=timeout is not None,
     )
+    if body.method == "photo.get" and resp.status_code < 400:
+        raise CloudReply(200, _photo_data(body.args, resp).model_dump_json().encode(), {"content-type": "application/json"})
     # The local /call answers 200 with the endpoint's JSON, or `null` where that endpoint sends 204.
     raise CloudReply(200, resp.content if resp.content.strip() else b"null", {"content-type": "application/json"})
+
+
+def _photo_data(args: dict[str, Any], resp) -> s.PhotoData:
+    """The cloud's photo bytes as the page's `photo.get` answer (what the local bridge gives)."""
+    import base64
+    import io
+
+    from PIL import Image
+
+    width = height = 0
+    try:
+        with Image.open(io.BytesIO(resp.content)) as img:  # reads the header only
+            width, height = img.size
+    except Exception:  # noqa: BLE001 - the size is a nicety; the bytes are what the page needs
+        pass
+    return s.PhotoData(id=artifact_page._photo_id(args), content_type=resp.headers.get("content-type", "image/jpeg"),
+                       width=width, height=height, data=base64.b64encode(resp.content).decode("ascii"))
+
+
+async def _photo_upload(user_id: str, pointer, inbound: Inbound, is_agent: bool) -> None:
+    import asyncio
+
+    from ..db import attachments as attachments_db
+    from . import artifact_photos
+
+    if inbound.tail == "photos/from-attachment":
+        try:
+            body = s.PhotoFromAttachment.model_validate_json(inbound.body or b"{}")
+        except ValidationError as e:
+            raise RequestInvalid(e) from None
+        found = await attachments_db.find(body.attachment_id)
+        if found is None or found[0].user_id != user_id:
+            raise CloudError("No such attachment.", status=404, code="not_found")
+        data = found[1]
+    else:
+        data = inbound.body
+    full = (await asyncio.to_thread(artifact_photos.process, data)).full
+    resp = await cloud_link.call(
+        user_id, "POST", _path(pointer.id, "/photos"), content=full.data,
+        headers={"content-type": full.content_type, "x-gaca-photo-source": "agent" if is_agent else "app"},
+        request_id=inbound.request_id,
+    )
+    raise cloud_link.reply_from(resp)
