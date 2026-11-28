@@ -248,6 +248,11 @@ def _doc_id(args: dict[str, Any]) -> str:
     return value
 
 
+# What an app that does not know `photo.add` (it forwards every unknown method here) shows the person.
+PHOTO_ADD_UNSUPPORTED = ("This version of the app can't add photos yet. Update the app, or send the photo "
+                         "in a chat and ask your agent to add it.")
+
+
 def _photo_id(args: dict[str, Any]) -> str:
     value = args.get("id")
     if not isinstance(value, str) or not s._PHOTO_ID.match(value):
@@ -296,8 +301,7 @@ async def call(user_id: str, artifact_id: str, method: str, args: dict[str, Any]
         case "photo.add":
             # The app answers this itself: it shows its own Take photo / Choose photo sheet, uploads to
             # POST /{id}/photos and hands the page the ids. An app that forwards it here can't do that yet.
-            raise BadRequest("This version of the app can't add photos yet. Update the app, or send the photo "
-                             "in a chat and ask your agent to add it.")
+            raise BadRequest(PHOTO_ADD_UNSUPPORTED)
         case _:
             # Includes ask / openUrl / toast: those act on the client's own screen, so the
             # client handles them itself and never sends them here.

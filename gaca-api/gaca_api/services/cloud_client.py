@@ -56,7 +56,8 @@ transport_override: httpx.AsyncBaseTransport | None = None
 
 # What a caller may send on: the body's type and the cache validators. Nothing else is copied
 # from the app's request (in particular never its Authorization header).
-FORWARD_REQUEST_HEADERS = ("content-type", "accept", "if-match", "if-none-match")
+FORWARD_REQUEST_HEADERS = ("content-type", "accept", "if-match", "if-none-match",
+                           "x-gaca-photo-source")  # set by cloud_forward itself for photo uploads, never taken from the app
 
 
 def quote_id(value: str) -> str:
