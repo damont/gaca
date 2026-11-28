@@ -309,7 +309,7 @@ def test_a_backup_is_kept_until_30_days_and_the_cloud_copy_is_verified_alive(lin
     assert datetime.fromisoformat(expires) - datetime.fromisoformat(created) == timedelta(days=30)
     assert maint(linked, 10)["backups_removed"] == 0  # not due
     # due (day 31) but it is the newest backup of a page that still has a pointer: kept for 90 days
-    assert maint(linked, 31) == {"backups_removed": 0, "backups_kept": 1, "confirms_sent": 0}
+    assert maint(linked, 31) == {"backups_removed": 0, "backups_kept": 1, "confirms_sent": 0, "photos_removed": 0}
     assert cloud.seen("GET", f"/gacabits/{aid}") == []  # (no need to ask: the rule alone keeps it)
     # day 91 and the cloud copy is alive and active: now it may go
     assert maint(linked, 91)["backups_removed"] == 1 and count(linked, "artifact_cloud_backups") == 0
@@ -376,7 +376,7 @@ def test_an_older_backup_of_the_same_page_goes_while_the_newest_stays(linked, cl
     assert count(linked, "artifact_cloud_backups") == 2
     out = maint(linked, 40)
     # day 40: the OLDER backup (superseded, cloud copy verified active) goes; the newest is protected for 90 days
-    assert out == {"backups_removed": 1, "backups_kept": 1, "confirms_sent": 0}
+    assert out == {"backups_removed": 1, "backups_kept": 1, "confirms_sent": 0, "photos_removed": 0}
     out = maint(linked, 95)  # past 90 days with an active cloud copy: the newest may go too
     assert out["backups_removed"] == 1 and count(linked, "artifact_cloud_backups") == 0
 

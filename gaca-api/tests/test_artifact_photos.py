@@ -1,5 +1,5 @@
 """Photos on artifact pages: upload (re-encoded, no EXIF), read back over HTTP and through the page's bridge,
-chat photos copied onto a page, quotas, isolation, cleanup, and the cloud move refusing pages with photos."""
+chat photos copied onto a page, quotas, isolation and cleanup (moving pages with photos: test_cloud_move_photos.py)."""
 import asyncio
 import base64
 import io
@@ -14,9 +14,9 @@ from gaca_api.db import client as db_client
 from gaca_api.main import app
 from gaca_api.models.base import utcnow
 from gaca_api.models.user import CrewMember, UserDoc
-from gaca_api.services import artifact_photos, cloud_move
+from gaca_api.services import artifact_photos
 from gaca_api.services import auth as auth_service
-from gaca_api.services.exceptions import CloudError, InvalidRequest
+from gaca_api.services.exceptions import InvalidRequest
 from gaca_api.utils.auth import get_current_user
 
 _current = {"id": "u1"}
@@ -224,32 +224,6 @@ def test_quota_per_page(http, monkeypatch):
     assert upload(http, aid, jpeg()).status_code == 201
     r = upload(http, aid, jpeg())
     assert r.status_code == 422 and "remove some" in r.text
-
-
-def test_a_page_with_photos_is_not_moved_to_the_cloud(http):
-    aid = page(http)
-    upload(http, aid, jpeg())
-
-    async def preview():
-        return await cloud_move.move_preview("u1", aid)
-    out = http.portal.call(preview)
-    assert out["can_move"] is False and out["blocked_because"] == "has_photos"
-
-    class Link:
-        scope = "manage"
-        account_id = "acc"
-
-    async def move():
-        async def link(_user):
-            return Link()
-        cloud_move.cloud_link.require_link, saved = link, cloud_move.cloud_link.require_link
-        try:
-            await cloud_move.move_to_cloud("u1", aid, acknowledge_not_carried=True)
-        finally:
-            cloud_move.cloud_link.require_link = saved
-    with pytest.raises(CloudError) as info:
-        http.portal.call(move)
-    assert info.value.code == "has_photos"
 
 
 def test_process_refuses_decompression_bombs(monkeypatch):

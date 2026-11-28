@@ -201,7 +201,35 @@ class FakeBackend(FakeCloud):
             return httpx.Response(200, json=data)
         if tail.startswith("/bring-home"):
             return self._bring_home(request, g, tail)
+        if tail.startswith("/photos") and g is not None:
+            return self._photos(request, g, tail)
         return None
+
+    def _photos(self, request: httpx.Request, g: dict, tail: str) -> httpx.Response:
+        """Photos as the real cloud keeps them: `?id=` keeps an id, repeating it answers the same photo."""
+        photos = g.setdefault("photos", {})
+        if fault := self.fault("photos"):
+            return err(*fault)
+        if (request.method, tail) == ("POST", "/photos"):
+            pid = request.url.params.get("id") or f"ph_{len(photos):016x}"
+            if pid not in photos:
+                photos[pid] = {"meta": {"id": pid, "content_type": request.headers.get("content-type", "image/jpeg"),
+                                        "width": 10, "height": 10, "size": len(request.content),
+                                        "added_by": request.headers.get("x-gaca-photo-source", "web"),
+                                        "created_at": "2026-11-28T10:00:00.000Z"},
+                               "full": request.content, "thumb": b"thumb:" + pid.encode()}
+            return httpx.Response(201, json=photos[pid]["meta"])
+        if (request.method, tail) == ("GET", "/photos"):
+            return httpx.Response(200, json={"photos": [p["meta"] for p in photos.values()]})
+        hit = re.fullmatch(r"/photos/(ph_[0-9a-f]{16})", tail)
+        if hit and request.method == "GET":
+            p = photos.get(hit.group(1))
+            if p is None:
+                return err(404, "not_found", "photo not found")
+            thumb = request.url.params.get("thumb") == "true"
+            return httpx.Response(200, content=p["thumb"] if thumb else p["full"],
+                                  headers={"content-type": p["meta"]["content_type"]})
+        return err(404, "not_found", "no such route")
 
     def _uploads(self, request: httpx.Request) -> httpx.Response:
         fault = self.fault("uploads")

@@ -27,5 +27,5 @@ class ArtifactPhotoDoc(BaseModel):
     thumb_width: int
     thumb_height: int
     thumb_size: int
-    added_by: Literal["app", "agent"]
+    added_by: Literal["app", "agent", "web"]  # web: added on the cloud website, then brought home
     created_at: datetime = Field(default_factory=utcnow)
