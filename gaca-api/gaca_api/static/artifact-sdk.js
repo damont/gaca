@@ -158,6 +158,42 @@
     };
   }
 
+  // Photos: the page keeps their ids in its own data and never sees the network, so bytes come over the bridge
+  // as base64 and become blob: URLs (allowed by the page's CSP). A photo never changes, so each is fetched once.
+  var photoUrls = {};
+  function blobUrl(b64, type) {
+    var bin = atob(b64);
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return URL.createObjectURL(new Blob([bytes], { type: type }));
+  }
+  var photos = {
+    /** On a tap: the app shows its own Take photo / Choose photos sheet and uploads what the person picks.
+     * Resolves to [{id, width, height, ...}] ([] if they cancel). Save the ids in your data yourself. */
+    add: function (opts) {
+      if (navigator.userActivation && !navigator.userActivation.isActive) {
+        var e = new Error('app.photos.add() only works straight from a tap or click');
+        e.status = 400;
+        return Promise.reject(e);
+      }
+      opts = opts || {};
+      return call('photo.add', { multiple: !!opts.multiple }).then(function (r) { return (r && r.photos) || []; });
+    },
+    /** A URL for <img src>: the photo, or with {thumb: true} a small copy (480 px) for lists and grids. */
+    url: function (id, opts) {
+      var thumb = !!(opts && opts.thumb);
+      var key = id + (thumb ? '#thumb' : '');
+      if (!photoUrls[key]) {
+        photoUrls[key] = call('photo.get', { id: id, thumb: thumb }).then(
+          function (r) { return blobUrl(r.data, r.content_type); },
+          function (e) { delete photoUrls[key]; throw e; });
+      }
+      return photoUrls[key];
+    },
+    /** Every photo this page has, oldest first: [{id, width, height, added_by, created_at, ...}]. */
+    list: function () { return call('photo.list', {}).then(function (r) { return r.photos; }); }
+  };
+
   window.__gaca = {
     resolve: function (id, ok, json) {
       var p = pending[id];
@@ -203,6 +239,7 @@
       }
     },
     collection: collection,
+    photos: photos,
     /** Several document writes, all or nothing: [{op:'set'|'patch'|'delete'|'clear', collection, id, data}]. */
     batch: function (ops) { return write('batch', { ops: ops }); },
     /** Tell the agent something happened (it reads these). */

@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ideas</title>
+<style>
+  /* Cards with a photo each (meal ideas, plants, outfits...). The photo box has its size before the image
+     arrives (aspect-ratio + a background), so nothing jumps while photos load over the bridge. */
+  form { display: flex; gap: 12px; align-items: center; border-bottom: 1px solid var(--text); margin-bottom: 16px; }
+  form input { border: 0; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+  .card { border: 1px solid var(--line, rgba(127,127,127,.25)); border-radius: 12px; overflow: hidden; }
+  .shot { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; background: var(--line, rgba(127,127,127,.15));
+          border: 0; padding: 0; color: inherit; font: inherit; }
+  button.shot { display: flex; align-items: center; justify-content: center; }
+  .body { padding: 8px 10px 10px; display: flex; gap: 6px; align-items: flex-start; }
+  .body .grow { word-break: break-word; }
+</style>
+</head>
+<body>
+<!-- No title or intro: the app already shows the title. The page opens on its content. -->
+<form id="add"><input id="text" type="text" placeholder="Add an idea" aria-label="Add an idea" autocomplete="off" enterkeyhint="done"><button>Add</button></form>
+<div id="grid" class="grid"></div>
+
+<script>
+  // Data: ideas: {title, photo?}. `photo` is a photo id ("ph_..."), never image data: the photo lives in GACA and
+  // the page asks for it with app.photos.url(id). The person adds one with the card's photo button (the app shows
+  // its own Take photo / Choose photo sheet); the agent adds one with `photo-add` and writes the id into `photo`.
+  // Schema (publish with --schema-file): {"ideas":{"fields":{"title":{"type":"string","required":true,"max_length":120},"photo":{"type":"string","max_length":40}}}}
+  var ideas = app.collection('ideas');
+  var urls = {};   // photo id -> object URL, kept so a re-render never fetches again
+
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; }); }
+
+  function render(snap) {
+    var docs = snap.docs('ideas');
+    var grid = document.getElementById('grid');
+    if (!docs.length) { grid.innerHTML = '<div class="empty">Nothing here yet.</div>'; return; }
+    grid.innerHTML = docs.map(function (d) {
+      var shot = d.photo
+        ? '<img class="shot" data-photo="' + esc(d.photo) + '"' + (urls[d.photo] ? ' alt="' + esc(d.title) + '" src="' + urls[d.photo] + '"' : ' alt=""') + '>'
+        : '<button class="shot muted" data-act="photo" aria-label="Add a photo of ' + esc(d.title) + '">＋ Photo</button>';
+      return '<div class="card" data-id="' + esc(d.id) + '">' + shot +
+        '<div class="body"><span class="grow">' + esc(d.title) + '</span>' +
+        (d.photo ? '<button class="faint" data-act="photo" aria-label="Change photo">↻</button>' : '') +
+        '<button class="faint" data-act="remove" aria-label="Remove">×</button></div></div>';
+    }).join('');
+    // Fill in photos not loaded yet. A missing one (removed) just stays an empty box.
+    Array.prototype.forEach.call(grid.querySelectorAll('img[data-photo]:not([src])'), function (img) {
+      var id = img.dataset.photo;
+      app.photos.url(id, { thumb: true }).then(function (url) {
+        urls[id] = url;
+        img.alt = img.closest('.card').querySelector('.grow').textContent;  // alt only once there is an image
+        img.src = url;
+      }, function () {   // a removed photo: an empty box of the same size, not a broken image
+        var box = document.createElement('div');
+        box.className = 'shot';
+        img.replaceWith(box);
+      });
+    });
+  }
+
+  document.getElementById('grid').addEventListener('click', function (e) {
+    var card = e.target.closest('.card'); if (!card) return;
+    var act = e.target.closest('[data-act]'); if (!act) return;
+    var id = card.dataset.id;
+    if (act.dataset.act === 'remove') { ideas.remove(id); return; }
+    // Straight from the tap: the app opens its photo sheet. Save the id ourselves; nothing else will.
+    app.photos.add().then(function (picked) {
+      if (picked.length) return ideas.patch(id, { photo: picked[0].id });
+    }).catch(function (err) { app.toast(err.message); });
+  });
+
+  document.getElementById('add').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var input = document.getElementById('text'), title = input.value.trim();
+    if (!title) return;
+    input.value = '';
+    ideas.add({ title: title });
+  });
+
+  app.subscribe(render);
+</script>
+</body>
+</html>

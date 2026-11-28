@@ -45,7 +45,8 @@ def _history_text(message: MessageOut) -> str:
     if not message.attachments:
         return message.content
     n = len(message.attachments)
-    note = f"[{n} photo{'s' if n != 1 else ''} attached]"
+    ids = ", ".join(a.id for a in message.attachments)
+    note = f"[{n} photo{'s' if n != 1 else ''} attached, id{'s' if n != 1 else ''} {ids}]"
     return f"{message.content}\n{note}" if message.content.strip() else note
 
 
@@ -61,6 +62,9 @@ def _turn_input(user_message: str, images: Sequence[ImageInput]):
         parts.append(
             {"type": "image_url", "image_url": {"url": f"data:{image.content_type};base64,{encoded}"}}
         )
+    if ids := [image.id for image in images if image.id]:
+        # So "put this on my meal ideas page" can work: the gaca-artifacts skill adds a chat photo by this id.
+        parts.append({"type": "text", "text": f"[Photo attachment id{'s' if len(ids) != 1 else ''}: {', '.join(ids)}]"})
     return [{"role": "user", "content": parts}]
 
 

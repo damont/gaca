@@ -220,16 +220,17 @@ def test_start_run_sends_photos_as_multimodal_input_and_notes_past_ones():
     async def run():
         return await adapter.start_run(
             session_id="s", history=[earlier], user_message="what is this?",
-            images=[ImageInput("image/png", b"\x89PNG")],
+            images=[ImageInput("image/png", b"\x89PNG", "att1")],
         )
 
     assert asyncio.run(run()) == "run_abc"
     body = captured["body"]
-    assert body["conversation_history"] == [{"role": "user", "content": "[1 photo attached]"}]
+    assert body["conversation_history"] == [{"role": "user", "content": "[1 photo attached, id a]"}]
     [turn] = body["input"]
     assert turn["role"] == "user"
-    text, image = turn["content"]
+    text, image, ids = turn["content"]
     assert text == {"type": "text", "text": "what is this?"}
+    assert ids == {"type": "text", "text": "[Photo attachment id: att1]"}
     assert image["type"] == "image_url"
     assert image["image_url"]["url"] == "data:image/png;base64," + base64.b64encode(b"\x89PNG").decode()
 

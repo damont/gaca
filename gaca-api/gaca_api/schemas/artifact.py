@@ -365,3 +365,38 @@ class ArtifactCall(BaseModel):
     native bridge: the SDK's method name and its args object."""
     method: str = Field(max_length=64)
     args: dict[str, Any] = Field(default_factory=dict)
+
+
+# ── photos ───────────────────────────────────────────────────────────────────
+PHOTO_ID_PATTERN = r"^ph_[0-9a-f]{16}$"
+_PHOTO_ID = re.compile(PHOTO_ID_PATTERN)
+
+
+class PhotoOut(BaseModel):
+    """A photo the page can show. Store `id` in the page's own data; read it with `app.photos.url(id)`."""
+    id: str
+    content_type: str
+    width: int
+    height: int
+    size: int
+    added_by: Literal["app", "agent"]
+    created_at: datetime
+
+
+class PhotoList(BaseModel):
+    photos: list[PhotoOut]
+
+
+class PhotoData(BaseModel):
+    """The page's `photo.get` answer: the image as base64 (the page has no network to fetch it)."""
+    id: str
+    content_type: str
+    width: int
+    height: int
+    data: str
+
+
+class PhotoFromAttachment(BaseModel):
+    """Copy a photo that was sent in a chat onto this page."""
+    model_config = ConfigDict(extra="forbid")
+    attachment_id: str = Field(min_length=1, max_length=64)

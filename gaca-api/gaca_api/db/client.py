@@ -168,6 +168,18 @@ CREATE INDEX IF NOT EXISTS ix_artifact_docs_order
     ON artifact_docs (artifact_id, collection, created_at, doc_id);
 -- What the page tells the agent happened ("checked out", "picked Friday"): a small
 -- outbox the agent reads, so interactions flow back without a chat message.
+-- Photos a page shows (services/artifact_photos.py). The page's own data holds their ids; the bytes live here,
+-- already re-encoded (no EXIF, no location) at two sizes. Deleted with the artifact.
+CREATE TABLE IF NOT EXISTS artifact_photos (
+    id          TEXT PRIMARY KEY,
+    artifact_id TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    doc         TEXT NOT NULL,
+    data        BLOB NOT NULL,
+    thumb       BLOB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_artifact_photos_artifact
+    ON artifact_photos (artifact_id, created_at);
 CREATE TABLE IF NOT EXISTS artifact_events (
     seq         INTEGER PRIMARY KEY AUTOINCREMENT,
     artifact_id TEXT NOT NULL,

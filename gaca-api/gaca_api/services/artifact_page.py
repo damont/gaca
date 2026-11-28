@@ -28,6 +28,7 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 
 from ..schemas import artifact as s
+from . import artifact_photos as photos
 from . import artifacts as svc
 from .exceptions import BadRequest, InvalidRequest, RequestInvalid
 
@@ -247,6 +248,13 @@ def _doc_id(args: dict[str, Any]) -> str:
     return value
 
 
+def _photo_id(args: dict[str, Any]) -> str:
+    value = args.get("id")
+    if not isinstance(value, str) or not s._PHOTO_ID.match(value):
+        raise InvalidRequest("bad photo id")
+    return value
+
+
 async def call(user_id: str, artifact_id: str, method: str, args: dict[str, Any]) -> BaseModel | None:
     """One `window.app.*` data call: the same result (or error) as the matching endpoint.
     Calls that endpoint's service function directly — no HTTP round trip."""
@@ -281,6 +289,15 @@ async def call(user_id: str, artifact_id: str, method: str, args: dict[str, Any]
             return await svc.batch(u, i, _body(s.Batch, a, "ops"))
         case "emit":
             return await svc.add_event(u, i, _body(s.EventIn, a, "name", "payload"))
+        case "photo.get":
+            return await photos.get_for_page(u, i, _photo_id(a), thumb=bool(a.get("thumb")))
+        case "photo.list":
+            return await photos.list_photos(u, i)
+        case "photo.add":
+            # The app answers this itself: it shows its own Take photo / Choose photo sheet, uploads to
+            # POST /{id}/photos and hands the page the ids. An app that forwards it here can't do that yet.
+            raise BadRequest("This version of the app can't add photos yet. Update the app, or send the photo "
+                             "in a chat and ask your agent to add it.")
         case _:
             # Includes ask / openUrl / toast: those act on the client's own screen, so the
             # client handles them itself and never sends them here.

@@ -41,6 +41,21 @@
   function write(fn) { var r = fn(); rev++; return r; }
   function checkVersion(cur, expected) { if (expected != null && expected !== cur) fail(409, 'version conflict (preview)'); }
 
+  // Photos: the preview has none of the real ones, so every id shows as a labelled placeholder of the right kind.
+  var fakePhotos = {};
+  function fakePhoto() {
+    var id = 'ph_' + ('0000000000000000' + Math.floor(Math.random() * 1e16).toString(16)).slice(-16);
+    fakePhotos[id] = { id: id, content_type: 'image/jpeg', width: 1600, height: 1200, size: 250000, added_by: 'app', created_at: now() };
+    return fakePhotos[id];
+  }
+  function placeholder(id, thumb) {
+    if (!/^ph_[0-9a-f]{16}$/.test(id)) fail(422, 'bad photo id');
+    var w = thumb ? 480 : 1600, h = thumb ? 360 : 1200;
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '"><rect width="100%" height="100%" fill="#9aa7b4"/>' +
+      '<text x="50%" y="50%" fill="#fff" font-family="sans-serif" font-size="' + (w / 14) + '" text-anchor="middle">photo ' + id.slice(3, 9) + '</text></svg>';
+    return { id: id, content_type: 'image/svg+xml', width: w, height: h, data: btoa(svg) };
+  }
+
   function handle(method, a) {
     switch (method) {
       case 'data': return snapshot(a.since_rev);
@@ -75,6 +90,9 @@
         });
         return { rev: rev };
       });
+      case 'photo.add': return { photos: [fakePhoto(), a.multiple ? fakePhoto() : null].filter(Boolean) };
+      case 'photo.list': return { photos: Object.keys(fakePhotos).map(function (id) { return fakePhotos[id]; }) };
+      case 'photo.get': return placeholder(String(a.id), !!a.thumb);
       case 'emit': report.emits.push({ name: a.name, payload: a.payload }); return { seq: ++seq };
       case 'ask': report.asks.push(String(a.text)); return null;
       case 'openUrl': report.urls.push(String(a.url)); return null;

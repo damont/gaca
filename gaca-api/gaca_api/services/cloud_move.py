@@ -40,7 +40,7 @@ from ..db import cloud as cloud_db
 from ..db import cloud_move as db
 from ..models.base import new_id, utcnow
 from ..schemas import artifact as s
-from . import artifact_locks, cloud_bundle, cloud_client, cloud_link, cloud_list, cloud_transfer
+from . import artifact_locks, artifact_photos, cloud_bundle, cloud_client, cloud_link, cloud_list, cloud_transfer
 from . import artifacts as artifact_service
 from .exceptions import CloudError, CloudReply, CloudUnavailable, NotFound
 
@@ -191,6 +191,10 @@ def _preflight_errors(prep: dict[str, Any]) -> CloudError | None:
     return None
 
 
+# The cloud has no place for a page's photos yet: moving would leave the page pointing at photos it can't load.
+_HAS_PHOTOS = "This page has photos, and the cloud can't keep photos yet, so it can't be moved there for now."
+
+
 async def move_preview(user_id: str, artifact_id: str) -> dict[str, Any]:
     """What a move would do, without doing anything and without calling the cloud: whether it fits, what is
     NOT carried over, and what happens to members (nobody: the page is not shared yet)."""
@@ -202,6 +206,8 @@ async def move_preview(user_id: str, artifact_id: str) -> dict[str, Any]:
         raise NotFound("artifact", artifact_id)
     prep = await asyncio.to_thread(_prepare, snap, utcnow())
     err = _preflight_errors(prep)
+    if err is None and await artifact_photos.count(artifact_id):
+        err = CloudError(_HAS_PHOTOS, status=409, code="has_photos")
     problems = [] if err is None else (err.detail or {}).get("problems") or (
         [{"item": "numbers", "paths": prep["numbers"]}] if prep["numbers"] else [{"item": err.message}])
     raw = len(json.dumps(prep["bundle"], ensure_ascii=False).encode())
@@ -237,6 +243,8 @@ async def _move(user_id: str, artifact_id: str, link, phase: _Phase, request_id:
     if not cloud_bundle.portable_id(artifact_id):
         raise CloudError("This page's id cannot be kept in the cloud, so it cannot be moved.",
                          status=422, code="id_not_portable")
+    if await artifact_photos.count(artifact_id):
+        raise CloudError(_HAS_PHOTOS, status=409, code="has_photos")
     prep = await asyncio.to_thread(_prepare, snap, utcnow())
     refusal = _preflight_errors(prep)
     if refusal is not None:

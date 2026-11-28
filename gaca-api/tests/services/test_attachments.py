@@ -120,7 +120,7 @@ def test_start_turn_attaches_photos_sends_them_and_marks_them_used(tmp_path):
         return doc, msg, stored
 
     doc, msg, stored = _run(go, tmp_path)
-    assert backend.images == [ImageInput("image/png", _png())]
+    assert backend.images == [ImageInput("image/png", _png(), doc.id)]
     assert [a.id for a in stored.attachments] == [doc.id]
     out = MessageOut.model_validate(stored)
     assert out.attachments[0].url == f"sessions/s1/attachments/{doc.id}"

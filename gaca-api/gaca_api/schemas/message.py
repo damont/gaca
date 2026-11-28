@@ -24,6 +24,7 @@ class ImageInput:
     a sniffed content type. Each adapter encodes it however its engine wants."""
     content_type: str
     data: bytes
+    id: str | None = None  # the chat attachment's id, so the agent can put this photo on a page later
 
 
 class MessageCreate(BaseModel):
