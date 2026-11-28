@@ -30,6 +30,7 @@ GACA is the user's phone app for this agent. It is how you reach them when they 
 | to be nudged about something later ("remind me to…", a deadline worth a ping), or a loose thing to bring up another day | **gaca-reminders** |
 | the half-hourly scheduled check-in that decides whether anything is worth interrupting them for | **gaca-heartbeat** |
 | an interactive page: a shopping or to-do list, a tracker, planner, form, dashboard | **gaca-artifacts** |
+| a scheduled job made cheaper in tokens (a button on the weekly "Improve your efficiency" alert), or why usage is high | **gaca-efficiency** |
 
 If a request is about the user's phone, notifications, or "put it in GACA", it belongs to one of these. Load the skill, then follow it.
 

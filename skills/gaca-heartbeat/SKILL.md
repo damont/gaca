@@ -10,7 +10,7 @@ required_environment_variables:
     required_for: reading the alert history and posting alerts
 metadata:
   author: GACA
-  version: "1.0.0"
+  version: "1.1.0"
   hermes:
     tags: [heartbeat, proactive, alerts, gaca]
     category: productivity
@@ -25,9 +25,15 @@ The user wants to use their phone **less**, not be pinged more. Every half hour 
 
 You only suggest. You never send, reply, delete, accept, pay, book or change anything for them, even if a tool would let you. Your whole output is an alert, or nothing.
 
-Load the **gaca** skill first if you have not, and use **gaca-alerts** for the alert fields and severity rules. This skill adds the judgment about *whether* to alert.
+This skill is already loaded for the scheduled job: do not `skill_view` it again. Load **gaca-alerts** (for the alert fields, actions and severity rules) only when you are about to post an alert; a quiet run needs no other GACA skill. This skill adds the judgment about *whether* to alert.
 
-Helper: `python3 ${HERMES_SKILL_DIR}/scripts/heartbeat.py <command>` (`-h` lists them: `reminders`, `gate`, `context`, `alert`, `done`, `config`). It reads the token from the environment and never prints it.
+Helper: `python3 ${HERMES_SKILL_DIR}/scripts/heartbeat.py <command>` (`-h` lists them: `prerun`, `reminders`, `gate`, `context`, `alert`, `done`, `config`). It reads the token from the environment and never prints it.
+
+## When the pre-run already did the first steps
+
+The scheduled job normally has a pre-run script that runs before you are woken. If your prompt contains a block starting **"GACA heartbeat pre-run"**, it has already done steps 0, 1 and 2 below (reminders, gate, context) and also listed the new mail since the last look (sender and subject only). **Do not run `reminders`, `gate` or `context` again**: start at step 3, and use its mail list as your scan (open a message only when it might clear the bar). If it says new mail was "none", this is the periodic full look: check the calendar and the watch list. Every run the pre-run decides is not worth waking you for never reaches you at all, which is the point: most half hours cost nothing.
+
+Without that block (an older install, or someone running the skill by hand), do every step yourself.
 
 ## Every run, in this order
 
@@ -130,13 +136,15 @@ The limits belong to the user and live in the GACA app (Heartbeat settings: quie
 
 ## Scheduling
 
-The installer creates this job for you; you only need to check on it. List it with `hermes --profile <profile> cron list --all`; it is named `gaca-heartbeat`, runs every 30 minutes, and delivers nowhere (its only output is a GACA alert). To recreate it:
+The installer creates this job for you (and `gaca-api hermes connect` adds the pre-run script to one made before it existed); you only need to check on it. List it with `hermes --profile <profile> cron list --all`; it is named `gaca-heartbeat`, runs every 30 minutes, has the pre-run script `gaca-heartbeat-prerun.py` (in `$HERMES_HOME/scripts/`), and delivers nowhere (its only output is a GACA alert). To recreate it:
 
 ```bash
 hermes --profile <profile> cron create "*/30 * * * *" \
   "Run the gaca-heartbeat skill. Follow it exactly, including how it says to end your reply." \
-  --name gaca-heartbeat --skill gaca-heartbeat --deliver local
+  --name gaca-heartbeat --skill gaca-heartbeat --script gaca-heartbeat-prerun.py --deliver local
 ```
+
+How long the pre-run may go without waking you when no new mail arrives is `full_look_minutes` (default 120) in `heartbeat.py config`.
 
 Do not say it is scheduled until `cron list --all` shows the name, a next-run time and that it is enabled.
 

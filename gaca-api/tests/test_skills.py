@@ -15,7 +15,9 @@ from pathlib import Path
 import pytest
 
 SKILLS = Path(__file__).resolve().parents[2] / "skills"
-EXPECTED = {"gaca", "gaca-alerts", "gaca-briefing", "gaca-artifacts", "gaca-heartbeat", "gaca-reminders"}
+# Skills that never call the GACA API (they work on the Hermes box itself), so need no token.
+NO_GACA_CALLS = {"gaca-efficiency"}
+EXPECTED = {"gaca", "gaca-alerts", "gaca-briefing", "gaca-artifacts", "gaca-heartbeat", "gaca-reminders", "gaca-efficiency"}
 
 
 def skill_dirs():
@@ -38,6 +40,8 @@ def test_each_skill_is_well_formed(skill):
     meta = frontmatter(SKILLS / skill / "SKILL.md")
     assert meta["name"] == skill
     assert 40 < len(meta["description"]) <= 1024
+    if skill in NO_GACA_CALLS:
+        return
     assert "GACA_API_TOKEN" in (SKILLS / skill / "SKILL.md").read_text()
     assert "Wired in automatically by the GACA installer" in (SKILLS / skill / "SKILL.md").read_text()
 

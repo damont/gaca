@@ -52,7 +52,7 @@ from pathlib import Path
 
 import httpx
 
-from . import cron_runs, skill_sync, soul_block
+from . import cron_runs, skill_sync, soul_block, usage_read
 from . import hermes_helper
 from .base import ProfileNameRejected, ProvisioningError
 from .envfile import has_gaca_token, upsert_env
@@ -409,6 +409,19 @@ class LocalHermes:
         if name != "default" and not (isinstance(name, str) and PROFILE_NAME.fullmatch(name)):
             raise LocalError(f"not a valid profile name: {name!r}")
         return await asyncio.to_thread(self._read_cron_runs, name, job_id, limit, with_output)
+
+    # -- token use (state.db and cron/jobs.json) ---------------------
+
+    def _read_usage(self, name: str, since: float, until: float) -> dict | None:
+        directory = self._profile_dir(name)
+        if directory is None:
+            return None
+        return usage_read.read(directory, since, until)
+
+    async def read_usage(self, name: str, *, since: float, until: float) -> dict | None:
+        if name != "default" and not (isinstance(name, str) and PROFILE_NAME.fullmatch(name)):
+            raise LocalError(f"not a valid profile name: {name!r}")
+        return await asyncio.to_thread(self._read_usage, name, float(since), float(until))
 
     # -- running hermes ------------------------------------------------
 

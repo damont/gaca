@@ -208,7 +208,8 @@ Two things connect Hermes to GACA, both done by the installer and redone by `gac
   | `gaca-alerts` | send alerts and permission requests to your phone instead of only the chat |
   | `gaca-briefing` | build the daily briefing in sections plus a summary, and schedule it |
   | `gaca-artifacts` | publish interactive pages (trackers, planners) that open in the app |
-  | `gaca-heartbeat` | wake every 30 minutes, look at what it can see, and alert you only when something is worth it |
+  | `gaca-heartbeat` | wake every 30 minutes, look at what it can see, and alert you only when something is worth it (a pre-run script skips the model when there is nothing new) |
+  | `gaca-efficiency` | act on the weekly efficiency review: add pre-run checks to scheduled jobs, propose savings, undo |
 
 Profiles you create later, in the app or by hand, get both automatically. Re-running `./install.sh` (or
 `gaca-api hermes connect`) after a `git pull` updates the skills; a skill file that an agent has edited is left

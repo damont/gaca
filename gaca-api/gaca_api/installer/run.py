@@ -504,7 +504,8 @@ def wire_hermes(opts: Options, shell: Shell, say: Say) -> None:
     if crew is not None:  # somebody has paired, so the profiles have tokens and the heartbeat could work
         from ..provisioning import heartbeat_job
 
-        outcome = heartbeat_job.ensure_job(shell, _hermes_bin(shell) or settings.hermes_bin, "default", settings.heartbeat_schedule)
+        outcome = heartbeat_job.ensure_job(shell, _hermes_bin(shell) or settings.hermes_bin, "default", settings.heartbeat_schedule,
+                                         profile_dir=opts.hermes_home)
         heartbeat_job.report(outcome, "default", settings.heartbeat_schedule, say)
 
 
