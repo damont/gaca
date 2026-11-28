@@ -379,7 +379,7 @@ class PhotoOut(BaseModel):
     width: int
     height: int
     size: int
-    added_by: Literal["app", "agent"]
+    added_by: Literal["app", "agent", "web"]
     created_at: datetime
 
 

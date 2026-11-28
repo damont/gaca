@@ -14,6 +14,8 @@ Move to the cloud (`move_to_cloud`), phases in order:
               before each retry the cloud is asked whether the gacabit is already there, and if it is
               we carry on instead of failing (the import worked, only its answer was lost)
   verifying   GET the cloud's copy (page, state, every document, events) and compare with what was sent
+  photos      upload each photo with its own id (POST /gacabits/{id}/photos?id=..., safe to repeat), then check
+              the cloud lists every one. The photo rows stay here as part of the backup until it expires.
   converting  ONE local transaction: sealed backup row + delete local rows + create the pointer
 
 A failure in any phase leaves the local artifact exactly as it was and says which phase and why
@@ -21,7 +23,7 @@ A failure in any phase leaves the local artifact exactly as it was and says whic
 try is found, verified against the CURRENT local content, and used (or refused if it differs).
 
 Bring home (`bring_home`): ask the cloud (`/bring-home`, user_confirmed), download + validate the bundle,
-restore the artifact locally in ONE transaction (replacing the pointer), THEN tell the cloud it arrived
+download its photos, restore the artifact and its photos locally in ONE transaction (replacing the pointer), THEN tell the cloud it arrived
 (`/bring-home/confirm`; until then the cloud never deletes its copy). If anything fails before the local
 restore, the cloud's bring-home is undone so the cloud copy is as it was, the pointer stays, and the
 error says so. If only the final confirm fails the page is home and the confirm is retried later.
@@ -34,13 +36,17 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any
 
+from pydantic import ValidationError
+
 from ..config import settings
 from ..db import artifacts as artifacts_db
 from ..db import cloud as cloud_db
+from ..db import artifact_photos as photos_db
 from ..db import cloud_move as db
+from ..models.artifact_photo import ArtifactPhotoDoc
 from ..models.base import new_id, utcnow
 from ..schemas import artifact as s
-from . import artifact_locks, artifact_photos, cloud_bundle, cloud_client, cloud_link, cloud_list, cloud_transfer
+from . import artifact_locks, cloud_bundle, cloud_client, cloud_link, cloud_list, cloud_transfer
 from . import artifacts as artifact_service
 from .exceptions import CloudError, CloudReply, CloudUnavailable, NotFound
 
@@ -192,9 +198,6 @@ def _preflight_errors(prep: dict[str, Any]) -> CloudError | None:
 
 
 # The cloud has no place for a page's photos yet: moving would leave the page pointing at photos it can't load.
-_HAS_PHOTOS = "This page has photos, and the cloud can't keep photos yet, so it can't be moved there for now."
-
-
 async def move_preview(user_id: str, artifact_id: str) -> dict[str, Any]:
     """What a move would do, without doing anything and without calling the cloud: whether it fits, what is
     NOT carried over, and what happens to members (nobody: the page is not shared yet)."""
@@ -206,8 +209,7 @@ async def move_preview(user_id: str, artifact_id: str) -> dict[str, Any]:
         raise NotFound("artifact", artifact_id)
     prep = await asyncio.to_thread(_prepare, snap, utcnow())
     err = _preflight_errors(prep)
-    if err is None and await artifact_photos.count(artifact_id):
-        err = CloudError(_HAS_PHOTOS, status=409, code="has_photos")
+    photo_count, photo_bytes = await photos_db.usage(artifact_id)
     problems = [] if err is None else (err.detail or {}).get("problems") or (
         [{"item": "numbers", "paths": prep["numbers"]}] if prep["numbers"] else [{"item": err.message}])
     raw = len(json.dumps(prep["bundle"], ensure_ascii=False).encode())
@@ -221,7 +223,8 @@ async def move_preview(user_id: str, artifact_id: str) -> dict[str, Any]:
         "problems": problems,
         "size": {"bytes": raw, "limit_bytes": settings.cloud_max_bundle_bytes,
                  "compressed_bytes": len(prep["data"]) if prep["data"] else None,
-                 "documents": len(snap["docs"]), "unhandled_events": len(prep["bundle"]["events"])},
+                 "documents": len(snap["docs"]), "unhandled_events": len(prep["bundle"]["events"]),
+                 "photos": photo_count, "photo_bytes": photo_bytes},
         "not_carried": carried,
         "requires_acknowledgement": carried["anything"],
         "member_impact": "none",
@@ -243,8 +246,6 @@ async def _move(user_id: str, artifact_id: str, link, phase: _Phase, request_id:
     if not cloud_bundle.portable_id(artifact_id):
         raise CloudError("This page's id cannot be kept in the cloud, so it cannot be moved.",
                          status=422, code="id_not_portable")
-    if await artifact_photos.count(artifact_id):
-        raise CloudError(_HAS_PHOTOS, status=409, code="has_photos")
     prep = await asyncio.to_thread(_prepare, snap, utcnow())
     refusal = _preflight_errors(prep)
     if refusal is not None:
@@ -281,8 +282,11 @@ async def _move(user_id: str, artifact_id: str, link, phase: _Phase, request_id:
         raise CloudError("The cloud's copy did not match what was sent, so this page was NOT changed here.",
                          status=502, code="verify_failed", detail={"mismatches": mismatches})
 
+    phase.name = "photos"
+    sent_photos = await _send_photos(user_id, artifact_id, request_id)
+
     phase.name = "converting"
-    backup_expires = await _convert(user_id, artifact_id, link, g, fingerprint)
+    backup_expires = await _convert(user_id, artifact_id, link, g, fingerprint, sent_photos)
     await db.clear_failure(artifact_id)
     cloud_list.forget(user_id)
     pointer = await cloud_db.get_pointer(user_id, artifact_id)
@@ -304,7 +308,66 @@ def _check_existing(g: dict, link) -> None:
             status=409, code="cloud_copy_not_usable", detail={"cloud_status": g.get("status")})
 
 
-async def _convert(user_id: str, artifact_id: str, link, g: dict, expected_fingerprint: str) -> datetime:
+async def _send_photos(user_id: str, artifact_id: str, request_id: str | None) -> set[str]:
+    """Every photo of the page to the cloud copy, keeping its id (the page's data holds the ids). A photo the cloud
+    already has (an earlier try) is answered again, not stored twice. Then the cloud must list them all."""
+    path = f"/gacabits/{cloud_client.quote_id(artifact_id)}/photos"
+    docs = await photos_db.list_for(artifact_id)
+    for doc in docs:
+        found = await photos_db.find(artifact_id, doc.id, thumb=False)
+        if found is None:  # removed meanwhile (the page is read-only now, so only by the sweep)
+            continue
+        await cloud_link.call(user_id, "POST", path, params={"id": doc.id}, content=found[1],
+                              headers={"content-type": doc.content_type, "x-gaca-photo-source": doc.added_by},
+                              request_id=request_id)
+    sent = {d.id for d in docs}
+    listed = _json(await cloud_link.call(user_id, "GET", path, request_id=request_id))
+    there = {p.get("id") for p in (listed or {}).get("photos", []) if isinstance(p, dict)}
+    missing = sorted(sent - there)
+    if missing:
+        raise CloudError("Not every photo arrived in the cloud, so this page was NOT changed here. Try again.",
+                         status=502, code="verify_failed", detail={"mismatches": [f"photo {m} is missing" for m in missing]})
+    return sent
+
+
+async def _fetch_photos(user_id: str, artifact_id: str, request_id: str | None) -> list[tuple[ArtifactPhotoDoc, bytes, bytes]]:
+    """The cloud copy's photos (both sizes), to store here with the same ids when the page comes home."""
+    path = f"/gacabits/{cloud_client.quote_id(artifact_id)}/photos"
+    listed = _json(await cloud_link.call(user_id, "GET", path, request_id=request_id))
+    out = []
+    for p in (listed or {}).get("photos", []):
+        try:
+            meta = s.PhotoOut.model_validate(p)
+        except ValidationError:
+            raise CloudUnavailable("The cloud listed a photo this server did not understand.") from None
+        if not s._PHOTO_ID.match(meta.id):  # noqa: SLF001 - it becomes a key here
+            raise CloudUnavailable("The cloud listed a photo with an unexpected id.")
+        quoted = f"{path}/{cloud_client.quote_id(meta.id)}"
+        full = (await cloud_link.call(user_id, "GET", quoted, request_id=request_id)).content
+        thumb_resp = await cloud_link.call(user_id, "GET", quoted, params={"thumb": "true"}, request_id=request_id)
+        thumb = thumb_resp.content
+        tw, th = await asyncio.to_thread(_size_of, thumb)
+        out.append((ArtifactPhotoDoc(
+            id=meta.id, artifact_id=artifact_id, content_type=meta.content_type, width=meta.width, height=meta.height,
+            size=len(full), thumb_content_type=thumb_resp.headers.get("content-type", meta.content_type),
+            thumb_width=tw, thumb_height=th, thumb_size=len(thumb), added_by=meta.added_by, created_at=meta.created_at,
+        ), full, thumb))
+    return out
+
+
+def _size_of(data: bytes) -> tuple[int, int]:
+    import io
+
+    from PIL import Image
+    try:
+        with Image.open(io.BytesIO(data)) as img:  # the header only
+            return img.size
+    except Exception:  # noqa: BLE001 - a size is metadata; the bytes are what matter
+        return 0, 0
+
+
+async def _convert(user_id: str, artifact_id: str, link, g: dict, expected_fingerprint: str,
+                   sent_photos: set[str] | None = None) -> datetime:
     """The single transaction that makes the page a cloud page. Re-reads the local rows under the write
     lock and refuses if they are not what was sent."""
     async with artifact_service._write_lock:  # noqa: SLF001
@@ -314,6 +377,10 @@ async def _convert(user_id: str, artifact_id: str, link, g: dict, expected_finge
         if await asyncio.to_thread(db.fingerprint, snap) != expected_fingerprint:
             raise CloudError(
                 "The page changed while it was being moved, so it was NOT switched to the cloud copy. Try again.",
+                status=409, code="changed_during_move")
+        if sent_photos is not None and {d.id for d in await photos_db.list_for(artifact_id)} - sent_photos:
+            raise CloudError(
+                "A photo was added while the page was being moved, so it was NOT switched to the cloud copy. Try again.",
                 status=409, code="changed_during_move")
         pointer = cloud_list.pointer_from(user_id, link.account_id or "", g, snap["artifact"].get("position"))
         if pointer is None or pointer.role != "owner":
@@ -442,6 +509,8 @@ async def bring_home(
             started = await _start_bring_home(user_id, artifact_id, request_id)
             phase.name = "downloading"
             data = await cloud_transfer.get(_download_url(started))
+            phase.name = "photos"
+            photos = await _fetch_photos(user_id, artifact_id, request_id)
             phase.name = "restoring"
             bundle = await asyncio.to_thread(cloud_bundle.unpack, data)
             prior = None
@@ -460,7 +529,7 @@ async def bring_home(
                         position=pointer.position, updated_at=now, prior=prior))
                 await db.restore_snapshot(snap, keep_event_seq=False, bring_home={
                     "fingerprint": await asyncio.to_thread(db.fingerprint, snap), "undo_until": started.get("undo_until"),
-                    "created_at": now.isoformat()})
+                    "created_at": now.isoformat()}, photos=photos)
         except asyncio.CancelledError:
             if started is not None:
                 await _undo_quietly(user_id, artifact_id)
@@ -696,7 +765,9 @@ async def maintenance(now: datetime | None = None) -> dict[str, int]:
             confirmed += 1
         except (CloudReply, CloudError):
             pass  # not linked / cloud down / busy: try again next time
-    return {"backups_removed": removed, "backups_kept": kept, "confirms_sent": confirmed}
+    photos_removed = await db.delete_orphan_photos()
+    return {"backups_removed": removed, "backups_kept": kept, "confirms_sent": confirmed,
+            "photos_removed": photos_removed}
 
 
 async def maintenance_if_due(now: datetime | None = None) -> None:

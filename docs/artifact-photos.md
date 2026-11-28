@@ -15,8 +15,14 @@ the same way: it gets an id and writes it into the data.
 For a cloud page the same `/api/artifacts/{id}/photos...` routes and `photo.*` bridge calls work through the
 forwarder (`services/cloud_forward.py`): this server re-encodes an upload (or a chat photo) BEFORE sending it, so it
 always fits the cloud's 4 MiB request cap and carries no EXIF, and tells the cloud whether the app or the agent added
-it. Moving a page that has photos between here and the cloud (either way) is refused (`has_photos`) until the move
-bundle carries photos.
+it.
+
+Moving a page with photos (`services/cloud_move.py`): photos are not in the bundle. Moving to the cloud uploads each
+one after the data is verified, keeping its id (`POST /gacabits/{id}/photos?id=`, safe to repeat), and the move only
+switches over once the cloud lists them all. The local photo rows stay as part of the sealed backup (a restore brings
+them back) and are deleted by maintenance once no local page and no backup has that artifact id. Bringing a page
+home downloads the cloud's photos (both sizes) and stores them, replacing any old rows, in the same transaction that
+restores the page.
 
 Every upload is decoded and re-encoded (`services/artifact_photos.py`): upright (EXIF orientation applied), at most
 2048 px on the long side, plus a 480 px thumbnail, JPEG (or WebP when it has transparency), **no EXIF or other

@@ -22,6 +22,7 @@ from datetime import datetime
 from typing import Any, Callable
 
 from ..models.cloud import CloudPointer
+from ..models.artifact_photo import ArtifactPhotoDoc
 from .client import connection
 
 SNAPSHOT_FORMAT = 1
@@ -180,9 +181,14 @@ async def convert_to_pointer(
 
 async def restore_snapshot(
     snapshot: dict[str, Any], *, keep_event_seq: bool, bring_home: dict[str, Any] | None = None,
+    photos: list[tuple[ArtifactPhotoDoc, bytes, bytes]] | None = None,
 ) -> None:
     """A cloud pointer (if there is one) becomes the local artifact again, in ONE transaction. Fails
-    (and changes nothing) if a local artifact with this id already exists."""
+    (and changes nothing) if a local artifact with this id already exists.
+
+    `photos` (bringing a page home): the cloud's photos, which REPLACE whatever photo rows this server still has for
+    the page (left from moving it to the cloud, kept for the backup). None leaves the photo rows as they are (a
+    restore from backup: they are exactly the photos the backup's data points to)."""
     a = snapshot["artifact"]
 
     def work(raw: sqlite3.Connection) -> None:
@@ -190,6 +196,11 @@ async def restore_snapshot(
             raise FileExistsError(a["id"])
         raw.execute("DELETE FROM cloud_pointers WHERE user_id = ? AND id = ?", (a["user_id"], a["id"]))
         _insert_snapshot(raw, snapshot, keep_event_seq=keep_event_seq)
+        if photos is not None:
+            raw.execute("DELETE FROM artifact_photos WHERE artifact_id = ?", (a["id"],))
+            raw.executemany(
+                "INSERT INTO artifact_photos (id, artifact_id, created_at, doc, data, thumb) VALUES (?, ?, ?, ?, ?, ?)",
+                [(d.id, a["id"], d.created_at.isoformat(), d.model_dump_json(), full, thumb) for d, full, thumb in photos])
         raw.execute("DELETE FROM artifact_moves WHERE artifact_id = ?", (a["id"],))
         if bring_home is not None:
             raw.execute(
@@ -327,6 +338,17 @@ async def upsert_pointer_unless_local(p: CloudPointer) -> bool:
         return True
 
     return await _atomic(work)
+
+
+async def delete_orphan_photos() -> int:
+    """Photo rows no page needs any more: no local artifact and no sealed backup has their artifact id. A page moved
+    to the cloud keeps its photo rows here for as long as its backup is kept (so a restore brings them back too)."""
+    conn = connection()
+    cursor = await conn.execute(
+        "DELETE FROM artifact_photos WHERE artifact_id NOT IN (SELECT id FROM artifacts) "
+        "AND artifact_id NOT IN (SELECT artifact_id FROM artifact_cloud_backups)")
+    await conn.commit()
+    return cursor.rowcount
 
 
 async def has_backup(artifact_id: str) -> bool:
