@@ -56,6 +56,12 @@ class Provisioner(Protocol):
         (only when `with_output`) is the tail of the run's output file. None if no such profile."""
         ...
 
+    async def read_usage(self, name: str, *, since: float, until: float) -> dict | None:
+        """Model-token use of one profile for sessions started in [since, until) (epoch seconds),
+        grouped per scheduled job and per chat source, plus its scheduled jobs' settings:
+        `{"groups": [...], "jobs": [...]}` (see usage_read.py). None if no such profile. Read-only."""
+        ...
+
     async def next_free_port(self) -> int: ...
 
     async def create_profile(

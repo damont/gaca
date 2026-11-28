@@ -50,6 +50,7 @@ def _no_background_watchers(monkeypatch):
     from gaca_api.config import settings
 
     monkeypatch.setattr(settings, "automation_alerts", False)
+    monkeypatch.setattr(settings, "efficiency_review", False)
 
 
 @pytest.fixture(autouse=True)

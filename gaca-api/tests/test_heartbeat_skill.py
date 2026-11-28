@@ -53,10 +53,10 @@ def beat(tmp_path):
     server = HTTPServer(("127.0.0.1", 0), Fake)
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
-    def run(*args, at="2026-10-31T12:00:00+00:00", stdin="", check=True):
+    def run(*args, at="2026-10-31T12:00:00+00:00", stdin="", check=True, env_extra=None):
         env = {"PATH": os.environ["PATH"], "HOME": str(tmp_path), "HERMES_HOME": str(tmp_path / "hermes"),
                "GACA_BASE_URL": f"http://127.0.0.1:{server.server_port}", "GACA_API_TOKEN": "tok-123",
-               "GACA_HEARTBEAT_NOW": at}
+               "GACA_HEARTBEAT_NOW": at, **(env_extra or {})}
         result = subprocess.run([sys.executable, str(HELPER), *args], input=stdin, capture_output=True,
                                 text=True, env=env, timeout=60)
         if check:
@@ -260,3 +260,64 @@ def test_a_zero_cap_in_the_app_silences_it_except_for_urgent(beat):
     app(max_alerts_per_day=0)
     assert beat("alert", stdin=ALERT, check=False).returncode == 3
     assert beat("alert", stdin=json.dumps({"kind": "fire", "title": "now", "severity": "urgent", "dedupe_key": "f"})).returncode == 0
+
+
+# ── the pre-run: decides without the model whether the model is needed ──
+
+def prerun(beat, mail, at="2026-10-31T12:00:00+00:00"):
+    out = beat("prerun", at=at, env_extra={"GACA_HEARTBEAT_MAIL_JSON": mail if isinstance(mail, str) else json.dumps(mail)}).stdout
+    last = [line for line in out.splitlines() if line.strip()][-1]
+    return json.loads(last)["wakeAgent"], out
+
+
+MAIL = [{"id": "m1", "from": "Landlord <l@example.com>", "subject": "Thursday?"}]
+
+
+def test_prerun_fires_reminders_and_stays_asleep_at_night(beat):
+    woke, out = prerun(beat, MAIL, at="2026-10-31T23:30:00+00:00")
+    assert woke is False and "quiet hours" in out
+    assert any(path == "/api/reminders/fire-due" for path, _, _ in Fake.posted)  # reminders fire anyway
+
+
+def test_prerun_wakes_for_new_mail_and_hands_over_the_context(beat):
+    woke, out = prerun(beat, MAIL)
+    assert woke is True
+    assert "ALREADY DONE" in out and "Landlord <l@example.com> | Thursday?" in out and "context (step 2)" in out
+    assert gate(beat, at="2026-10-31T12:05:00+00:00")["runs_today"] == 2  # the pre-run counted its run
+
+
+def test_prerun_skips_the_model_when_nothing_new_came_in_since_the_last_look(beat):
+    assert prerun(beat, MAIL)[0] is True
+    woke, out = prerun(beat, MAIL, at="2026-10-31T12:30:00+00:00")
+    assert woke is False and "no new mail" in out
+    assert gate(beat, at="2026-10-31T12:31:00+00:00")["runs_today"] == 2  # the skipped run cost no budget
+
+
+def test_prerun_still_takes_a_full_look_every_so_often(beat):
+    assert prerun(beat, MAIL)[0] is True
+    woke, out = prerun(beat, MAIL, at="2026-10-31T14:05:00+00:00")  # 125 minutes later
+    assert woke is True and "new mail since the last look: none" in out
+
+
+def test_prerun_wakes_whenever_mail_cannot_be_checked(beat):
+    assert prerun(beat, "unavailable")[0] is True
+    woke, out = prerun(beat, "unavailable", at="2026-10-31T12:30:00+00:00")
+    assert woke is True and "not checked by the pre-run" in out
+
+
+def test_full_look_minutes_zero_never_skips(beat):
+    beat("config", "--set", "full_look_minutes=0")
+    assert prerun(beat, MAIL)[0] is True
+    assert prerun(beat, MAIL, at="2026-10-31T12:30:00+00:00")[0] is True
+
+
+def test_prerun_respects_the_switch_in_the_app(beat):
+    app(enabled=False)
+    woke, out = prerun(beat, MAIL)
+    assert woke is False and "switched off" in out
+
+
+def test_prerun_without_a_token_hands_every_step_back(beat):
+    out = beat("prerun", env_extra={"GACA_API_TOKEN": "", "GACA_HEARTBEAT_MAIL_JSON": "[]"}).stdout
+    assert "run every step" in out and "ALREADY DONE" not in out
+    assert json.loads(out.strip().splitlines()[-1]) == {"wakeAgent": True}

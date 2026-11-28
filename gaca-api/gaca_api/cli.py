@@ -281,7 +281,8 @@ async def _hermes_connect(hermes_home: str | None, base_url: str | None, rotate:
     from .provisioning import heartbeat_job
 
     shell = Shell()
-    outcome = heartbeat_job.ensure_job(shell, _hermes_bin(shell) or settings.hermes_bin, "default", settings.heartbeat_schedule)
+    outcome = heartbeat_job.ensure_job(shell, _hermes_bin(shell) or settings.hermes_bin, "default", settings.heartbeat_schedule,
+                                     profile_dir=home)
     heartbeat_job.report(outcome, "default", settings.heartbeat_schedule, Say(print))
     return 0
 

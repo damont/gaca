@@ -2,6 +2,7 @@
 
 Run against a fake `hermes`, never the real CLI: creating the job is the one step here that would
 change a real machine."""
+import json
 import subprocess
 
 import pytest
@@ -87,3 +88,83 @@ def test_hermes_connect_schedules_it(server, hermes_home, monkeypatch, capsys): 
     shell.listing = "gaca-heartbeat enabled"
     cli.main(["hermes", "connect", "--hermes-home", str(hermes_home)])
     assert sum(call[3:5] == ["cron", "create"] for call in shell.calls) == 1  # the second run created nothing
+
+
+# ── the pre-run script ──
+
+def test_with_a_profile_dir_the_prerun_is_installed_and_attached_to_a_new_job(tmp_path):
+    shell = FakeHermes()
+    assert heartbeat_job.ensure_job(shell, "hermes", "default", profile_dir=tmp_path).status == "created"
+    create = shell.calls[-1]
+    assert create[create.index("--script") + 1] == heartbeat_job.PRERUN_SCRIPT
+    script = tmp_path / "scripts" / heartbeat_job.PRERUN_SCRIPT
+    assert script.read_text() == heartbeat_job.PRERUN_SOURCE and oct(script.stat().st_mode)[-3:] == "700"
+    compile(script.read_text(), str(script), "exec")
+
+
+def _jobs(tmp_path, **job):
+    (tmp_path / "cron").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "cron" / "jobs.json").write_text(json.dumps({"jobs": [{"id": "c85917c3a264", "name": "gaca-heartbeat", **job}]}))
+
+
+def test_an_existing_job_without_a_script_gets_the_prerun_and_nothing_else(tmp_path):
+    _jobs(tmp_path, script=None)
+    shell = FakeHermes(listing="gaca-heartbeat  */15 * * * *  enabled\n")
+    assert heartbeat_job.ensure_job(shell, "hermes", profile_dir=tmp_path).status == "upgraded"
+    assert shell.calls[-1] == ["hermes", "--profile", "default", "cron", "edit", "c85917c3a264",
+                               "--script", heartbeat_job.PRERUN_SCRIPT]
+
+
+def test_an_existing_job_with_its_own_script_is_left_alone(tmp_path):
+    _jobs(tmp_path, script="mine.py")
+    shell = FakeHermes(listing="gaca-heartbeat\n")
+    assert heartbeat_job.ensure_job(shell, "hermes", profile_dir=tmp_path).status == "exists"
+    assert len(shell.calls) == 1
+
+
+def test_a_script_of_the_same_name_that_gaca_did_not_write_is_not_overwritten(tmp_path):
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / heartbeat_job.PRERUN_SCRIPT).write_text("print('mine')\n")
+    shell = FakeHermes()
+    assert heartbeat_job.ensure_job(shell, "hermes", profile_dir=tmp_path).status == "created"
+    assert "--script" not in shell.calls[-1]
+    assert (tmp_path / "scripts" / heartbeat_job.PRERUN_SCRIPT).read_text() == "print('mine')\n"
+
+
+def test_an_older_gaca_prerun_is_updated(tmp_path):
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / heartbeat_job.PRERUN_SCRIPT).write_text("# gaca:heartbeat-prerun old\n")
+    assert heartbeat_job.install_prerun(tmp_path)
+    assert (tmp_path / "scripts" / heartbeat_job.PRERUN_SCRIPT).read_text() == heartbeat_job.PRERUN_SOURCE
+
+
+def test_the_prerun_hands_over_to_the_skill_helper_and_wakes_if_it_is_missing(tmp_path):
+    import sys
+
+    assert heartbeat_job.install_prerun(tmp_path)
+    script = tmp_path / "scripts" / heartbeat_job.PRERUN_SCRIPT
+    missing = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=30)
+    assert missing.returncode == 0 and "wakeAgent" not in missing.stdout  # no false line: the model wakes
+    helper = tmp_path / "skills" / "gaca" / "gaca-heartbeat" / "scripts" / "heartbeat.py"
+    helper.parent.mkdir(parents=True)
+    helper.write_text("import sys; print('looked'); print('{\"wakeAgent\": false}')\n")
+    asleep = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=30)
+    assert asleep.stdout.strip().splitlines()[-1] == '{"wakeAgent": false}'
+    helper.write_text("import sys; print('{\"wakeAgent\": false}'); sys.exit(3)\n")
+    broken = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=30)
+    assert "failed" in broken.stdout.strip().splitlines()[-1] or "yourself" in broken.stdout.strip().splitlines()[-1]
+
+
+def test_the_prerun_reads_the_token_from_the_profiles_env_when_hermes_does_not_pass_it(tmp_path):
+    import os
+    import sys
+
+    assert heartbeat_job.install_prerun(tmp_path)
+    (tmp_path / ".env").write_text("OTHER=1\nGACA_API_TOKEN='tok-from-env'\n")
+    helper = tmp_path / "skills" / "gaca" / "gaca-heartbeat" / "scripts" / "heartbeat.py"
+    helper.parent.mkdir(parents=True)
+    helper.write_text("import os; print(os.environ.get('GACA_API_TOKEN'))\n")
+    env = {k: v for k, v in os.environ.items() if k != "GACA_API_TOKEN"}
+    out = subprocess.run([sys.executable, str(tmp_path / "scripts" / heartbeat_job.PRERUN_SCRIPT)],
+                         capture_output=True, text=True, timeout=30, env=env)
+    assert out.stdout.strip() == "tok-from-env"

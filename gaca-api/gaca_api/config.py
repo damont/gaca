@@ -69,6 +69,20 @@ class Settings(BaseSettings):
     automation_watch_seconds: float = 60.0
     automation_alert_window_hours: float = 6.0
 
+    # The weekly efficiency review (docs/efficiency.md): once a week gaca-api reads how many model
+    # tokens the crew used, works out what would cut that without changing what the crew does, and
+    # posts ONE alert with an action per suggestion (none if there is nothing worth doing). It goes
+    # out on `efficiency_weekday` (0 = Monday) at or after `efficiency_hour`, in the owner's time zone.
+    efficiency_review: bool = True
+    efficiency_weekday: int = 0
+    efficiency_hour: int = 8
+    # The pay-per-token price the review compares with (USD per million tokens), so a flat plan can
+    # be weighed against it. Default: MiniMax-M3.1-Flash on Nebius Token Factory, Nov 2026.
+    usage_compare_label: str = "MiniMax-M3.1-Flash on Nebius Token Factory (Nov 2026 prices)"
+    usage_compare_input: float = 0.15
+    usage_compare_cached: float = 0.015
+    usage_compare_output: float = 0.60
+
     # How gaca-api reaches the machine Hermes runs on, for discovering and creating crew
     # members and reading what a crew member is for. "local": gaca-api runs on that same
     # machine (the supported setup) and reads/acts on HERMES_HOME directly through
